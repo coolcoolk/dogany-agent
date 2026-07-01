@@ -1,17 +1,35 @@
-# secrets / env
+# --- secrets / env ---
 .env
 **/.env
-# runtime / data / memory (personal)
+
+# --- personal data / runtime state (NEVER commit) ---
+# lifekit and any sqlite data (schema.sql is committed; *.db are not)
+*.db
+*.db-wal
+*.db-shm
+body_stats.json
+food_cache.json
+lifekit.sql
+# bridge / runtime
 **/runtime/
 **/logs/
 **/sessions.json
-**/memories/
-**/*.db
-**/*.db-wal
-**/*.db-shm
-# python / OS / build
+sessions.json
+
+# --- long-term memory vault (personal); keep only the empty scaffold ---
+memories/*
+!memories/MEMORY.md
+# regenerable memory index
+memory/state.db
+
+# --- python / build / OS ---
+venv/
+.venv/
 __pycache__/
 *.pyc
-venv/
 .DS_Store
+
+# --- backups ---
 *.bak
+*.bak-*
+*.bak.*

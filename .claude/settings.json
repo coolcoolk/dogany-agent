@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill|Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/token-gate.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/session-recap.py"
+          },
+          {
+            "type": "command",
+            "command": "ONBOARDING_FILE=__PROJECT_ROOT__/AGENT.md /usr/bin/python3 __PROJECT_ROOT__/routines/onboarding-check.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/memory/memory.py hook",
+            "timeout": 12
+          }
+        ]
+      }
+    ]
+  }
+}
