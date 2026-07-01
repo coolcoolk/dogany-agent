@@ -15,6 +15,7 @@ agents/main/
 
 # memory (per-agent, personal)
 **/memories/
+!**/memories/MEMORY.md   # ship the empty seed scaffold; instance memories under agents/main/ stay ignored
 **/memory/state.db
 
 # lifekit data (global but personal)
