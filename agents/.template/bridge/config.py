@@ -114,6 +114,10 @@ class Config(BaseSettings):
         "exceeds this many hours. 0/false/off disables.",
     )
 
+    # Localization: user-facing string locale (env LOCALE). Only ko/en are
+    # recognized; anything else falls back to en. Read by bridge/i18n.
+    locale: str = Field(default="en")
+
     # Streaming
     draft_update_min_chars: int = Field(default=30)
     draft_update_interval: float = Field(default=1.0)
@@ -185,6 +189,13 @@ class Config(BaseSettings):
         if parsed <= 0:
             return None
         return parsed
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def _normalize_locale(cls, v):
+        # Only ko/en are supported; any other value (or empty) falls back to en.
+        value = str(v or "").strip().lower()
+        return value if value in {"ko", "en"} else "en"
 
     @field_validator("whisper_language", mode="before")
     @classmethod
