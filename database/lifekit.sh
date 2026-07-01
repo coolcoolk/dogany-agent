@@ -31,6 +31,9 @@
 #   lifekit.sh workout-classify <workout_id> <category> <subtype>   운동 한 건에 분류 추가(다대다)
 #   lifekit.sh agg-day  <date>           그날 섭취/매크로/소모/밸런스 (KEY=VALUE)
 #   lifekit.sh agg-week <월요일date>     그 주(월~일) 집계 + 직전주 대비
+#   lifekit.sh body-state                현재 신체/목표 상태 (KEY=VALUE)
+#   lifekit.sh config-set key=value ...  신체 스탯/설정 config 테이블 upsert (updated 자동)
+#   lifekit.sh log-metric <date> <metric> <value> [note]   측정값 시계열 1건 upsert
 #   lifekit.sh targets --burn N          eff_goal bmr neat deficit protein_goal (공백구분 한 줄)
 #   lifekit.sh dump                      sqlite3 .dump 상당 (백업용)
 #

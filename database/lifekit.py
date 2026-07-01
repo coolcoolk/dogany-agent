@@ -1393,6 +1393,42 @@ def cli_body_state(argv):
     print(f"fat_g={g['fat']}")
 
 
+def cli_config_set(argv):
+    # config-set key=value [key=value ...]
+    # Upsert one or more config rows via _CONFIG_STORE (set_stats). 'updated' auto.
+    # This is the CLI path the diet-log skill uses to persist body stats without
+    # touching the config table directly (set_stats/SqliteConfigStore mirror).
+    _u = ("Usage: lifekit.sh config-set key=value [key=value ...]\n"
+          "  Upserts config rows (body stats). 'updated' auto-set to today.")
+    if not argv:
+        _err(_u)
+    fields = {}
+    for tok in argv:
+        if '=' not in tok:
+            _err(f"not key=value: {tok}\n{_u}")
+        k, v = tok.split('=', 1)
+        k = k.strip()
+        if not k:
+            _err(f"empty key: {tok}\n{_u}")
+        fields[k] = v
+    if not fields:
+        _err(_u)
+    merged = set_stats(**fields)
+    for k in sorted(fields.keys()):
+        print(f"{k}={merged.get(k, '')}")
+
+
+def cli_log_metric(argv):
+    # log-metric <date> <metric> <value> [note]
+    # Upsert a single time-series measurement (one row per (date, metric)).
+    if len(argv) < 3 or not argv[0] or not argv[1]:
+        _err("Usage: lifekit.sh log-metric <date> <metric> <value> [note]")
+    date, metric, value = argv[0], argv[1], argv[2]
+    note = argv[3] if len(argv) > 3 else None
+    mid = log_metric(date, metric, value, note=note)
+    print(f"{mid}\t{date}\t{metric}\t{_f0(_num(value))}")
+
+
 _DISPATCH = {
     'meal-add': cli_meal_add,
     'meal-find': cli_meal_find,
@@ -1408,6 +1444,8 @@ _DISPATCH = {
     'targets': cli_targets,
     'migrate-body-stats': cli_migrate_body_stats,
     'body-state': cli_body_state,
+    'config-set': cli_config_set,
+    'log-metric': cli_log_metric,
     'dump': cli_dump,
     'person-find': cli_person_find,
     'person-add': cli_person_add,
