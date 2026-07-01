@@ -1,0 +1,17 @@
+# secrets / env
+.env
+**/.env
+# runtime / data / memory (personal)
+**/runtime/
+**/logs/
+**/sessions.json
+**/memories/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+# python / OS / build
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+*.bak
