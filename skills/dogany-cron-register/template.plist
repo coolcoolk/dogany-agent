@@ -12,7 +12,7 @@
         <string>--model</string>
         <string>haiku</string>
         <string>--prompt</string>
-        <string>__PROMPT__ (톤규칙 필수: 사용자 호칭, 존댓말 반말금지, ** 안씀, 기호 최소. 메시지 본문만 출력)</string>
+        <string>__PROMPT__ (톤규칙 필수: __USER_LABEL__ 호칭, 존댓말 반말금지, ** 안씀, 기호 최소. 메시지 본문만 출력)</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

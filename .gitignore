@@ -38,6 +38,9 @@ venv/
 *.bak.*
 files/tmp/
 _archive/
+# scrub / cleanup backups (never ship -- they hold pre-scrub content)
+.scrub-backup-*/
+scrub-backup-*/
 
 # deprecated scaffold (not for distribution)
 scripts/_deprecated-dgn036/
