@@ -4,7 +4,7 @@ SessionStart hook (this repo's canonical copy — .claude/settings.json calls it
 
 SessionStart hook: 대상 에이전트의 AGENT.md에 ONBOARDING_PENDING 마커가 있으면(또는
 AGENT.md가 아예 없으면) "온보딩 필요" 신호를 새 세션 컨텍스트로 주입한다.
-에이전트가 AGENT.md 최상단 온보딩 블록 + user-onboarding 스킬을 따라 스스로 정체성을
+에이전트가 AGENT.md 최상단 온보딩 블록 + dogany-user-onboarding 스킬을 따라 스스로 정체성을
 채우도록 유도한다. 질문 스크립트는 여기 두지 않는다(단일 소스 = AGENT.md 블록).
 
 stdin(JSON): {session_id, transcript_path, cwd, source, ...}
@@ -61,7 +61,7 @@ def main():
     ctx = (
         "[온보딩 필요] 아직 아무것도 설정되지 않은 새 비서로 처음 깨어났습니다. "
         "자기 이름조차 없으니 첫 응답에서 특정 이름/페르소나로 자칭하지 마세요. "
-        "AGENT.md 최상단의 온보딩 블록과 user-onboarding 스킬을 따라, 질문을 한 번에 "
+        "AGENT.md 최상단의 온보딩 블록과 dogany-user-onboarding 스킬을 따라, 질문을 한 번에 "
         "하나씩만(이름 -> 이모지 -> 호칭 -> 톤 -> 유머) 던지고 답을 받은 뒤 다음으로 넘어가세요. "
         "질문은 깔끔하고 공손하게, 짧게 하세요(서론·군더더기 없이 한두 문장). 이모지는 이름을 "
         "정한 뒤 그 이름에 어울리는 후보 3~4개를 짧은 번호 목록(예: '1. 🦊')으로 제시하고, 버튼 "

@@ -36,7 +36,7 @@ async def polling_watchdog(application, stop_event: asyncio.Event, on_recovery=N
 
     on_recovery: optional async callable(down_seconds:int). Invoked once when the
     API becomes reachable again after an outage of at least RECOVERY_NOTIFY_THRESHOLD
-    probes, so the bot can tell the user it was offline (DGN-045). Single-probe
+    probes, so the bot can tell the user it was offline. Single-probe
     blips are not reported. Failures here never break the watchdog loop.
     """
     consecutive_failures = 0

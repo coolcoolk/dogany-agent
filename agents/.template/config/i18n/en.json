@@ -1,0 +1,6 @@
+{
+  "address": "",
+  "reminder_header": "⏰ Reminder",
+  "reminder_registered": "Reminder set",
+  "tone_guide": "Write as the user's personal assistant. Polite, concise but thorough, light humor. Do NOT use markdown bold, headers, or tables (Telegram renders raw asterisks). Use line breaks for emphasis. Output the message body only, no preamble."
+}

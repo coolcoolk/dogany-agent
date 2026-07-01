@@ -1,4 +1,4 @@
-"""service.lifekit — stable SDK facade over the lifekit core (DGN-059).
+"""service.lifekit — stable SDK facade over the lifekit core.
 
 Skills import THIS package, never database/lifekit.py directly, and never the
 raw data files (body_stats.json / lifekit.db). Storage details (JSON vs sqlite)
@@ -60,7 +60,7 @@ load_body_stats = _core.load_body_stats
 compute_targets = _core.compute_targets
 compute_macro_goals = _core.compute_macro_goals
 
-# New write API (DGN-059): config store + metric timeseries.
+# New write API: config store + metric timeseries.
 set_stats = _core.set_stats
 set_config = _core.set_config
 get_config = _core.get_config

@@ -78,7 +78,7 @@ MAX_RAPID_CRASHES = 5
 CONFLICT_BACKOFF_BASE = 5  # seconds, base backoff before re-initializing polling
 CONFLICT_BACKOFF_MAX = 30  # seconds, cap for incremental backoff
 CONFLICT_SUSTAINED_SECONDS = 300  # log an error if conflict persists past this
-# DGN-065: Telegram delivers an album as N separate photo updates sharing one
+# Telegram delivers an album as N separate photo updates sharing one
 # media_group_id. Buffer same-group photos for this debounce window, then flush
 # them as a single task. 1.5s >> real album inter-arrival (~100ms), big margin.
 MEDIA_GROUP_DEBOUNCE = 1.5
@@ -96,13 +96,13 @@ class TelegramBot:
         self._active_tasks: Dict[int, asyncio.Task] = {}
         self._audio_dir = config.bot_data_dir / "audio"
         # Inbound photos land here: ephemeral runtime buffer, pruned after 7 days
-        # by the cleanup cron. DGN-048: photo input restored.
+        # by the cleanup cron. photo input restored.
         self._image_dir = config.bot_data_dir / "images"
-        # DGN-065: media_group_id -> buffered album state, flushed as one task.
+        # media_group_id -> buffered album state, flushed as one task.
         self._media_groups: Dict[str, dict] = {}
         self._media_group_lock = asyncio.Lock()
         # Inbound documents land here: files worth keeping (PDF, code, data).
-        # Kept indefinitely (not pruned by cleanup). DGN-049/051.
+        # Kept indefinitely (not pruned by cleanup).
         self._inbox_dir = PROJECT_ROOT / "files" / "inbox"
         from bridge.voice import AudioProcessor, build_transcriber
 
@@ -977,7 +977,7 @@ class TelegramBot:
     async def _handle_photo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        # DGN-048: inbound image. Save to image dir, then hand the path to the
+        # inbound image. Save to image dir, then hand the path to the
         # multimodal brain to open with its Read tool (mirrors the legacy bridge).
         if not await self._check_access(update):
             return
@@ -995,7 +995,7 @@ class TelegramBot:
             await self._dispatch_photo_task(update, user_id, [photo.file_id], caption)
             return
 
-        # DGN-065: album. Buffer same-group photos and debounce-flush as one task.
+        # album. Buffer same-group photos and debounce-flush as one task.
         async with self._media_group_lock:
             group = self._media_groups.get(mgid)
             if group is None:
@@ -1017,7 +1017,7 @@ class TelegramBot:
             group["timer"] = asyncio.create_task(self._flush_media_group_after(mgid))
 
     async def _flush_media_group_after(self, mgid: str) -> None:
-        # DGN-065: wait out the debounce; a newer photo for this group cancels us
+        # wait out the debounce; a newer photo for this group cancels us
         # and starts a fresh timer. When we win, pop and dispatch the whole album.
         try:
             await asyncio.sleep(MEDIA_GROUP_DEBOUNCE)
@@ -1034,7 +1034,7 @@ class TelegramBot:
     async def _dispatch_photo_task(
         self, update: Update, user_id: int, file_ids: List[str], caption: str
     ) -> None:
-        # DGN-065: download 1..N photos (single or album) and hand all paths to the
+        # download 1..N photos (single or album) and hand all paths to the
         # multimodal brain in ONE task, so an album is read as a single message.
         message = update.message
 
@@ -1077,7 +1077,7 @@ class TelegramBot:
     async def _handle_document_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        # DGN-049: inbound file/document (PDF, code, uncompressed image, ...).
+        # inbound file/document (PDF, code, uncompressed image, ...).
         if not await self._check_access(update):
             return
         message = update.message
@@ -1130,10 +1130,10 @@ class TelegramBot:
     async def _download_file(
         self, file_id: str, destination: Path, read_timeout: float = 60.0
     ) -> None:
-        # DGN-052: file downloads need a longer read_timeout than the shared
+        # file downloads need a longer read_timeout than the shared
         # request default (10s). When the Telegram API is briefly slow, a 10s
         # read_timeout drops inbound photos/documents/voice. 60s rides it out.
-        # DGN-052b: add retry-with-exponential-backoff for transient errors
+        # add retry-with-exponential-backoff for transient errors
         # (Telegram 5xx / connection reset / TLS blip). 3 attempts, 1s/2s backoff.
         # Mirrors _send_guaranteed pattern. Callers' catch/notify logic unchanged.
         _max_attempts = 3
@@ -1419,10 +1419,10 @@ class TelegramBot:
 
         Both agents share one machine+network, so a network outage silences them
         with no trace. On recovery we push a one-line notice to the owner chat(s)
-        so the silence is explained (DGN-045). In a private chat the chat_id equals
+        so the silence is explained. In a private chat the chat_id equals
         the user_id, so allowed_user_ids is the right delivery target.
         """
-        # DGN-045 outage-recovered user notice disabled per 사용자 request (2026-06-30):
+        # outage-recovered user notice disabled per owner request (2026-06-30):
         # too noisy on flaky networks. Recovery is still logged for visibility.
         minutes = max(1, round(down_seconds / 60))
         logger.info("Outage recovered after ~%d min (user notice disabled)", minutes)

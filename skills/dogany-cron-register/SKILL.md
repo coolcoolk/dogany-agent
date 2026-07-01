@@ -1,20 +1,20 @@
 ---
-name: cron-register
-description: 사용자이 반복작업(크론/정기루틴)을 맡기면 에이전트가 launchd로 끝까지 직접 등록한다. "매일 몇시에 X 해줘", "이거 정기적으로", "크론 걸어줘" 류 요청에 발동. plist 작성→검증→테스트 발송→launchctl load까지 에이전트가 처리하고, 코드만 던지고 사용자께 미루지 않는다. 게이트웨이/메인 봇 재시작만 예외(사용자께 요청).
+name: dogany-cron-register
+description: __USER_LABEL__이 반복작업(크론/정기루틴)을 맡기면 에이전트가 launchd로 끝까지 직접 등록한다. "매일 몇시에 X 해줘", "이거 정기적으로", "크론 걸어줘" 류 요청에 발동. plist 작성→검증→테스트 발송→launchctl load까지 에이전트가 처리하고, 코드만 던지고 __USER_LABEL__께 미루지 않는다. 게이트웨이/메인 봇 재시작만 예외(__USER_LABEL__께 요청).
 ---
 
-# cron-register — 반복작업 launchd 등록
+# dogany-cron-register — 반복작업 launchd 등록
 
-사용자이 반복작업을 맡기면 에이전트가 plist 작성부터 launchctl load까지 끝까지 직접 한다. (skill-creator 컨벤션을 따른 산출물.)
+__USER_LABEL__이 반복작업을 맡기면 에이전트가 plist 작성부터 launchctl load까지 끝까지 직접 한다. (dogany-skill-creator 컨벤션을 따른 산출물.)
 
 ## 발동 신호
 - "매일/매주 몇시에 X 해줘", "정기적으로", "크론 걸어줘", "루틴으로 만들어"
 
 ## 핵심 규칙
-- 코드만 던지고 사용자께 미루지 않는다 — 등록까지 에이전트가 한다.
-- 예외: 게이트웨이/메인 봇 서비스 재시작·중지는 혼자 하지 말 것(사용자께 요청). 새 루틴 잡 load는 에이전트가 직접 OK.
+- 코드만 던지고 __USER_LABEL__께 미루지 않는다 — 등록까지 에이전트가 한다.
+- 예외: 게이트웨이/메인 봇 서비스 재시작·중지는 혼자 하지 말 것(__USER_LABEL__께 요청). 새 루틴 잡 load는 에이전트가 직접 OK.
 - 모델은 정기·단순이면 haiku (모델 라우팅).
-- 메시지 생성 프롬프트엔 톤 규칙 박을 것: 사용자 호칭, 존댓말(반말 금지), ** 안 씀, 기호 최소.
+- 메시지 생성 프롬프트엔 톤 규칙 박을 것: __USER_LABEL__ 호칭, 존댓말(반말 금지), ** 안 씀, 기호 최소.
 
 ## 절차
 1. 현재 시각·타임존 확인 (`date "+%Z %z %H:%M"`, `readlink /etc/localtime`). 맥은 Asia/Seoul KST = launchd 로컬타임 기준.

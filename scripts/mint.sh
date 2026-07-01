@@ -159,6 +159,23 @@ for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist; do
   [ "$np" != "$p" ] && mv "$p" "$np"
 done
 
+# 3b) write an instance manifest so update.sh can re-substitute the same five
+#     placeholders when it refreshes framework files, and record the framework
+#     version this instance was built from. Non-secret; no token/chat id here.
+FW_VERSION="unknown"
+[ -f "$REPO_ROOT/VERSION" ] && FW_VERSION="$(head -n1 "$REPO_ROOT/VERSION" | tr -d '[:space:]')"
+cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
+# .instance.conf -- non-secret instance manifest written by mint.sh.
+# Consumed by update.sh to re-substitute placeholders on framework refresh.
+# Secrets (bot token, chat id) live in .telegram_bot/.env, NEVER here.
+DOGANY_AGENT_NAME=${AGENT_NAME}
+DOGANY_AGENT_LABEL=${AGENT_LABEL}
+DOGANY_USER_LABEL=${USER_LABEL}
+DOGANY_FW_VERSION=${FW_VERSION}
+DOGANY_REPO_ROOT=${REPO_ROOT}
+MANIFEST
+echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
+
 # 4) create the project .env from example (token in; placeholder otherwise).
 ENV_SRC="$PROJECT_ROOT/.telegram_bot/.env.example"
 ENV_DST="$PROJECT_ROOT/.telegram_bot/.env"

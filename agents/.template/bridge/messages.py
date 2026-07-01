@@ -87,7 +87,7 @@ INTERNAL_ERROR = t("internal_error")
 PROCESSING_FAILED = t("processing_failed")
 GENERIC_ERROR = t("generic_error")
 
-# --- Outage / failure notices (DGN-045) ---
+# --- Outage / failure notices ---
 OUTAGE_RECOVERED = t("outage_recovered")
 PROACTIVE_TURN_FAILED = t("proactive_turn_failed")
 

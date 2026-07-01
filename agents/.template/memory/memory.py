@@ -40,7 +40,7 @@ EMBED_DIM = 1024  # bge-m3 출력 차원
 
 RRF_K = 60          # RRF 표준 상수
 MISS_THRESHOLD = 0.30  # top1 코사인이 이 값 미만이면 "미스"로 집계 (stats)
-TRANSCRIPT_FTS_TOPK = 3  # 당일 롤링 인덱스(DGN-037) 검색에서 끼워넣을 최대 raw 대화 수
+TRANSCRIPT_FTS_TOPK = 3  # 당일 롤링 인덱스 검색에서 끼워넣을 최대 raw 대화 수
 
 
 # ======================================================================
@@ -287,7 +287,7 @@ def init_db(conn):
             value TEXT
         );
 
-        -- 당일 롤링 인덱스(DGN-037): 아직 공고화 안 된 오늘 raw 대화를 기계적으로 적재.
+        -- 당일 롤링 인덱스: 아직 공고화 안 된 오늘 raw 대화를 기계적으로 적재.
         -- LLM 0. 새벽 증류로 정식 노트가 된 뒤 그날치는 프룬한다(consolidate 말미).
         CREATE TABLE IF NOT EXISTS transcript_notes (
             id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -524,7 +524,7 @@ def search_core(query, k=5, log=True):
     conn = connect()
     init_db(conn)
 
-    # 당일 롤링 인덱스(DGN-037): 검색 직전 오늘 raw 대화를 증분 적재(기계적, best effort).
+    # 당일 롤링 인덱스: 검색 직전 오늘 raw 대화를 증분 적재(기계적, best effort).
     # 같은 날 다른 세션 대화가 아직 공고화 전이어도 여기서 잡혀 검색에 노출된다.
     index_transcript_fts(conn)
 
@@ -842,6 +842,7 @@ TARGET_MEMORY_MD = os.path.join(MEMORIES_DIR, "inbox.md")
 DEDUP_THRESHOLD = 0.82     # 후보가 기존 노트와 이 코사인 이상이면 "이미 아는 것"
 DEFAULT_LOOKBACK_DAYS = 3  # 워터마크 없을 때(최초) 최근 며칠치를 볼지
 MEMORY_LINES_CAP = 600     # inbox.md 줄 수가 이 값 넘으면 "정리할까요?" 제안
+CONSOLIDATE_REPORT_ENABLED = os.environ.get("DOGANY_MEMORY_REPORT", "0") == "1"  # product: nightly "memory saved" Telegram push OFF by default
 # 대화가 길면 입력 한도를 넘어 압축이 통째로 실패한다.
 # 줄(메시지) 경계로 이 글자수 이하 청크로 쪼개 각각 압축한 뒤 항목을 합친다.
 CONSOLIDATE_CHUNK_CHARS = 24000
@@ -1121,7 +1122,7 @@ def collect_transcript(watermark_iso, now):
 
 
 # ======================================================================
-# 당일 롤링 인덱스 (DGN-037) — transcript_fts 증분 적재/검색/프룬
+# 당일 롤링 인덱스 — transcript_fts 증분 적재/검색/프룬
 # ======================================================================
 def _tsfts_load_watermark(conn):
     """당일 인덱스 워터마크(ts_fts_last) 로드. 없으면 None."""
@@ -1392,8 +1393,10 @@ def _build_consolidate_report(new_items, skipped, had_error, mem_lines):
 
 
 def _send_silent_report(text):
-    """proactive-push 의 push.sh 로 무음 발송. 성공 True.
+    """dogany-proactive-push 의 push.sh 로 무음 발송. 성공 True.
     push.sh --silent --text <리포트> 호출."""
+    if not CONSOLIDATE_REPORT_ENABLED:
+        return False
     push_sh = os.path.normpath(os.path.join(HERE, "..", "routines", "push.sh"))
     if not os.path.isfile(push_sh):
         print(f"[warn] push.sh 없음: {push_sh}", file=sys.stderr)
@@ -1543,7 +1546,7 @@ def cmd_consolidate(args):
         where = append_notes_to_md(TARGET_MEMORY_MD, None, tagged)
         print(f"[consolidate] {where}")
 
-    # 6) 워터마크 전진 + 당일 롤링 인덱스 프룬(증류 끝난 ts<=max_ts raw 삭제, DGN-037)
+    # 6) 워터마크 전진 + 당일 롤링 인덱스 프룬(증류 끝난 ts<=max_ts raw 삭제)
     _ts_save_watermark(conn, max_ts)
     pruned = prune_transcript_fts(conn, max_ts)
     print(f"[consolidate] 워터마크 전진 → {max_ts} (당일 raw {pruned}행 프룬)")
@@ -1935,7 +1938,7 @@ def _now_local_line():
 
 
 def _hook_body_state_line():
-    """현재 신체/목표 상태 한 줄(DGN-071 v2 결정론적 주입). lifekit 있으면 값, 없으면 None.
+    """현재 신체/목표 상태 한 줄(v2 결정론적 주입). lifekit 있으면 값, 없으면 None.
 
     핵심: 이 주입은 검색/주제분류/에이전트 판단에 의존하지 않는다. lifekit(config 테이블)이
     붙어 있으면 매 턴 무조건 body-state 한 줄을 넣어, "묻기 전에 읽는" 규칙을 코드로 못 박는다.
@@ -2005,7 +2008,7 @@ def _hook_body_state_line():
 
 def _hook_compose(recall_ctx=None):
     """주입할 additionalContext 문자열을 조립(항상 시각 + 있으면 body-state + 있으면 recall).
-    body-state 는 DGN-071 v2 결정론적 주입(매 턴). recall 은 약한매칭 컷을 통과한 것만."""
+    body-state 는 v2 결정론적 주입(매 턴). recall 은 약한매칭 컷을 통과한 것만."""
     parts = [_now_local_line()]
     bs = _hook_body_state_line()
     if bs:
@@ -2017,7 +2020,7 @@ def _hook_compose(recall_ctx=None):
 
 def _emit_empty():
     """매칭 없어도 현재 시각 한 줄 + (있으면) body-state 를 무조건 주입 + 성공.
-    body-state 는 DGN-071 v2: lifekit 있으면 검색 결과와 무관하게 매 턴 결정론적 주입."""
+    body-state 는 v2: lifekit 있으면 검색 결과와 무관하게 매 턴 결정론적 주입."""
     try:
         out = {
             "hookSpecificOutput": {

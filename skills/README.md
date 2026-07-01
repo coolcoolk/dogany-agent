@@ -6,8 +6,8 @@ skill here updates every agent at once (no copies).
 
 ## Framework vs domain skills
 
-- Framework skills (this folder): `cron-register`, `proactive-push`,
-  `skill-creator`, `user-onboarding`. Symlinked into every agent's
+- Framework skills (this folder): `dogany-cron-register`, `dogany-proactive-push`,
+  `dogany-skill-creator`, `dogany-user-onboarding`, `dogany-memory-search`, `dogany-reminder`. Symlinked into every agent's
   `.claude/skills/`.
 - Domain skills: real directories inside a specific agent's `.claude/skills/`
   (not symlinks). They belong to that agent -- e.g. `diet-log`, `workout-log`,

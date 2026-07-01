@@ -32,10 +32,10 @@ Edit rights: the agent must NOT self-edit; RULES + AGENT + USER + memories/ = co
 - Send a file to the user: emit a standalone line `send_file:: <absolute path>` (one per file). The bridge strips the marker and attaches it. A bare path in prose is NOT sent (auto-scan disabled). File must exist, be <10MB; paths outside PROJECT_ROOT add a confirm step.
 
 ## Skills
-- New skill/cron/routine: read the skill-creator skill first. Repeating workflow: proactively propose making it a skill.
+- New skill/cron/routine: read the dogany-skill-creator skill first. Repeating workflow: proactively propose making it a skill.
 - Feedback on a skill's output = signal to edit that SKILL.md (or its script) directly, not just an on-the-spot fix.
 
 ## Memory
 - Markdown = source of truth; vector index optional/regenerable. Hot inject = @USER.md + @AGENT.md only; MEMORY.md is cold (hook auto-searches; read it directly if needed).
 - New fact: append to MEMORY.md atomically with (date, source), core facts only.
-- User profile: USER.md only. Edited by the main agent on change (confirm if it differs); other agent reads only and hands profile changes to the main agent or user. Onboarding signal: user-onboarding skill
+- User profile: USER.md only. Edited by the main agent on change (confirm if it differs); other agent reads only and hands profile changes to the main agent or user. Onboarding signal: dogany-user-onboarding skill

@@ -480,7 +480,7 @@ class SdkBridge:
                 await self._flush_proactive(user_id, state)
 
     async def _flush_proactive_error(self, user_id: int, state: _UserStreamState) -> None:
-        """Surface a failed no-pending (background/proactive) turn (DGN-045).
+        """Surface a failed no-pending (background/proactive) turn.
 
         Mirrors _flush_proactive's delivery guards but sends a fixed failure
         notice instead of buffered text (which is empty on an error result).

@@ -677,14 +677,14 @@ DEFAULT_STATS = {
 def load_body_stats():
     """신체 스탯 전체 dict(DEFAULT_STATS 위에 저장값 머지).
 
-    DGN-071 v2: 진실의 원천을 body_stats.json 직접 읽기에서 _CONFIG_STORE(SQL)
+    v2: 진실의 원천을 body_stats.json 직접 읽기에서 _CONFIG_STORE(SQL)
     경유로 옮겼다. card.py/compute_targets 등 모든 호출부가 SQL truth를 읽는다.
     _CONFIG_STORE는 이 함수보다 아래에서 정의되지만 파이썬은 전역을 호출 시점에
     해석하므로 순서 문제 없다(모듈 최초 import 후 첫 호출 시 이미 바인딩됨)."""
     return _CONFIG_STORE.load()
 
 
-# ── 설정 저장소 추상화 (DGN-059) ────────────────────────────
+# ── 설정 저장소 추상화 ────────────────────────────
 # 저장 백엔드(JSON/sqlite)를 호출부로부터 은닉하는 얇은 인터페이스.
 # 지금은 JsonConfigStore(body_stats.json 어댑터)가 1차 백엔드.
 # 나중에 SqliteConfigStore로 교체해도 set_stats/get_config 호출부는 무변경.
@@ -767,7 +767,7 @@ class JsonConfigStore(ConfigStore):
 
 
 class SqliteConfigStore(ConfigStore):
-    """config 테이블(key/value TEXT) 백엔드. DGN-071 v2에서 신체 스탯의 canonical.
+    """config 테이블(key/value TEXT) 백엔드. v2에서 신체 스탯의 canonical.
 
     config.value 는 TEXT 이므로 load()는 DEFAULT_STATS 의 숫자 키를 명시적으로
     float 캐스팅해 JsonConfigStore(파일 JSON, 숫자는 그대로 int/float)와 값 계약을
@@ -836,12 +836,12 @@ class SqliteConfigStore(ConfigStore):
         return self.load()
 
 
-# 기본 설정 저장소(현재 백엔드). DGN-071 v2 클린 컷오버: SQL(config 테이블)이 canonical.
+# 기본 설정 저장소(현재 백엔드). v2 클린 컷오버: SQL(config 테이블)이 canonical.
 # 교체 시 이 한 줄만 바꾸면 호출부 무변경(load_body_stats/get_config/set_stats 모두 경유).
 _CONFIG_STORE = SqliteConfigStore()
 
 
-# ── 설정값 쓰기/읽기 API (DGN-059) ──────────────────────────
+# ── 설정값 쓰기/읽기 API ──────────────────────────
 def set_stats(**fields):
     """body_stats 측정/설정 필드를 원자적으로 갱신. 갱신된 전체 dict 반환.
 
@@ -865,7 +865,7 @@ def get_config(key, default=None):
     return _CONFIG_STORE.get(key, default)
 
 
-# ── 측정값 시계열 API (DGN-059) ─────────────────────────────
+# ── 측정값 시계열 API ─────────────────────────────
 def log_metric(date, metric, value, note=None, conn=None):
     """metric_log에 측정값 1건 upsert(하루 한 측정). (date, metric)이 같으면 갱신.
 
@@ -1337,7 +1337,7 @@ def cli_appt_show(argv):
 
 
 def cli_migrate_body_stats(argv):
-    """body_stats.json 의 모든 키를 config 테이블로 복사(멱등, DGN-071 v2).
+    """body_stats.json 의 모든 키를 config 테이블로 복사(멱등, v2).
 
     DEFAULT_STATS 에 없는 키(goal_mode, skeletal_muscle_kg, updated 등)도 전부 복사한다.
     _CONFIG_STORE(=SqliteConfigStore) 경유로 upsert 하므로 몇 번 돌려도 안전(멱등).
@@ -1375,7 +1375,7 @@ def cli_migrate_body_stats(argv):
 
 
 def cli_body_state(argv):
-    """현재 신체/목표 상태를 KEY=VALUE 로 출력(DGN-071 v2 hook/사람용).
+    """현재 신체/목표 상태를 KEY=VALUE 로 출력(v2 hook/사람용).
 
     goal_mode + weight + 계산된 목표(compute_targets/compute_macro_goals)를 함께 낸다.
     hook 주입도 이 값을 재사용(1 SQLite read). 값은 SQL canonical(_CONFIG_STORE)에서 온다."""

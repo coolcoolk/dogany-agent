@@ -1,16 +1,16 @@
 ---
-name: proactive-push
-description: 사용자 텔레그램으로 능동적으로 메시지를 보낸다(아무도 안 불러도 먼저 거는 outbound 푸시). 정기 루틴(브리핑/회고/알림)이나 작업 완료 통보에 사용. 내용을 그대로 보내거나(--text), 지정 모델로 생성해서 보낸다(--prompt --model). 크론/launchd에서 호출하는 핵심 부품.
+name: dogany-proactive-push
+description: __USER_LABEL__ 텔레그램으로 능동적으로 메시지를 보낸다(아무도 안 불러도 먼저 거는 outbound 푸시). 정기 루틴(브리핑/회고/알림)이나 작업 완료 통보에 사용. 내용을 그대로 보내거나(--text), 지정 모델로 생성해서 보낸다(--prompt --model). 크론/launchd에서 호출하는 핵심 부품.
 ---
 
-# proactive-push — 능동 텔레그램 푸시
+# dogany-proactive-push — 능동 텔레그램 푸시
 
-사용자 텔레그램으로 봇이 **먼저** 메시지를 보낸다(봇 토큰·chat_id는 `runtime/.env`에서 읽음). 핵심 스크립트는 `routines/push.sh`.
+__USER_LABEL__ 텔레그램으로 봇이 **먼저** 메시지를 보낸다(봇 토큰·chat_id는 `runtime/.env`에서 읽음). 핵심 스크립트는 `routines/push.sh`.
 
 ## 언제 쓰나
 - 정기 루틴(일일 회고, 식단 브리핑 등)을 크론/launchd에서 발사할 때
-- 긴 작업 완료/실패를 사용자께 통보할 때
-- 그 외 사용자이 요청 안 해도 알릴 가치가 있는 것 (단, 빈도 절제 — 알림 피로 주의)
+- 긴 작업 완료/실패를 __USER_LABEL__께 통보할 때
+- 그 외 __USER_LABEL__이 요청 안 해도 알릴 가치가 있는 것 (단, 빈도 절제 — 알림 피로 주의)
 
 ## 사용법
 

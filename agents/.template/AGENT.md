@@ -15,7 +15,7 @@ Do NOT ask communication preference (already set by RULES Output/notation). As e
 arrives, fill the matching field below (Name, Emoji, the Relationship "Call the user" line, Tone, Humor).
 When all are filled, DELETE this block and the
 ONBOARDING_PENDING marker line above. This is the ONLY time you ever edit your own baseline.
-See the user-onboarding skill for the full procedure. -->
+See the dogany-user-onboarding skill for the full procedure. -->
 
 # AGENT
 

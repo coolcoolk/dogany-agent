@@ -2,7 +2,7 @@
 name: diet-log
 description: >
   식단 기록 AND 식단/칼로리 현황 조회를 모두 담당한다. 두 상황 다 이 스킬로 처리한다.
-  (1) 기록: 사용자이 음식을 먹었다고 말하거나 식단 기록을 요청할 때.
+  (1) 기록: __USER_LABEL__이 음식을 먹었다고 말하거나 식단 기록을 요청할 때.
   "아침 먹었어", "점심 삼겹살 먹었어", "간식으로 견과 먹었어", 음식 이름 + 양 언급,
   바코드 이미지나 번호 전송, 영양성분 라벨 사진 전송 등 모든 식단 입력 상황.
   식품 영양성분 DB를 먼저 조회하고, 없으면 LLM 추정으로 로컬 lifekit.db 식단(meals) 테이블에 기록한다.
@@ -18,7 +18,7 @@ description: >
 
 ## 개요
 
-사용자이 음식/식단 정보를 주면:
+__USER_LABEL__이 음식/식단 정보를 주면:
 1. 로컬 캐시 → 공공 식품영양성분 DB 조회 (정확한 수치 우선)
 2. DB 미등록이면 (브랜드면 웹검색 후) LLM 추정
 3. 로컬 lifekit.db meals 테이블에 기록 (`lifekit.sh meal-add`)
@@ -74,7 +74,7 @@ python3 .claude/skills/diet-log/lookup.py barcode "바코드번호" <grams>
 
 ### C. 영양성분 라벨 사진인 경우
 
-이미지에서 직접 수치를 읽어 lifekit.db에 기록한다(meal-add). 더불어 **읽은 라벨값은 반드시 `cache-add`로 캐시에 적재한다**. 라벨은 사용자이 직접 올린 공식 수치라 신뢰도가 가장 높으니 `estimated:false`로 넣고, 같은 제품을 다음에 또 먹으면 토큰 0으로 조회된다. `key_name`은 제품명, `grams`는 라벨 기준 제공량으로 넣는다.
+이미지에서 직접 수치를 읽어 lifekit.db에 기록한다(meal-add). 더불어 **읽은 라벨값은 반드시 `cache-add`로 캐시에 적재한다**. 라벨은 __USER_LABEL__이 직접 올린 공식 수치라 신뢰도가 가장 높으니 `estimated:false`로 넣고, 같은 제품을 다음에 또 먹으면 토큰 0으로 조회된다. `key_name`은 제품명, `grams`는 라벨 기준 제공량으로 넣는다.
 
 ### D. 캐시 적재 (cache-add)
 
@@ -108,8 +108,8 @@ JSON 구조 (값은 항상 grams 기준 1회 제공량 절대량):
 
 1. lookup.py 실행 → JSON 결과 파싱
 2. `found: true`이면 DB 값 사용, `found: false`이면 (브랜드 웹검색 후) LLM 추정
-3. 후보가 여럿이면 식품명·제조사를 보고 가장 근접한 것 선택 (판단 어려우면 사용자께 확인)
-4. 양(g)이 없으면 사용자께 확인 후 기록
+3. 후보가 여럿이면 식품명·제조사를 보고 가장 근접한 것 선택 (판단 어려우면 __USER_LABEL__께 확인)
+4. 양(g)이 없으면 __USER_LABEL__께 확인 후 기록
 5. 식사 구분(아침/점심/저녁/간식)이 없으면 확인 후 기록
 6. lifekit.sh meal-add로 기록
 
@@ -153,7 +153,7 @@ $PROJECT_ROOT/database/lifekit.sh meal-upd <id> field=value [field=value ...]
 | AMT_NUM24 | 포화지방 | g |
 | AMT_NUM25 | 트랜스지방 | g |
 
-## 보고 형식 (사용자께)
+## 보고 형식 (__USER_LABEL__께)
 
 기록 후 간결하게:
 ```
@@ -244,7 +244,7 @@ OUT=$("$RENDER_PY" .claude/skills/diet-log/card.py '{"output":"files/outbox/diet
 ★전송 경로 분기: card.py 기본 출력은 `/tmp/diet_card.png`인데, /tmp는 PROJECT_ROOT 밖이라 라이브 턴의 `send_file::` 마커로는 자동전송이 막힌다(RULES Files 참고). 라이브 턴이면 카드를 `files/outbox/` 안으로 출력하고 `send_file::`로 보낸다. 크론/봇 직발송이면 push.sh가 /tmp도 보낸다.
 
 ```bash
-# 라이브 턴(사용자과 대화 중 직접 응답): outbox로 출력 후 send_file:: <절대경로>
+# 라이브 턴(__USER_LABEL__과 대화 중 직접 응답): outbox로 출력 후 send_file:: <절대경로>
 OUT=$("$RENDER_PY" .claude/skills/diet-log/card.py '{"output":"files/outbox/diet_card.png"}')
 
 # 크론/루틴(봇 직발송):
@@ -254,11 +254,11 @@ routines/push.sh --photo "$OUT"
 
 ### 목표 수치 (card.py가 신체 스탯에서 자동 계산 — 입력 불필요)
 
-목표 칼로리는 lifekit.db config 테이블의 신체 스탯에서 **자동 계산**한다. 사용자께 "총 칼로리 얼마" 물을 필요 없음.
+목표 칼로리는 lifekit.db config 테이블의 신체 스탯에서 **자동 계산**한다. __USER_LABEL__께 "총 칼로리 얼마" 물을 필요 없음.
 
 **묻기 전에 읽는다:** 몸무게·목표(goal_mode)·매크로 목표를 되묻지 말고 먼저
 `$PROJECT_ROOT/database/lifekit.sh body-state` 로 현재 goal_mode·weight·eff_goal·매크로 목표를 읽는다.
-lifekit 값이 canonical. 찾고도 없을 때만 사용자께 확인.
+lifekit 값이 canonical. 찾고도 없을 때만 __USER_LABEL__께 확인.
 
 **신체 스탯 단일 원천: lifekit config 테이블** (SqliteConfigStore).
 필드: weight_kg, height_cm, skeletal_muscle_kg, fat_mass_kg, lean_mass_kg, avg_steps,
