@@ -91,10 +91,21 @@ def extract_path_candidates(tool_name: str, tool_input: Any) -> List[str]:
     return candidates
 
 
-def extract_outside_paths(tool_name: str, tool_input: Any, project_root: Path) -> List[str]:
-    """Return resolved paths that fall outside project_root for guarded tools."""
+def extract_outside_paths(
+    tool_name: str,
+    tool_input: Any,
+    project_root: Path,
+    extra_roots: List[Path] = None,
+) -> List[str]:
+    """Return resolved paths that fall outside all allowed roots for guarded tools.
+
+    extra_roots -- additional roots (from config.extra_allowed_roots) that are
+    treated as inside.  Default (None / empty) keeps the original strict behavior
+    where only project_root is allowed.
+    """
     if tool_name not in PATH_GUARDED_TOOLS:
         return []
+    allowed_roots = [project_root] + list(extra_roots or [])
     outside: List[str] = []
     seen = set()
     for raw in extract_path_candidates(tool_name, tool_input):
@@ -102,7 +113,7 @@ def extract_outside_paths(tool_name: str, tool_input: Any, project_root: Path) -
             resolved = _resolve_candidate(raw, project_root)
         except Exception:
             continue
-        if not _is_within_root(resolved, project_root):
+        if not any(_is_within_root(resolved, root) for root in allowed_roots):
             path_str = str(resolved)
             if path_str not in seen:
                 seen.add(path_str)

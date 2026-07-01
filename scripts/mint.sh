@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # mint.sh -- instantiate a STANDALONE dogany-agent from this repo.
 #
-# Unlike dogany-project/scripts/mint-agent.sh (which mints from agents/.template
-# into a shared parent tree with ../../rules + ../../../database), dogany-agent is
-# SELF-CONTAINED: the minted instance dir is itself PROJECT_ROOT, and lifekit lives
-# inside the instance at database/. No parent-tree paths are ever assumed.
+# The repo mirrors dogany-project's layout: the per-agent template lives at
+# agents/.template, shared code is hoisted to rules/ + skills/ + database/ +
+# service/, and agents/.template references the shared bits via symlinks
+# (RULES.md -> ../../rules/RULES.md ; .claude/skills/<fw> -> ../../../../skills/<fw>).
+#
+# A minted instance is SELF-CONTAINED: the target dir is itself PROJECT_ROOT and
+# carries real copies (never symlinks) of everything it needs -- rules, framework
+# skills, database schema, service SDK -- so it runs with no parent-tree paths.
+# mint.sh therefore copies from agents/.template while DEREFERENCING the shared
+# symlinks (-L), and additionally bundles rules/, database/schema.sql, and
+# service/ into the instance.
 #
 # Placeholders substituted (the ONLY five the framework uses):
 #   __PROJECT_ROOT__   absolute instance root  = the target dir itself
@@ -20,6 +27,7 @@ set -euo pipefail
 # Repo root = parent of this scripts/ dir. Path-independent: derived from the
 # script location, never a hardcoded or parent-tree assumption.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMPLATE="$REPO_ROOT/agents/.template"
 
 usage() {
   cat <<USAGE
@@ -84,6 +92,8 @@ fi
 if [ "$PROJECT_ROOT" = "$REPO_ROOT" ]; then
   echo "ERROR: refusing to mint onto the repo root itself: $REPO_ROOT" >&2; exit 1
 fi
+# Guard: template must exist.
+[ -d "$TEMPLATE" ] || { echo "ERROR: template not found: $TEMPLATE" >&2; exit 1; }
 
 echo "[mint] repo       = $REPO_ROOT"
 echo "[mint] agent      = $AGENT_NAME"
@@ -92,8 +102,10 @@ echo "[mint] label      = $AGENT_LABEL   user = $USER_LABEL"
 echo "[mint] home       = $HOME_DIR"
 echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 
-# 1) copy repo -> target, excluding VCS / runtime / build cruft.
-rsync -a \
+# 1) copy agents/.template -> target, DEREFERENCING symlinks (-L) so the shared
+#    RULES.md + framework skills land as real files in the self-contained instance.
+#    Excludes VCS / runtime / build cruft.
+rsync -aL \
   --exclude '.git' \
   --exclude 'bridge/venv' \
   --exclude 'venv' \
@@ -103,7 +115,20 @@ rsync -a \
   --exclude '.DS_Store' \
   --exclude 'memory/state.db' \
   --exclude '*.db' \
-  "$REPO_ROOT/" "$PROJECT_ROOT/"
+  "$TEMPLATE/" "$PROJECT_ROOT/"
+
+# 1b) bundle the hoisted shared roots the instance needs to be self-contained:
+#     - rules/USER.md scaffold (RULES.md already dereferenced from the template),
+#     - database/ (schema only; *.db excluded -- lifekit.db is initialized below),
+#     - service/ SDK facade (resolves ../../database/lifekit.py at the instance root).
+mkdir -p "$PROJECT_ROOT/database"
+[ -f "$REPO_ROOT/database/schema.sql" ] && cp -p "$REPO_ROOT/database/schema.sql" "$PROJECT_ROOT/database/schema.sql"
+[ -f "$REPO_ROOT/database/lifekit.py" ] && cp -p "$REPO_ROOT/database/lifekit.py" "$PROJECT_ROOT/database/lifekit.py"
+[ -f "$REPO_ROOT/database/lifekit.sh" ] && cp -p "$REPO_ROOT/database/lifekit.sh" "$PROJECT_ROOT/database/lifekit.sh"
+[ -f "$REPO_ROOT/database/schema.sql" ] && [ -f "$REPO_ROOT/database/README.md" ] && cp -p "$REPO_ROOT/database/README.md" "$PROJECT_ROOT/database/README.md"
+if [ -d "$REPO_ROOT/service" ]; then
+  rsync -aL --exclude '__pycache__' --exclude '*.pyc' "$REPO_ROOT/service/" "$PROJECT_ROOT/service/"
+fi
 
 # 2) substitute the five placeholders across text files.
 #    '#' delimiter since values (paths) contain '/'. Tokens are distinct and the

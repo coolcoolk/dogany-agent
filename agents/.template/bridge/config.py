@@ -46,6 +46,13 @@ LOGS_DIR = BOT_DATA_DIR / "logs"
 SESSION_STORE_PATH = BOT_DATA_DIR / "sessions.json"
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 
+# Born-locked ownership state files (see bridge/ownership.py). Plain text files
+# under BOT_DATA_DIR: a fresh bot with an empty allowed_user_ids is NOT open to
+# all -- it stays in claim mode until the first user claims it with a code.
+OWNER_LOCK_PATH = BOT_DATA_DIR / "owner.lock"
+CLAIM_CODE_PATH = BOT_DATA_DIR / "claim_code"
+CLAIMED_FLAG_PATH = BOT_DATA_DIR / ".claimed"
+
 _PLACEHOLDER_TOKENS = {"your_bot_token_here", ""}
 
 # Project .env first (higher priority). override=True so the project file wins
@@ -76,7 +83,18 @@ class Config(BaseSettings):
     telegram_bot_token: str = Field(..., description="Telegram Bot API token")
     allowed_user_ids: List[int] = Field(
         default_factory=list,
-        description="Allowed Telegram user IDs (empty = allow all)",
+        description=(
+            "Allowed Telegram user IDs. When set, this list is AUTHORITATIVE and "
+            "claim mode is off. When empty, the bot is born-locked: it does NOT "
+            "allow all -- it stays in claim mode until claimed (see ownership.py)."
+        ),
+    )
+    extra_allowed_roots: List[Path] = Field(
+        default_factory=list,
+        description=(
+            "Extra absolute roots the path guard treats as inside PROJECT_ROOT "
+            "(os.pathsep-separated absolute paths; empty = strict default)"
+        ),
     )
 
     # Claude CLI / settings
@@ -133,6 +151,19 @@ class Config(BaseSettings):
             return [int(x.strip()) for x in v.split(",") if x.strip()]
         if isinstance(v, int):
             return [v]
+        return v
+
+    @field_validator("extra_allowed_roots", mode="before")
+    @classmethod
+    def _parse_extra_roots(cls, v):
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            return [
+                Path(entry.strip()).expanduser().resolve()
+                for entry in v.split(os.pathsep)
+                if entry.strip()
+            ]
         return v
 
     @field_validator("auto_new_session_after_hours", mode="before")

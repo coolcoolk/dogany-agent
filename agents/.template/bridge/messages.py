@@ -13,6 +13,20 @@ NO_PERMISSION = (
 )
 NO_PERMISSION_CALLBACK = "No permission to use this feature"
 
+# --- Born-locked ownership / claim flow (see bridge/ownership.py) ---
+# Product default locale is English; i18n is a later phase.
+CLAIM_SUCCESS = "You are now the owner of this bot."
+# Logged to stdout/log on startup when the bot is in claim mode. {code} is the
+# one-time claim code the first user sends back as '/claim <code>'.
+CLAIM_CODE_LOG = (
+    "CLAIM CODE: {code} -- send '/claim {code}' to this bot from your Telegram "
+    "account to become the owner."
+)
+# Logged when owner.lock is missing but the instance was already claimed once.
+OWNER_LOCK_MISSING_LOG = (
+    "owner.lock missing but instance already claimed; reclaim required"
+)
+
 # --- Commands ---
 WELCOME = "Hello, {name}! Send a message to start chatting, or use /skills to view available skills."
 NEW_SESSION = (

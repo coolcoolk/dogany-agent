@@ -38,6 +38,7 @@ from bridge.config import (
     PROCESS_TIMEOUT,
     config,
 )
+from bridge import ownership
 from bridge.formatting import (
     IMAGE_EXTS,
     code_segment_html,
@@ -296,6 +297,7 @@ class TelegramBot:
 
     async def _on_ready(self) -> None:
         self._audio_dir.mkdir(parents=True, exist_ok=True)
+        self._announce_ownership_mode()
         try:
             await self._audio_processor.cleanup_stale_audio_files(
                 self._audio_dir, STALE_AUDIO_SECONDS
@@ -303,6 +305,30 @@ class TelegramBot:
         except Exception:
             pass
         await self._set_bot_commands()
+
+    def _announce_ownership_mode(self) -> None:
+        """Log the effective ownership mode; in claim mode, surface the claim code.
+
+        Born-locked: an empty allowed_user_ids with no owner.lock does NOT allow
+        all -- it enters claim mode and prints a one-time code the first user
+        sends back as '/claim <code>' to take ownership.
+        """
+        mode, owner_id = ownership.resolve_owner(
+            config.allowed_user_ids, config.bot_data_dir
+        )
+        if mode == ownership.MODE_AUTHORITATIVE:
+            logger.info("Ownership: authoritative allowed_user_ids (claim mode off)")
+        elif mode == ownership.MODE_OWNER_LOCK:
+            logger.info("Ownership: owner.lock -> sole owner id %s", owner_id)
+        elif mode == ownership.MODE_LOCKED_OUT:
+            logger.warning(messages.OWNER_LOCK_MISSING_LOG)
+        else:  # MODE_CLAIM
+            code = ownership.ensure_claim_code(config.bot_data_dir)
+            line = messages.CLAIM_CODE_LOG.format(code=code)
+            # Print prominently to stdout AND log so it is visible however the
+            # bot was launched (foreground console or launchd log file).
+            print(line, flush=True)
+            logger.warning(line)
 
     def _setup_handlers(self) -> None:
         app = self.application
@@ -365,7 +391,29 @@ class TelegramBot:
         user = update.effective_user
         if not user:
             return False
-        if config.allowed_user_ids and user.id not in config.allowed_user_ids:
+
+        mode, owner_id = ownership.resolve_owner(
+            config.allowed_user_ids, config.bot_data_dir
+        )
+
+        if mode == ownership.MODE_CLAIM:
+            # Born-locked: the ONLY accepted action is a correct '/claim <code>'
+            # text message. Everything else is silently dropped (no reply at all,
+            # no NO_PERMISSION) so we never leak that the bot exists/is claimable.
+            return await self._handle_claim_attempt(update, user.id)
+
+        if mode == ownership.MODE_LOCKED_OUT:
+            # Claimed before, owner.lock gone: deny all, do NOT reopen claim mode.
+            # Silent drop (no reply) -- an anomalous recovery state, not normal use.
+            logger.warning(messages.OWNER_LOCK_MISSING_LOG)
+            return False
+
+        if mode == ownership.MODE_AUTHORITATIVE:
+            allowed = user.id in config.allowed_user_ids
+        else:  # MODE_OWNER_LOCK
+            allowed = user.id == owner_id
+
+        if not allowed:
             if update.message:
                 await update.message.reply_text(messages.NO_PERMISSION)
             elif update.callback_query:
@@ -374,6 +422,22 @@ class TelegramBot:
                 )
             return False
         return True
+
+    async def _handle_claim_attempt(self, update: Update, user_id: int) -> bool:
+        """Claim-mode interception. Returns False in every case so NO inbound
+        message in claim mode ever reaches normal processing / the model.
+
+        A correct '/claim <code>' text message makes the sender the owner and
+        gets the one success reply. Every other message (wrong code, /start,
+        random text, callbacks) is silently dropped with no reply.
+        """
+        text = update.message.text if update.message else None
+        if text and ownership.verify_and_claim(text, user_id, config.bot_data_dir):
+            try:
+                await update.message.reply_text(messages.CLAIM_SUCCESS)
+            except Exception as e:
+                logger.warning("claim success reply failed for user %s: %s", user_id, e)
+        return False
 
     # --- session helpers ---
 
@@ -401,7 +465,7 @@ class TelegramBot:
         if tool_name == "AskUserQuestion":
             return PermissionResultDeny(message=messages.ASK_USER_QUESTION_DENY)
 
-        outside = extract_outside_paths(tool_name, tool_input, PROJECT_ROOT)
+        outside = extract_outside_paths(tool_name, tool_input, PROJECT_ROOT, config.extra_allowed_roots)
         if outside:
             if await self._consume_outside_approval_once(user_id):
                 return PermissionResultAllow()
@@ -1069,12 +1133,34 @@ class TelegramBot:
         # DGN-052: file downloads need a longer read_timeout than the shared
         # request default (10s). When the Telegram API is briefly slow, a 10s
         # read_timeout drops inbound photos/documents/voice. 60s rides it out.
-        tfile = await self.application.bot.get_file(
-            file_id, read_timeout=read_timeout
+        # DGN-052b: add retry-with-exponential-backoff for transient errors
+        # (Telegram 5xx / connection reset / TLS blip). 3 attempts, 1s/2s backoff.
+        # Mirrors _send_guaranteed pattern. Callers' catch/notify logic unchanged.
+        _max_attempts = 3
+        _backoff_delays = [1.0, 2.0]  # sleep after attempt 1, attempt 2; none after 3
+        last_exc: Exception
+        for _attempt in range(1, _max_attempts + 1):
+            try:
+                tfile = await self.application.bot.get_file(
+                    file_id, read_timeout=read_timeout
+                )
+                await tfile.download_to_drive(
+                    custom_path=str(destination), read_timeout=read_timeout
+                )
+                return
+            except Exception as e:
+                last_exc = e
+                logger.warning(
+                    "file download attempt %d/%d failed (file_id=%s): %s",
+                    _attempt, _max_attempts, file_id, e,
+                )
+                if _attempt < _max_attempts:
+                    await asyncio.sleep(_backoff_delays[_attempt - 1])
+        logger.error(
+            "file download FAILED after %d attempts (file_id=%s): %s",
+            _max_attempts, file_id, last_exc,
         )
-        await tfile.download_to_drive(
-            custom_path=str(destination), read_timeout=read_timeout
-        )
+        raise last_exc
 
     async def _process_user_message_text(
         self,
