@@ -148,7 +148,24 @@ if [ -f "$ENV_SRC" ] && [ ! -f "$ENV_DST" ]; then
 fi
 mkdir -p "$PROJECT_ROOT/.telegram_bot/logs"
 
-# 5) build the bridge venv (self-contained, next to bridge/).
+# 5) initialize the structured lane (lifekit.db) from schema.sql.
+#    Empty structured lane, ready to receive data. NO user data seeded -- the
+#    config table stays empty so the body-state hook is a no-op for a new user.
+#    Idempotent: never clobber an existing db (a re-mint with --force keeps data).
+SCHEMA_SRC="$PROJECT_ROOT/database/schema.sql"
+LIFEKIT_DB="$PROJECT_ROOT/database/lifekit.db"
+if [ -f "$LIFEKIT_DB" ]; then
+  echo "[mint] lifekit.db exists -> keep (idempotent)"
+elif [ ! -f "$SCHEMA_SRC" ]; then
+  echo "[mint][WARN] no schema.sql at $SCHEMA_SRC -- skipping lifekit.db init" >&2
+elif ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "[mint][WARN] sqlite3 not found -- skipping lifekit.db init" >&2
+else
+  sqlite3 "$LIFEKIT_DB" < "$SCHEMA_SRC"
+  echo "[mint] initialized $LIFEKIT_DB from schema.sql (empty structured lane)"
+fi
+
+# 6) build the bridge venv (self-contained, next to bridge/).
 if [ "$BUILD_VENV" = "1" ]; then
   echo "[mint] building bridge venv ..."
   python3 -m venv "$PROJECT_ROOT/bridge/venv"
@@ -165,7 +182,7 @@ if [ "$BUILD_VENV" = "1" ]; then
   echo "[mint] venv ready"
 fi
 
-# 6) sanity: no placeholder survivors in active code files.
+# 7) sanity: no placeholder survivors in active code files.
 LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME)__' \
           --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
           "$PROJECT_ROOT" 2>/dev/null || true)"

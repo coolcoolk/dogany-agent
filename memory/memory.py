@@ -1966,6 +1966,21 @@ def _hook_body_state_line():
         if db_dir not in sys.path:
             sys.path.insert(0, db_dir)
         import lifekit as _lk
+        # Fresh mint: db exists but the config table is empty (no real user data
+        # yet). load_body_stats() would fall back to DEFAULT_STATS (a generic
+        # placeholder body, NOT the owner's) -- injecting that would fake data.
+        # So: no config rows -> no-op. The line appears only once the user sets
+        # real stats via the lifekit CLI (config table gets rows).
+        try:
+            conn = _lk.get_conn()
+            try:
+                n = conn.execute("SELECT COUNT(*) FROM config;").fetchone()[0]
+            finally:
+                conn.close()
+        except BaseException:
+            return None
+        if not n:
+            return None  # empty config -> new user -> no body-state line
         stats = _lk.load_body_stats()
         t = _lk.compute_targets(stats, exercise_kcal=0)
         g = _lk.compute_macro_goals(t["eff_goal"], stats)
