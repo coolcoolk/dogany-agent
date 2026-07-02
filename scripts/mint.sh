@@ -206,6 +206,9 @@ done
 #     version this instance was built from. Non-secret; no token/chat id here.
 FW_VERSION="unknown"
 [ -f "$REPO_ROOT/VERSION" ] && FW_VERSION="$(head -n1 "$REPO_ROOT/VERSION" | tr -d '[:space:]')"
+# First-mint date: preserved across re-mints (the instance's birthday, UTC).
+MINTED_AT="$(grep -E '^DOGANY_MINTED_AT=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+MINTED_AT="${MINTED_AT:-$(date -u +%Y-%m-%d)}"
 cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
 # .instance.conf -- non-secret instance manifest written by mint.sh.
 # Consumed by update.sh to re-substitute placeholders on framework refresh.
@@ -215,6 +218,7 @@ DOGANY_AGENT_LABEL=${AGENT_LABEL}
 DOGANY_USER_LABEL=${USER_LABEL}
 DOGANY_FW_VERSION=${FW_VERSION}
 DOGANY_REPO_ROOT=${REPO_ROOT}
+DOGANY_MINTED_AT=${MINTED_AT}
 MANIFEST
 echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
 
