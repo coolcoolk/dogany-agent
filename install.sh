@@ -35,6 +35,8 @@ OWNER_ID=""
 BOT_NAME=""
 ENABLE_VOICE="${DOGANY_VOICE:-0}"     # 0 core-only (default), 1 full
 INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$SCRIPT_PATH/agents/main}"
+# Lite = 1 agent. Pro flips this knob (env or config) to allow more; !=1 bypasses the single-agent refusal.
+DOGANY_MAX_AGENTS="${DOGANY_MAX_AGENTS:-1}"
 AGENT_NAME="${DOGANY_AGENT_NAME:-dogany}"
 SERVICE_CHOICE=""                     # auto | manual
 OS_KIND=""                            # macos | linux
@@ -98,6 +100,11 @@ check_lite_single_agent() {
   local current_root="$1"
   local current_canon
   current_canon="$(canon_path "$current_root")"
+
+  # Config knob: non-1 limit (Pro) bypasses the Lite single-agent refusal.
+  if [ "${DOGANY_MAX_AGENTS:-1}" != "1" ]; then
+    return 0
+  fi
 
   # --- marker absent -> no prior install -> proceed ---
   if [ ! -f "$LITE_MARKER" ]; then

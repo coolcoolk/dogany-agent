@@ -67,7 +67,7 @@ Run the wizard from the repo root:
     bash install.sh
 
 It walks you through language, timezone, bot token + owner id, then mints a
-single self-contained agent (default `~/dogany-agent-instance`) and optionally
+single self-contained agent (default `./agents/main`, in-repo and gitignored) and optionally
 installs an autostart service. To preview without touching anything:
 
     bash install.sh --dry-run --lang en
