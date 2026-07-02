@@ -1221,6 +1221,119 @@ def prune_transcript_fts(conn, cutoff_iso):
         return 0
 
 
+# ======================================================================
+# raw transcript archive (DGN-093) -- own the raw substrate for future replay
+# ======================================================================
+# consolidate distills text -> inbox.md then advances the watermark and prunes
+# the transcript. Before that discard, append the consumed span (TEXT ONLY) to a
+# gzip monthly archive so the raw messages we would otherwise lose are ours.
+# Additive + non-destructive: this only reads the consumed rows and writes to
+# MEMORIES_DIR/_raw/; it never touches the source jsonl, inbox.md, or the DB.
+RAW_ARCHIVE_DIR = os.path.join(MEMORIES_DIR, "_raw")
+RAW_ARCHIVE_RETENTION_DAYS = 365  # prune _raw/*.jsonl.gz older than ~1 year
+
+# Strip large base64/data-URI blobs that may be inlined in a text block
+# (defense in depth -- _extract_text_from_content already drops image/tool
+# blocks, but an agent can paste a data URI or a long base64 run into plain text).
+_DATA_URI_RE = re.compile(r"data:[^;\s]+;base64,[A-Za-z0-9+/=]+")
+_LONG_B64_RE = re.compile(r"[A-Za-z0-9+/]{512,}={0,2}")
+
+
+def _scrub_binary_blobs(text):
+    """Remove inline base64 / data-URI payloads from a text string.
+    Keeps human/agent prose; replaces stripped blobs with a short placeholder."""
+    if not text:
+        return ""
+    t = _DATA_URI_RE.sub("[image]", text)
+    t = _LONG_B64_RE.sub("[blob]", t)
+    return t.strip()
+
+
+def archive_raw_transcript(watermark_iso, now):
+    """Append the consumed transcript span (TEXT ONLY) to a gzip monthly archive.
+    Uses the SAME source/args as collect_transcript for this watermark span
+    (_iter_transcript_rows) -- it does not read beyond the consumed span.
+    One JSON line per message: {ts, role, text}. Messages with no text after
+    scrubbing (pure image/tool) are skipped. Best effort: any error is swallowed
+    so archiving never blocks consolidate. Returns count of lines written."""
+    import gzip
+
+    rows = _iter_transcript_rows(watermark_iso, now)
+    if not rows:
+        return 0
+    try:
+        os.makedirs(RAW_ARCHIVE_DIR, exist_ok=True)
+    except OSError as e:
+        print(f"[warn] raw archive dir 생성 실패(스킵): {e}", file=sys.stderr)
+        return 0
+
+    written = 0
+    try:
+        # Group by month (YYYY-MM of the message ts) so a span crossing a month
+        # boundary lands in the right monthly file.
+        for ts, role, text, _session in rows:
+            clean = _scrub_binary_blobs(text)
+            if not clean:
+                continue  # pure image/tool message -> skip (TEXT ONLY)
+            month = (ts or "")[:7]  # ISO8601 -> YYYY-MM
+            if not re.match(r"^\d{4}-\d{2}$", month):
+                month = now.strftime("%Y-%m")  # fallback for malformed ts
+            path = os.path.join(RAW_ARCHIVE_DIR, f"{month}.jsonl.gz")
+            line = json.dumps(
+                {"ts": ts, "role": role, "text": clean}, ensure_ascii=False
+            )
+            with gzip.open(path, "at", encoding="utf-8") as gz:
+                gz.write(line + "\n")
+            written += 1
+    except OSError as e:
+        print(f"[warn] raw archive 쓰기 실패(부분 저장 가능): {e}", file=sys.stderr)
+    return written
+
+
+def prune_raw_archive(now=None):
+    """Delete _raw/*.jsonl.gz older than RAW_ARCHIVE_RETENTION_DAYS.
+    Age is judged by the YYYY-MM in the filename (mtime fallback). Best effort.
+    Returns count of files removed."""
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    if not os.path.isdir(RAW_ARCHIVE_DIR):
+        return 0
+    cutoff = now - datetime.timedelta(days=RAW_ARCHIVE_RETENTION_DAYS)
+    removed = 0
+    for fname in os.listdir(RAW_ARCHIVE_DIR):
+        if not fname.endswith(".jsonl.gz"):
+            continue
+        path = os.path.join(RAW_ARCHIVE_DIR, fname)
+        m = re.match(r"^(\d{4})-(\d{2})\.jsonl\.gz$", fname)
+        too_old = False
+        if m:
+            # Compare end-of-month against cutoff so a whole month is only pruned
+            # once every day in it is past retention.
+            year, mon = int(m.group(1)), int(m.group(2))
+            if mon == 12:
+                nxt = datetime.datetime(year + 1, 1, 1, tzinfo=datetime.timezone.utc)
+            else:
+                nxt = datetime.datetime(year, mon + 1, 1, tzinfo=datetime.timezone.utc)
+            too_old = nxt <= cutoff
+        else:
+            # Non-standard name -> fall back to mtime.
+            try:
+                mtime = datetime.datetime.fromtimestamp(
+                    os.path.getmtime(path), datetime.timezone.utc
+                )
+                too_old = mtime < cutoff
+            except OSError:
+                too_old = False
+        if too_old:
+            try:
+                os.remove(path)
+                removed += 1
+                print(f"[consolidate] raw archive 만료 삭제: {fname}")
+            except OSError as e:
+                print(f"[warn] raw archive 삭제 실패 {fname}: {e}", file=sys.stderr)
+    return removed
+
+
 def _chunk_convo(convo, max_chars=CONSOLIDATE_CHUNK_CHARS):
     """대화 텍스트를 줄(메시지) 경계로 max_chars 이하 청크 리스트로 분할.
     단일 줄이 max_chars 보다 길면 그 줄은 단독 청크(어쩔 수 없이 글자수로 잘림)."""
@@ -1444,6 +1557,14 @@ def cmd_consolidate(args):
         return 0
     print(f"[consolidate] 대화 {n_msgs}건 수집 (최대 ts={max_ts})")
 
+    # 2.5) raw transcript archive (DGN-093): 워터마크 전진/프룬으로 버려지기 전에
+    # 소비한 구간을 TEXT ONLY 로 gzip 월별 아카이브에 append. collect_transcript 와
+    # 같은 소스/워터마크(_iter_transcript_rows)라 소비 구간을 넘겨 읽지 않는다.
+    # dry-run 이면 원본 상태를 안 바꾸므로 아카이브도 생략.
+    if not args.dry_run:
+        n_arch = archive_raw_transcript(watermark, now)
+        print(f"[consolidate] raw archive 적재 {n_arch}건 → {RAW_ARCHIVE_DIR}")
+
     # 3) 1차 압축 (Sonnet, 느슨하게 많이). 길면 청크 분할.
     candidates, compress_failed = compress_convo_chunked(convo)
     print(f"[consolidate] 1차 압축 후보 {len(candidates)}개")
@@ -1551,6 +1672,11 @@ def cmd_consolidate(args):
     pruned = prune_transcript_fts(conn, max_ts)
     print(f"[consolidate] 워터마크 전진 → {max_ts} (당일 raw {pruned}행 프룬)")
     conn.close()
+
+    # 6b) raw archive 보존기간 프룬(DGN-093): ~365일 지난 월별 아카이브 삭제.
+    n_rawpruned = prune_raw_archive(now)
+    if n_rawpruned:
+        print(f"[consolidate] raw archive 만료 {n_rawpruned}개 삭제")
 
     # 7) 재인덱싱 (신규 적재 있었을 때만 의미 있음)
     if tagged:
