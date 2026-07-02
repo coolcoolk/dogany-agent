@@ -45,6 +45,17 @@ generic. Self-obeys (caveman body).
      send_file".
   check: write 3-5 sample utterances, confirm desc keywords catch them.
 
+## trigger tiers (best-effort vs guaranteed)
+- two tiers. dont confuse them.
+- BEST-EFFORT = description auto-fire. model reads desc, judges, MAY miss (weak
+  desc, odd phrasing, cross-lingual). fine for helpful/optional behavior.
+- GUARANTEED = must-happen step (data integrity, always-send card, always-confirm).
+  desc alone NOT enough -> model can skip it. enforce with a hook (PostToolUse /
+  SessionStart / etc), not description.
+- rule: any skill with a must-happen step declares its tier in SKILL.md, and if
+  GUARANTEED, wires the hook. example: card-followup PostToolUse hook forces the
+  card render after a log -> that is the guarantee, desc is only the nudge.
+
 ## tone
 - message skills -> follow shared output rules (RULES output/notation + AGENT.md
   output discipline). dont restate.

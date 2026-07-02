@@ -1,9 +1,10 @@
 ---
 name: relationship
 description: >-
-  __USER_LABEL__이 사람·관계를 조회하거나 등록하거나 별명으로 찾을 때 발동. "이름이 뭐더라", "OO 누구야",
-  "OO 관계에 추가해줘", 별명/닉네임으로 사람을 언급할 때. 공용 SQL판(lifekit.sh)으로 persons 관리.
-  이 스킬은 lifekit.db 기반 미래 표준 SQL판이다.
+  Fires when __USER_LABEL__ looks up, registers, or finds a person/relationship by
+  nickname. "what was their name", "who is OO", "add OO to my relationships", or
+  mentioning a person by nickname/alias. Manages persons via the shared SQL edition
+  (lifekit.sh). This skill is the lifekit.db-based future-standard SQL edition.
 ---
 
 # relationship

@@ -33,9 +33,43 @@ STRINGS = {
     ),
     "model_switched": "Switched to {label}",
     "model_select": "Select Claude model:",
+    "model_switch_warning": (
+        "Note: switching the model starts a fresh conversation."
+    ),
+    "model_unknown": (
+        "Unknown model '{name}'. Allowed models: {allowed}"
+    ),
     "stop_paused": "Paused",
     "stop_nothing": "Nothing running",
     "no_session": "No active session. Start a conversation first.",
+    "task_terminated": "Task terminated.",
+    # --- Help ---
+    "help_text": (
+        "Available commands:\n"
+        "/start - Start / greeting\n"
+        "/new - Start a new session\n"
+        "/stop - Stop the current run\n"
+        "/model - Switch model (restarts the conversation)\n"
+        "/resume - Resume a previous session\n"
+        "/history - Show recent history\n"
+        "/skills - List installed skills\n"
+        "/help - Show this help\n\n"
+        "Any /name runs the matching skill.\n"
+        "First-time setup: send /claim <code> to become the owner. "
+        "File access outside PROJECT_ROOT asks for one-time confirmation."
+    ),
+    # --- Skills listing (read from SKILL.md frontmatter) ---
+    "skills_none": "No skills installed.",
+    "skills_header_project": "Project skills",
+    "skills_header_global": "Global skills",
+    # --- BotCommand menu descriptions ---
+    "cmd_desc_new": "New session",
+    "cmd_desc_stop": "Stop execution",
+    "cmd_desc_model": "Switch model",
+    "cmd_desc_resume": "Resume session",
+    "cmd_desc_history": "View message history",
+    "cmd_desc_skills": "List skills",
+    "cmd_desc_help": "Show help",
     # --- Resume (session history) ---
     "no_session_history": "No session history found.",
     "session_history_header": "Session History",
@@ -47,6 +81,27 @@ STRINGS = {
     "history_header": "Recent History (last 5 messages)",
     # --- Queue / overflow ---
     "queue_busy": "Processing previous messages, please wait or send /stop to terminate.",
+    # --- Slash command usage ---
+    "usage_skill": "Usage: /skill <name> [args]",
+    "usage_command": "Usage: /command <name> [args]",
+    # --- Inbound photo / document prompts (sent to Claude) ---
+    "photo_prompt_single": (
+        "The user sent a photo. Open the image file at the path below with the Read "
+        "tool, review it, and respond."
+    ),
+    "photo_prompt_path": "Image path: {path}",
+    "photo_prompt_album": (
+        "The user sent {count} photos at once (an album). Open all image files at "
+        "the paths below with the Read tool, review them together, and answer with a "
+        "single response."
+    ),
+    "photo_prompt_album_path": "Image {index} path: {path}",
+    "doc_prompt": (
+        "The user sent a file. Open the file at the path below with the Read tool, "
+        "review it, and respond."
+    ),
+    "doc_prompt_path": "File path: {path}",
+    "user_caption": "User caption: {caption}",
     # --- Options keyboard ---
     "select_prompt": "Please select:",
     "selected": "Selected: {choice}",
@@ -151,5 +206,10 @@ STRINGS = {
         "Output these two options to the user and wait for a reply:\n"
         "1. {allow_token} (Allow this external path access)\n"
         "2. {deny_token} (Deny)"
+    ),
+    "outside_path_deny_no_confirm": (
+        "Access to a protected or out-of-root path was denied. This is a "
+        "background turn with no user available to confirm it. Skip this path or "
+        "ask the user directly in their next message."
     ),
 }

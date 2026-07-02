@@ -38,9 +38,39 @@ STRINGS = {
     ),
     "model_switched": "{label} (으)로 전환했습니다",
     "model_select": "Claude 모델을 선택하세요:",
+    "model_switch_warning": "참고: 모델을 전환하면 대화가 새로 시작됩니다.",
+    "model_unknown": "알 수 없는 모델 '{name}'. 사용 가능한 모델: {allowed}",
     "stop_paused": "일시중지했습니다",
     "stop_nothing": "실행 중인 작업이 없습니다",
     "no_session": "활성 세션이 없습니다. 먼저 대화를 시작해 주세요.",
+    "task_terminated": "작업을 종료했습니다.",
+    # --- Help ---
+    "help_text": (
+        "사용 가능한 명령:\n"
+        "/start - 시작 / 인사\n"
+        "/new - 새 세션 시작\n"
+        "/stop - 현재 작업 중단\n"
+        "/model - 모델 전환 (대화가 새로 시작됩니다)\n"
+        "/resume - 이전 세션 이어가기\n"
+        "/history - 최근 기록 보기\n"
+        "/skills - 설치된 스킬 목록\n"
+        "/help - 이 도움말 보기\n\n"
+        "임의의 /이름 을 보내면 해당 스킬이 실행됩니다.\n"
+        "최초 설정: /claim <code> 로 소유자가 되세요. "
+        "PROJECT_ROOT 바깥 파일 접근은 일회성 확인을 요청합니다."
+    ),
+    # --- Skills listing (read from SKILL.md frontmatter) ---
+    "skills_none": "설치된 스킬이 없습니다.",
+    "skills_header_project": "프로젝트 스킬",
+    "skills_header_global": "전역 스킬",
+    # --- BotCommand menu descriptions ---
+    "cmd_desc_new": "새 세션",
+    "cmd_desc_stop": "실행 중단",
+    "cmd_desc_model": "모델 전환",
+    "cmd_desc_resume": "세션 이어가기",
+    "cmd_desc_history": "메시지 기록 보기",
+    "cmd_desc_skills": "스킬 목록",
+    "cmd_desc_help": "도움말 보기",
     # --- Resume (session history) ---
     "no_session_history": "세션 기록을 찾을 수 없습니다.",
     "session_history_header": "세션 기록",
@@ -54,6 +84,26 @@ STRINGS = {
     "queue_busy": (
         "이전 메시지를 처리하고 있습니다. 잠시 기다리시거나 /stop 으로 중단해 주세요."
     ),
+    # --- Slash command usage ---
+    "usage_skill": "사용법: /skill <name> [args]",
+    "usage_command": "사용법: /command <name> [args]",
+    # --- Inbound photo / document prompts (sent to Claude) ---
+    "photo_prompt_single": (
+        "사용자가 사진을 보냈습니다. 아래 경로의 이미지 파일을 Read 도구로 열어서 "
+        "내용을 확인하고 응답하세요."
+    ),
+    "photo_prompt_path": "이미지 경로: {path}",
+    "photo_prompt_album": (
+        "사용자가 사진 {count}장을 한 번에(앨범) 보냈습니다. 아래 경로의 이미지 파일들을 "
+        "모두 Read 도구로 열어 함께 보고 하나의 응답으로 답하세요."
+    ),
+    "photo_prompt_album_path": "이미지 {index} 경로: {path}",
+    "doc_prompt": (
+        "사용자가 파일을 보냈습니다. 아래 경로의 파일을 Read 도구로 열어서 "
+        "내용을 확인하고 응답하세요."
+    ),
+    "doc_prompt_path": "파일 경로: {path}",
+    "user_caption": "사용자 캡션: {caption}",
     # --- Options keyboard ---
     "select_prompt": "선택해 주세요:",
     "selected": "선택함: {choice}",
@@ -155,5 +205,10 @@ STRINGS = {
         "Output these two options to the user and wait for a reply:\n"
         "1. {allow_token} (Allow this external path access)\n"
         "2. {deny_token} (Deny)"
+    ),
+    "outside_path_deny_no_confirm": (
+        "Access to a protected or out-of-root path was denied. This is a "
+        "background turn with no user available to confirm it. Skip this path or "
+        "ask the user directly in their next message."
     ),
 }

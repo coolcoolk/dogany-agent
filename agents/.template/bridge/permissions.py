@@ -17,6 +17,12 @@ PATH_KEYWORDS = ("path", "file", "cwd", "dir", "directory", "root")
 ALLOW_OUTSIDE_ONCE_TOKEN = "ALLOW_OUTSIDE_ONCE"
 DENY_OUTSIDE_TOKEN = "DENY_OUTSIDE"
 
+# Protected runtime zone: the secrets dir (bot token + Gmail app-password) sits
+# INSIDE PROJECT_ROOT, so a naive inside-root shortcut would auto-allow reading
+# it. Any tool touching this dir -- or ANY .env file anywhere -- must go through
+# the same one-time confirm as an out-of-root path (never silently allowed).
+PROTECTED_DIR_NAME = ".telegram_bot"
+
 
 def _iter_strings(value: Any) -> Iterable[str]:
     if isinstance(value, str):
@@ -119,6 +125,47 @@ def extract_outside_paths(
                 seen.add(path_str)
                 outside.append(path_str)
     return outside
+
+
+def _is_protected(path: Path) -> bool:
+    """True if `path` is inside the runtime secrets dir or is any .env file.
+
+    Matches the protected dir by name anywhere in the path's parts (covers the
+    dir itself and everything under it), plus any file literally named '.env' or
+    ending in '.env' (e.g. '.env.local'). Purely lexical on the resolved path;
+    no filesystem access, so it also guards would-be writes to paths that do not
+    exist yet.
+    """
+    parts = path.parts
+    if PROTECTED_DIR_NAME in parts:
+        return True
+    name = path.name
+    if name == ".env" or name.startswith(".env."):
+        return True
+    return False
+
+
+def extract_protected_paths(tool_name: str, tool_input: Any, project_root: Path) -> List[str]:
+    """Resolved paths that touch the protected runtime zone, for guarded tools.
+
+    Runs BEFORE any inside-root shortcut so the secrets file (which lives inside
+    PROJECT_ROOT) is never auto-allowed. Returns [] for non-guarded tools.
+    """
+    if tool_name not in PATH_GUARDED_TOOLS:
+        return []
+    protected: List[str] = []
+    seen = set()
+    for raw in extract_path_candidates(tool_name, tool_input):
+        try:
+            resolved = _resolve_candidate(raw, project_root)
+        except Exception:
+            continue
+        if _is_protected(resolved):
+            path_str = str(resolved)
+            if path_str not in seen:
+                seen.add(path_str)
+                protected.append(path_str)
+    return protected
 
 
 def outside_path_deny_message(outside_paths: List[str]) -> str:

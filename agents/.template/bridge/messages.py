@@ -29,9 +29,42 @@ WELCOME = t("welcome")
 NEW_SESSION = t("new_session")
 MODEL_SWITCHED = t("model_switched")
 MODEL_SELECT = t("model_select")
+MODEL_SWITCH_WARNING = t("model_switch_warning")
+MODEL_UNKNOWN = t("model_unknown")
 STOP_PAUSED = t("stop_paused")
 STOP_NOTHING = t("stop_nothing")
 NO_SESSION = t("no_session")
+TASK_TERMINATED = t("task_terminated")
+
+# --- Help ---
+HELP_TEXT = t("help_text")
+
+# --- Skills listing ---
+SKILLS_NONE = t("skills_none")
+SKILLS_HEADER_PROJECT = t("skills_header_project")
+SKILLS_HEADER_GLOBAL = t("skills_header_global")
+
+# --- BotCommand menu descriptions ---
+CMD_DESC_NEW = t("cmd_desc_new")
+CMD_DESC_STOP = t("cmd_desc_stop")
+CMD_DESC_MODEL = t("cmd_desc_model")
+CMD_DESC_RESUME = t("cmd_desc_resume")
+CMD_DESC_HISTORY = t("cmd_desc_history")
+CMD_DESC_SKILLS = t("cmd_desc_skills")
+CMD_DESC_HELP = t("cmd_desc_help")
+
+# --- Slash command usage ---
+USAGE_SKILL = t("usage_skill")
+USAGE_COMMAND = t("usage_command")
+
+# --- Inbound photo / document prompts (sent to Claude) ---
+PHOTO_PROMPT_SINGLE = t("photo_prompt_single")
+PHOTO_PROMPT_PATH = t("photo_prompt_path")
+PHOTO_PROMPT_ALBUM = t("photo_prompt_album")
+PHOTO_PROMPT_ALBUM_PATH = t("photo_prompt_album_path")
+DOC_PROMPT = t("doc_prompt")
+DOC_PROMPT_PATH = t("doc_prompt_path")
+USER_CAPTION = t("user_caption")
 
 # --- Resume (session history) ---
 NO_SESSION_HISTORY = t("no_session_history")
@@ -99,3 +132,7 @@ ASK_USER_QUESTION_DENY = t("ask_user_question_deny")
 
 # Denial message returned to Claude when an out-of-root path is detected.
 OUTSIDE_PATH_DENY = t("outside_path_deny")
+
+# Denial returned to Claude for a protected/out-of-root path on a no-pending
+# (background/proactive) turn, where no interactive confirm is possible.
+OUTSIDE_PATH_DENY_NO_CONFIRM = t("outside_path_deny_no_confirm")

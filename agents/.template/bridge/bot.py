@@ -60,6 +60,7 @@ from bridge.permissions import (
     ALLOW_OUTSIDE_ONCE_TOKEN,
     DENY_OUTSIDE_TOKEN,
     extract_outside_paths,
+    extract_protected_paths,
     outside_path_deny_message,
 )
 from bridge.sdk_bridge import ChatResponse, PROJECT_ROOT, sdk_bridge
@@ -82,8 +83,33 @@ CONFLICT_SUSTAINED_SECONDS = 300  # log an error if conflict persists past this
 # media_group_id. Buffer same-group photos for this debounce window, then flush
 # them as a single task. 1.5s >> real album inter-arrival (~100ms), big margin.
 MEDIA_GROUP_DEBOUNCE = 1.5
+# An out-of-root / protected-path one-time approval expires this many seconds
+# after the deny prompt was shown, so a stale grant can never authorize a much
+# later call (F7 hardening).
+OUTSIDE_APPROVAL_TTL = 600  # 10 minutes
 
-MODELS = [("sonnet", "Claude Sonnet"), ("opus", "Claude Opus"), ("haiku", "Claude Haiku")]
+_MODEL_LABELS = {
+    "sonnet": "Claude Sonnet",
+    "opus": "Claude Opus",
+    "haiku": "Claude Haiku",
+    "fable": "Claude Fable",
+}
+
+
+def _model_whitelist() -> List[str]:
+    """Env-driven allowed model names (BRIDGE_MODELS, comma-separated).
+
+    Lets time-limited models (e.g. fable) be enabled without a code edit. Falls
+    back to sonnet only. Full 'claude-*' ids are always accepted separately by
+    the caller, so they need not appear here.
+    """
+    raw = os.getenv("BRIDGE_MODELS", "sonnet")
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return names or ["sonnet"]
+
+
+# Backwards-compatible list of (name, label) for the inline model picker.
+MODELS = [(n, _MODEL_LABELS.get(n, n)) for n in _model_whitelist()]
 
 
 class TelegramBot:
@@ -339,8 +365,10 @@ class TelegramBot:
         app.add_handler(CommandHandler("stop", self._cmd_stop))
         app.add_handler(CommandHandler("history", self._cmd_history))
         app.add_handler(CommandHandler("skills", self._cmd_skills))
-        app.add_handler(CommandHandler("skill", self._cmd_skill))
-        app.add_handler(CommandHandler("command", self._cmd_command))
+        app.add_handler(CommandHandler("help", self._cmd_help))
+        # Catch-all: any other /foo is forwarded to the agent as a slash command
+        # (the dedicated /skill and /command handlers were dropped -- this already
+        # covers them).
         app.add_handler(MessageHandler(filters.COMMAND, self._handle_skill_command), group=1)
         app.add_handler(MessageHandler(filters.VOICE, self._handle_voice_message), group=2)
         app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo_message), group=2)
@@ -355,14 +383,13 @@ class TelegramBot:
 
     async def _set_bot_commands(self) -> None:
         commands = [
-            BotCommand("new", "New session"),
-            BotCommand("stop", "Stop execution"),
-            BotCommand("model", "Switch model"),
-            BotCommand("resume", "Resume session"),
-            BotCommand("history", "View message history"),
-            BotCommand("skills", "List skills"),
-            BotCommand("skill", "Run skill"),
-            BotCommand("command", "Run command"),
+            BotCommand("new", messages.CMD_DESC_NEW),
+            BotCommand("stop", messages.CMD_DESC_STOP),
+            BotCommand("model", messages.CMD_DESC_MODEL),
+            BotCommand("resume", messages.CMD_DESC_RESUME),
+            BotCommand("history", messages.CMD_DESC_HISTORY),
+            BotCommand("skills", messages.CMD_DESC_SKILLS),
+            BotCommand("help", messages.CMD_DESC_HELP),
         ]
         try:
             await self.application.bot.set_my_commands(commands)
@@ -465,28 +492,76 @@ class TelegramBot:
         if tool_name == "AskUserQuestion":
             return PermissionResultDeny(message=messages.ASK_USER_QUESTION_DENY)
 
-        outside = extract_outside_paths(tool_name, tool_input, PROJECT_ROOT, config.extra_allowed_roots)
-        if outside:
-            if await self._consume_outside_approval_once(user_id):
-                return PermissionResultAllow()
-            session = await session_manager.get_session(user_id)
-            session["pending_outside_paths"] = outside[:5]
-            await session_manager.update_session(user_id, session)
-            return PermissionResultDeny(message=outside_path_deny_message(outside))
-        return PermissionResultAllow()
+        return await self._guard_paths(user_id, tool_name, tool_input)
 
-    async def _consume_outside_approval_once(self, user_id: int) -> bool:
+    async def _guard_paths(self, user_id: int, tool_name: str, tool_input: Any):
+        """Shared path guard: protected-zone check runs BEFORE the inside-root
+        shortcut, then the out-of-root check. Both funnel through the same
+        one-time confirm bound to the specific resolved paths (F2/F7).
+        """
+        # PROTECTED ZONE FIRST: the secrets dir / any .env lives inside
+        # PROJECT_ROOT, so it must be caught before the inside-root pass-through.
+        protected = extract_protected_paths(tool_name, tool_input, PROJECT_ROOT)
+        outside = extract_outside_paths(
+            tool_name, tool_input, PROJECT_ROOT, config.extra_allowed_roots
+        )
+        guarded = list(dict.fromkeys(protected + outside))  # union, order-stable
+        if not guarded:
+            return PermissionResultAllow()
+        if await self._consume_outside_approval_once(user_id, guarded):
+            return PermissionResultAllow()
+        session = await session_manager.get_session(user_id)
+        session["pending_outside_paths"] = guarded[:5]
+        session["pending_outside_at"] = time.time()
+        await session_manager.update_session(user_id, session)
+        return PermissionResultDeny(message=outside_path_deny_message(guarded))
+
+    async def _consume_outside_approval_once(
+        self, user_id: int, requested_paths: List[str]
+    ) -> bool:
+        """Consume a one-time grant ONLY if it authorizes exactly these paths.
+
+        F7 hardening: the grant is bound to the specific paths shown in the deny
+        prompt. It is honored only when every path in this call is a subset of
+        the approved set, and only within OUTSIDE_APPROVAL_TTL. Otherwise the
+        grant is left untouched (this call is denied) so an approval for path A
+        can never silently authorize a later call for path B.
+        """
         session = await session_manager.get_session(user_id)
         if not session.get("outside_path_approved_once"):
             return False
+        granted_at = session.get("outside_path_approved_at", 0)
+        approved = set(session.get("outside_path_approved_paths") or [])
+        expired = (time.time() - granted_at) > OUTSIDE_APPROVAL_TTL
+        subset = bool(requested_paths) and set(requested_paths).issubset(approved)
+        if expired or not subset:
+            if expired:
+                # Clear a stale grant so it cannot be reused later.
+                session["outside_path_approved_once"] = False
+                session.pop("outside_path_approved_paths", None)
+                session.pop("outside_path_approved_at", None)
+                await session_manager.update_session(user_id, session)
+            return False
         session["outside_path_approved_once"] = False
+        session.pop("outside_path_approved_paths", None)
+        session.pop("outside_path_approved_at", None)
         session.pop("pending_outside_paths", None)
+        session.pop("pending_outside_at", None)
         await session_manager.update_session(user_id, session)
         return True
 
     async def _maybe_capture_outside_approval(self, user_id: int, text: str) -> None:
         session = await session_manager.get_session(user_id)
-        if not session.get("pending_outside_paths"):
+        pending = session.get("pending_outside_paths")
+        if not pending:
+            return
+        # Expire a stale deny prompt: an approval reply that arrives after the
+        # TTL no longer grants anything.
+        pending_at = session.get("pending_outside_at", 0)
+        if (time.time() - pending_at) > OUTSIDE_APPROVAL_TTL:
+            session.pop("pending_outside_paths", None)
+            session.pop("pending_outside_at", None)
+            await session_manager.update_session(user_id, session)
             return
         normalized = text.strip().lower()
         allow = ALLOW_OUTSIDE_ONCE_TOKEN.lower() in normalized or normalized in {
@@ -497,11 +572,18 @@ class TelegramBot:
         }
         if allow:
             session["outside_path_approved_once"] = True
+            # Bind the grant to exactly the paths that were shown (F7).
+            session["outside_path_approved_paths"] = list(pending)
+            session["outside_path_approved_at"] = time.time()
             session.pop("pending_outside_paths", None)
+            session.pop("pending_outside_at", None)
             await session_manager.update_session(user_id, session)
         elif deny:
             session["outside_path_approved_once"] = False
+            session.pop("outside_path_approved_paths", None)
+            session.pop("outside_path_approved_at", None)
             session.pop("pending_outside_paths", None)
+            session.pop("pending_outside_at", None)
             await session_manager.update_session(user_id, session)
 
     # --- per-user queue ---
@@ -597,10 +679,26 @@ class TelegramBot:
         session = await session_manager.get_session(user_id)
         if context.args:
             name = context.args[0]
+            allowed = _model_whitelist()
+            # Accept whitelisted short names and any full 'claude-*' id; reject
+            # unknown short names with the allowed list. Switching restarts the
+            # conversation, so warn in the reply.
+            if name not in allowed and not name.startswith("claude-"):
+                await update.message.reply_text(
+                    messages.MODEL_UNKNOWN.format(name=name, allowed=", ".join(allowed))
+                )
+                return
             session["model"] = name
+            session["session_id"] = None
+            session["new_session"] = True
             await session_manager.update_session(user_id, session)
-            label = dict(MODELS).get(name, name)
-            await update.message.reply_text(messages.MODEL_SWITCHED.format(label=label))
+            self._runtime_active_sessions.discard(user_id)
+            label = _MODEL_LABELS.get(name, name)
+            await update.message.reply_text(
+                messages.MODEL_SWITCHED.format(label=label)
+                + "\n"
+                + messages.MODEL_SWITCH_WARNING
+            )
             return
         current = self._get_real_model(session)
         models = list(MODELS)
@@ -676,50 +774,110 @@ class TelegramBot:
             reply = reply[:3997] + "..."
         await update.message.reply_text(reply)
 
+    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._check_access(update):
+            return
+        await update.message.reply_text(messages.HELP_TEXT)
+
+    @staticmethod
+    def _read_skill_frontmatter(skill_md: Path) -> Optional[tuple]:
+        """Return (name, description) from a SKILL.md YAML frontmatter, or None.
+
+        Minimal, dependency-free parse: read only the leading '---' fenced block,
+        pull 'name:' and 'description:' (supporting '>' / '>-' folded blocks).
+        Robust to missing fields; never raises to the caller.
+        """
+        try:
+            text = skill_md.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return None
+        if not text.startswith("---"):
+            return None
+        end = text.find("\n---", 3)
+        if end == -1:
+            return None
+        block = text[3:end]
+        lines = block.splitlines()
+        name = None
+        description = None
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.strip()
+            if stripped.startswith("name:"):
+                name = stripped[len("name:"):].strip().strip("'\"")
+            elif stripped.startswith("description:"):
+                val = stripped[len("description:"):].strip()
+                if val in (">", ">-", "|", "|-", ">+", "|+", ""):
+                    # Folded/literal block: gather following more-indented lines.
+                    base_indent = len(line) - len(line.lstrip())
+                    parts: List[str] = []
+                    i += 1
+                    while i < len(lines):
+                        nxt = lines[i]
+                        if not nxt.strip():
+                            i += 1
+                            continue
+                        indent = len(nxt) - len(nxt.lstrip())
+                        if indent <= base_indent:
+                            break
+                        parts.append(nxt.strip())
+                        i += 1
+                    description = " ".join(parts)
+                    continue
+                else:
+                    description = val.strip("'\"")
+            i += 1
+        if not name:
+            name = skill_md.parent.name
+        return (name, description or "")
+
+    def _collect_skills(self, skills_dir: Path) -> List[tuple]:
+        """(name, description) for every SKILL.md directly under skills_dir."""
+        out: List[tuple] = []
+        if not skills_dir.is_dir():
+            return out
+        for child in sorted(skills_dir.iterdir()):
+            skill_md = child / "SKILL.md"
+            if skill_md.is_file():
+                fm = self._read_skill_frontmatter(skill_md)
+                if fm:
+                    out.append(fm)
+        return out
+
     async def _cmd_skills(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_access(update):
             return
-        user_id = update.effective_user.id
-        chat = update.effective_chat
-        await update.message.chat.send_action(action="typing")
-        prompt = (
-            "List all installed skills, grouped by global and project.\n"
-            "Use Telegram HTML: group titles in <b>Title</b> bold. One skill per line, "
-            "format: /skill_name description. No Markdown. No extra intro text."
-        )
-        response = await sdk_bridge.process_message(
-            user_message=prompt,
-            user_id=user_id,
-            chat_id=chat.id,
-            new_session=True,
-            permission_callback=self._permission_callback,
-            typing_callback=lambda: update.message.chat.send_action(action="typing"),
-            proactive_push=self._proactive_push,
-        )
-        await self._save_session_id(user_id, response)
-        await self._reply_smart(update.message, response.content, parse_mode="HTML")
+        # Read SKILL.md frontmatter directly -- no model call, no session, no
+        # stream teardown (RELIABILITY #4). Project skills live under
+        # PROJECT_ROOT/.claude/skills; global under ~/.claude/skills.
+        project_skills = self._collect_skills(PROJECT_ROOT / ".claude" / "skills")
+        global_skills = self._collect_skills(Path.home() / ".claude" / "skills")
+        lines: List[str] = []
 
-    async def _cmd_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._check_access(update):
-            return
-        text = update.message.text or ""
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2:
-            await update.message.reply_text("Usage: /command <name> [args]")
-            return
-        await self._exec_slash_command(update, "/" + parts[1])
+        def _fmt(entries: List[tuple]) -> List[str]:
+            rows = []
+            for name, desc in entries:
+                desc = (desc or "").strip()
+                if len(desc) > 120:
+                    desc = desc[:117] + "..."
+                rows.append(f"/{name}" + (f" - {desc}" if desc else ""))
+            return rows
 
-    async def _cmd_skill(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not await self._check_access(update):
-            return
-        text = update.message.text or ""
-        parts = text.split(maxsplit=2)
-        if len(parts) < 2:
-            await update.message.reply_text("Usage: /skill <name> [args]")
-            return
-        skill_name = parts[1]
-        args = parts[2] if len(parts) > 2 else ""
-        await self._exec_slash_command(update, f"/{skill_name} {args}".strip())
+        if project_skills:
+            lines.append(f"<b>{messages.SKILLS_HEADER_PROJECT}</b>")
+            lines.extend(_fmt(project_skills))
+        if global_skills:
+            if lines:
+                lines.append("")
+            lines.append(f"<b>{messages.SKILLS_HEADER_GLOBAL}</b>")
+            lines.extend(_fmt(global_skills))
+        reply = "\n".join(lines) if lines else messages.SKILLS_NONE
+        for part in split_text(reply):
+            try:
+                await update.message.reply_text(part, parse_mode="HTML")
+            except Exception:
+                await update.message.reply_text(part)
 
     async def _handle_skill_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1054,19 +1212,15 @@ class TelegramBot:
                 return
             if len(paths) == 1:
                 lines = [
-                    "사용자이 사진을 보냈습니다. 아래 경로의 이미지 파일을 Read 도구로 열어서 "
-                    "내용을 확인하고 응답하세요.",
-                    f"이미지 경로: {paths[0]}",
+                    messages.PHOTO_PROMPT_SINGLE,
+                    messages.PHOTO_PROMPT_PATH.format(path=paths[0]),
                 ]
             else:
-                lines = [
-                    f"사용자이 사진 {len(paths)}장을 한 번에(앨범) 보냈습니다. 아래 경로의 "
-                    "이미지 파일들을 모두 Read 도구로 열어 함께 보고 하나의 응답으로 답하세요.",
-                ]
+                lines = [messages.PHOTO_PROMPT_ALBUM.format(count=len(paths))]
                 for i, p in enumerate(paths, 1):
-                    lines.append(f"이미지 {i} 경로: {p}")
+                    lines.append(messages.PHOTO_PROMPT_ALBUM_PATH.format(index=i, path=p))
             if caption:
-                lines.append(f"사용자 캡션: {caption}")
+                lines.append(messages.USER_CAPTION.format(caption=caption))
             await self._process_user_message_text(update, user_id, "\n".join(lines))
 
         async def on_overflow() -> None:
@@ -1099,12 +1253,11 @@ class TelegramBot:
                 await message.reply_text(messages.DOC_DOWNLOAD_FAILED)
                 return
             lines = [
-                "사용자이 파일을 보냈습니다. 아래 경로의 파일을 Read 도구로 열어서 "
-                "내용을 확인하고 응답하세요.",
-                f"파일 경로: {dest}",
+                messages.DOC_PROMPT,
+                messages.DOC_PROMPT_PATH.format(path=dest),
             ]
             if caption:
-                lines.append(f"사용자 캡션: {caption}")
+                lines.append(messages.USER_CAPTION.format(caption=caption))
             await self._process_user_message_text(update, user_id, "\n".join(lines))
 
         async def on_overflow() -> None:
@@ -1593,9 +1746,16 @@ class TelegramBot:
             model_name = data.split(":", 1)[1]
             session = await session_manager.get_session(user_id)
             session["model"] = model_name
+            session["session_id"] = None
+            session["new_session"] = True
             await session_manager.update_session(user_id, session)
-            label = dict(MODELS).get(model_name, model_name)
-            await query.edit_message_text(messages.MODEL_SWITCHED.format(label=label))
+            self._runtime_active_sessions.discard(user_id)
+            label = _MODEL_LABELS.get(model_name, model_name)
+            await query.edit_message_text(
+                messages.MODEL_SWITCHED.format(label=label)
+                + "\n"
+                + messages.MODEL_SWITCH_WARNING
+            )
             return
 
     async def _handle_resume_callback(self, update, query, user_id, chat) -> None:

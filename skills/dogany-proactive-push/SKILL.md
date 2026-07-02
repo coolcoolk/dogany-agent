@@ -1,6 +1,6 @@
 ---
 name: dogany-proactive-push
-description: __USER_LABEL__ 텔레그램으로 능동적으로 메시지를 보낸다(아무도 안 불러도 먼저 거는 outbound 푸시). 정기 루틴(브리핑/회고/알림)이나 작업 완료 통보에 사용. 내용을 그대로 보내거나(--text), 지정 모델로 생성해서 보낸다(--prompt --model). 크론/launchd에서 호출하는 핵심 부품.
+description: Proactively send a message to __USER_LABEL__'s Telegram (outbound push initiated by the agent, with no one asking first). Use for scheduled routines (briefing / retro / reminder) or task-completion notifications. Sends content verbatim (--text) or generates it with a chosen model (--prompt --model). This is the core part invoked from cron / launchd.
 ---
 
 # dogany-proactive-push — outbound Telegram push

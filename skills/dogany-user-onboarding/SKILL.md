@@ -1,6 +1,6 @@
 ---
 name: dogany-user-onboarding
-description: 새 에이전트가 처음 깨어났을 때(AGENT.md에 ONBOARDING_PENDING 마커가 있거나 이름·말투·유머 농도가 미설정) 사용자에게 능동적으로 설정을 묻고, 받은 답을 자기 AGENT.md 정체성 필드에 직접 채운 뒤 온보딩 블록을 삭제하는 절차. 또한 운영 중 정체성(이름·호칭·톤·유머·이모지)이 바뀌면 자기 AGENT.md를 상시 자가수정하고, 사용자의 영속 프로필 정보가 바뀌면 USER.md를 갱신하는 절차. SessionStart에서 "온보딩 필요" 신호를 받았을 때, 내 정체성이 비어 보일 때, 사용자가 자기 정보를 처음 알려줄 때, 기존에 알던 정보가 달라졌을 때 떠올린다.
+description: When a new agent first wakes up (an ONBOARDING_PENDING marker in AGENT.md, or name/tone/humor level still unset), proactively ask the user for its setup, fill the answers directly into the identity fields of its own AGENT.md, then delete the onboarding block. Also the procedure for ongoing self-update - when identity (name, form of address, tone, humor, emoji) changes, self-edit own AGENT.md continuously; when the user's persistent profile facts change, update USER.md. Recall this on a SessionStart "onboarding needed" signal, when my identity looks empty, when the user first tells me about themselves, or when previously known info has changed.
 ---
 
 # dogany-user-onboarding — onboarding (identity self-fill) + identity/profile self-update

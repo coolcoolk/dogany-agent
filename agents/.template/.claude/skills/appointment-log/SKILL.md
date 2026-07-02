@@ -1,12 +1,15 @@
 ---
 name: appointment-log
 description: >-
-  __USER_LABEL__이 약속/일정을 잡거나 조회·수정하거나 참가자를 다룰 때 발동. "X랑 약속 잡았어",
-  "누구누구 만나기로 했어", "이번 주(오늘/내일/주말) 약속 뭐 있지", "그 약속에 누구 추가해줘",
-  "약속 장소/시간 바꿔줘", "OO이랑 저녁 약속", 사람 이름이나 별명(예: 별명)을 약속 맥락에서
-  언급할 때 사용. lifekit.db의 appointments / persons / appointment_persons를 lifekit.sh
-  CLI로 직접 다룬다. 핵심은 사람을 약속에 붙일 때 본명·별명으로 먼저 찾고, 없거나 모호하면
-  __USER_LABEL__께 확인하는 "사람 해소 규칙"이다.
+  Fires when __USER_LABEL__ makes, looks up, or edits an appointment/schedule, or
+  handles its participants. "I made plans with X", "I'm meeting so-and-so", "what
+  appointments do I have this week (today/tomorrow/this weekend)", "add someone to
+  that appointment", "change the appointment's place/time", "dinner plans with OO",
+  or mentions a person's name or nickname in an appointment context. Manages
+  lifekit.db appointments / persons / appointment_persons directly via the lifekit.sh
+  CLI. The core is the "person-resolution rule": when attaching a person to an
+  appointment, first look them up by real name or nickname, and if missing or
+  ambiguous, confirm with __USER_LABEL__.
 ---
 
 # appointment-log

@@ -1,6 +1,6 @@
 ---
 name: dogany-cron-register
-description: __USER_LABEL__이 반복작업(크론/정기루틴)을 맡기면 에이전트가 OS에 맞는 스케줄러(macOS launchd / Linux systemd --user 타이머)로 끝까지 직접 등록한다. "매일 몇시에 X 해줘", "이거 정기적으로", "크론 걸어줘" 류 요청에 발동. 유닛 작성→검증→테스트 발송→등록까지 에이전트가 처리하고, 코드만 던지고 __USER_LABEL__께 미루지 않는다. 게이트웨이/메인 봇 재시작만 예외(__USER_LABEL__께 요청).
+description: When __USER_LABEL__ hands off a recurring job (cron / regular routine), the agent registers it end-to-end using the OS-native scheduler (macOS launchd / Linux systemd --user timer). Fires on requests like "do X every day at Nam", "run this regularly", "set up a cron", "make this a routine". The agent writes the unit, validates it, sends a test fire, and loads it - it does the whole thing rather than dumping code on __USER_LABEL__. Only exception: restarting the gateway / main bot (ask __USER_LABEL__ for that).
 ---
 
 # dogany-cron-register — recurring task registration (launchd / systemd)

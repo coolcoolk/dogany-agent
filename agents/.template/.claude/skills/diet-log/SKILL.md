@@ -1,17 +1,25 @@
 ---
 name: diet-log
 description: >
-  식단 기록 AND 식단/칼로리 현황 조회를 모두 담당한다. 두 상황 다 이 스킬로 처리한다.
-  (1) 기록: __USER_LABEL__이 음식을 먹었다고 말하거나 식단 기록을 요청할 때.
-  "아침 먹었어", "점심 삼겹살 먹었어", "간식으로 견과 먹었어", 음식 이름 + 양 언급,
-  바코드 이미지나 번호 전송, 영양성분 라벨 사진 전송 등 모든 식단 입력 상황.
-  식품 영양성분 DB를 먼저 조회하고, 없으면 LLM 추정으로 로컬 lifekit.db 식단(meals) 테이블에 기록한다.
-  (2) 현황 조회: "오늘 칼로리 현황", "식단 현황", "오늘 뭐 먹었지", "얼마나 먹었어",
-  "오늘/이번주 목표 칼로리 알려줘", "칼로리 얼마 남았어", "섭취 얼마야" 등 그날 섭취/목표/밸런스를
-  묻는 모든 발화. 이때도 생 SQL을 짜지 말고 이 스킬의 lifekit.sh agg-day + card.py 로 답한다.
-  기록이든 조회든 최종 산출물은 항상 상태 카드(files/outbox/ 로 렌더 + send_file:: 전송)다.
-  ★기록이 성공하면 PostToolUse 훅(card-followup)이 "다음 행동은 무조건 카드 렌더+전송"이라는
-  강제 지시를 주입한다. 그 지시가 오면 다른 답변보다 먼저 카드를 만들어 보낸다(뒤 턴으로 미루지 않는다).
+  Handles BOTH diet logging AND diet/calorie status queries. Both cases go through
+  this skill.
+  (1) Log: when __USER_LABEL__ says they ate something or asks to record a meal.
+  "I had breakfast", "I had samgyeopsal for lunch", "ate nuts as a snack", any
+  food name + amount, sending a barcode image or number, sending a nutrition-label
+  photo - any meal-input situation. Look up the food nutrition DB first, and if
+  not found, estimate with the LLM and record into the local lifekit.db meals table.
+  (2) Status query: "today's calorie status", "diet status", "what did I eat today",
+  "how much have I eaten", "tell me today's/this week's calorie goal", "how many
+  calories do I have left", "how much have I taken in" - any utterance asking that
+  day's intake/goal/remaining. Do NOT hand-write raw SQL here either; answer with
+  this skill's lifekit.sh agg-day + card.py. Ownership: diet-log owns intake and
+  remaining-calorie queries; for burn/balance queries defer to workout-log.
+  Whether logging or querying, the final output is always a status card (render to
+  files/outbox/ + send via send_file::).
+  When a log succeeds, a PostToolUse hook (card-followup) injects a hard instruction
+  that "the next action MUST be render + send the card". When that instruction
+  arrives, build and send the card before any other reply (do not defer it to a
+  later turn).
 ---
 
 # diet-log

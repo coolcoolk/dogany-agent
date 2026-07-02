@@ -1,10 +1,13 @@
 ---
 name: task-update
 description: >-
-  __USER_LABEL__이 한 일을 말하면 에이전트가 Tasks DB에서 찾아 완료 처리한다. "오늘 말해보카 했어", "헬스 끝냈어",
-  "독서 완료", "마스크팩 했음", "X 처리했어" 류 발화에 발동. 반대로 "X 안 했어", "그거 취소",
-  "다시 미완료로", "잘못 체크됐어"면 완료를 되돌린다(undone). 태스크 진행상황 질문("오늘 뭐 남았지",
-  "할 일 뭐 있어")에도 검색해 답한다. lifekit.db tasks 기반 SQL판(task CLI 구현 후 활성화).
+  When __USER_LABEL__ says they did something, the agent finds it in the Tasks DB and
+  marks it done. Fires on utterances like "I did my vocab today", "finished the gym",
+  "reading done", "did my face mask", "handled X". Conversely, "I didn't do X",
+  "cancel that", "set it back to incomplete", "that got checked by mistake" reverts
+  the completion (undone). Also searches and answers task-progress questions
+  ("what's left today", "what do I have to do"). lifekit.db tasks-based SQL edition
+  (activates once the task CLI is implemented).
 ---
 
 # task-update — task completion (SQL version, future standard)

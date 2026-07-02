@@ -1,16 +1,23 @@
 ---
 name: workout-log
 description: >
-  운동 기록 AND 그날 운동/칼로리 밸런스 조회를 담당한다.
-  (1) 기록: __USER_LABEL__이 운동을 했다고 말하면 발동. "헬스 40분 했어", "오늘 러닝 5km 뛰었어",
-  "운동 끝 400kcal 소모", "요가 1시간", "PT 받았어", "가슴운동 했어", "자전거 탔어",
-  "등운동 했어", "하체 했어", "스쿼트", "크로스핏", "등산 다녀왔어" 등 운동 종류·시간·소모칼로리·
-  거리·심박 언급이 들어간 모든 운동 입력 상황.
-  (2) 조회: "오늘 운동 뭐 했지", "오늘 몇 kcal 태웠어", "운동 소모 얼마야", "오늘 밸런스 어때" 등
-  그날 운동/소모/섭취-소모 밸런스를 묻는 발화. 생 SQL 금지 — lifekit.sh workout-find/agg-day + card.py 로 답한다.
-  로컬 lifekit.db(신체건강 영역)에 운동 한 건을 기록하고 그날 칼로리 밸런스 카드를 갱신·전송한다.
-  ★기록이 성공하면 PostToolUse 훅(card-followup)이 "다음 행동은 무조건 카드 렌더+전송"이라는
-  강제 지시를 주입한다. 그 지시가 오면 다른 답변보다 먼저 카드를 만들어 보낸다(뒤 턴으로 미루지 않는다).
+  Handles workout logging AND that day's workout/calorie-balance queries.
+  (1) Log: fires when __USER_LABEL__ says they worked out. "did 40 min at the gym",
+  "ran 5km today", "workout done, burned 400kcal", "1 hour of yoga", "had a PT
+  session", "did chest day", "rode the bike", "did back day", "did legs", "squats",
+  "crossfit", "went hiking" - any workout input mentioning exercise type, duration,
+  calories burned, distance, or heart rate.
+  (2) Query: "what workout did I do today", "how many kcal did I burn today",
+  "how much did I burn exercising", "how's my balance today" - utterances asking
+  that day's workout/burn or intake-minus-burn balance. No raw SQL - answer with
+  lifekit.sh workout-find/agg-day + card.py. Ownership: workout-log owns burn and
+  calorie-balance queries; for pure intake/remaining queries defer to diet-log.
+  Records one workout into the local lifekit.db (physical-health area) and
+  updates/sends that day's calorie-balance card.
+  When a log succeeds, a PostToolUse hook (card-followup) injects a hard instruction
+  that "the next action MUST be render + send the card". When that instruction
+  arrives, build and send the card before any other reply (do not defer it to a
+  later turn).
 ---
 
 # workout-log

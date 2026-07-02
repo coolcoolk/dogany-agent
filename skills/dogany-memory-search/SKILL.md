@@ -1,6 +1,6 @@
 ---
 name: dogany-memory-search
-description: 사용자에 대한 과거 사실·기록·선호·맥락을 회상해야 할 때 사용. "전에 뭐라고 했지", 사용자의 운동/식단/투자/가계부 기록, 신상·일정·관계·과거 결정 등 장기기억 조회가 필요하면 답하기 전에 먼저 이걸로 검색한다. 한국어 의미검색이라 키워드가 안 겹쳐도 의미로 찾고, 검색 자체는 토큰 0이다.
+description: Use to recall past facts, records, preferences, or context about the user. Fires on "what did I say before", "what did I tell you about X", recall of the user's workout/diet/investment/budget records, personal details, schedule, relationships, or past decisions - any long-term memory lookup. Search with this BEFORE answering such a question. Semantic cross-lingual search finds by meaning even when keywords do not overlap (also catches non-English utterances), and the search itself costs zero tokens.
 ---
 
 # dogany-memory-search — long-term memory recall

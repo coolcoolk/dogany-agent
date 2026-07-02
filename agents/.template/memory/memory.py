@@ -44,6 +44,77 @@ TRANSCRIPT_FTS_TOPK = 3  # 당일 롤링 인덱스 검색에서 끼워넣을 최
 
 
 # ======================================================================
+# F6: secret redaction (security must-fix)
+# ======================================================================
+# A pasted secret must never persist. It would otherwise flow into
+# transcript_notes (same-day FTS -> recalled + re-injected by the hook), into
+# the _raw gzip archive, and into consolidate's permanent memory file. Redact
+# high-risk secret patterns at every choke point before any write. Cheap:
+# compiled once at import; run over short message/note strings only.
+_SECRET_PATTERNS = [
+    # PEM private key blocks (DOTALL: spans lines). Match first (widest).
+    re.compile(r"-----BEGIN[^-]+PRIVATE KEY-----.*?-----END[^-]+-----", re.DOTALL),
+    # JWT: header.payload.signature
+    re.compile(r"eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+"),
+    # OpenAI-style keys
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    # Google API keys
+    re.compile(r"AIza[0-9A-Za-z_\-]{20,}"),
+    # Slack tokens
+    re.compile(r"xox[baprs]-[A-Za-z0-9-]+"),
+    # Telegram bot token: <digits>:<35+ token chars>
+    re.compile(r"\d{6,}:[A-Za-z0-9_\-]{30,}"),
+]
+# key=value / key: value style secrets. Keep the key label, redact the value.
+_SECRET_KV_RE = re.compile(
+    r"(?i)(password|passwd|api[_-]?key|secret|token)(\s*[:=]\s*)(\S+)"
+)
+
+
+def redact_secrets(text):
+    """Replace high-risk secret patterns in text with [REDACTED].
+    Applied at every persistence choke point (transcript FTS ingest, raw archive
+    write, consolidate append) so a pasted secret never lands on disk or in the
+    same-day recall index. Non-secret prose is left untouched. Cheap: compiled
+    regexes over short strings. Returns text unchanged when no pattern hits."""
+    if not text:
+        return text
+    for pat in _SECRET_PATTERNS:
+        text = pat.sub("[REDACTED]", text)
+    # key=value: keep the key + separator, redact only the value.
+    text = _SECRET_KV_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED]", text)
+    return text
+
+
+# ======================================================================
+# M5: explicit chunking-format marker (human co-edit safety)
+# ======================================================================
+# parse_markdown / append_notes_to_md previously decided bullet-mode vs
+# section(§)-mode purely by whether ANY '§' line existed. A human adding or
+# removing one § then silently flips the whole file's chunking mode and the next
+# machine write uses the wrong mode. Fix: an explicit marker the code trusts
+# first; fall back to the §-sniff only when the marker is absent (backward
+# compatible). The engine writes the marker whenever it creates/rewrites a file.
+_FORMAT_MARKER_RE = re.compile(
+    r"<!--\s*dogany-format:\s*(section|bullet)\s*-->", re.IGNORECASE
+)
+
+
+def _format_marker(text):
+    """Return 'section' | 'bullet' if an explicit dogany-format marker is present
+    in text, else None (caller falls back to the § sniff)."""
+    if not text:
+        return None
+    m = _FORMAT_MARKER_RE.search(text)
+    return m.group(1).lower() if m else None
+
+
+def _marker_line(mode):
+    """The HTML-comment marker line for a given mode ('section'|'bullet')."""
+    return f"<!-- dogany-format: {mode} -->"
+
+
+# ======================================================================
 # 마크다운 파싱
 # ======================================================================
 def _is_header(line):
@@ -123,7 +194,15 @@ def parse_markdown(path):
         return []  # 빈 파일 방어
 
     lines = raw.splitlines()
-    has_sep = any(ln.strip() == "§" for ln in lines)
+    # M5: an explicit format marker wins over the § sniff. A human toggling one
+    # § no longer flips the whole file's chunking mode. Marker absent -> sniff.
+    marker = _format_marker(raw)
+    if marker is not None:
+        has_sep = (marker == "section")
+    else:
+        has_sep = any(ln.strip() == "§" for ln in lines)
+    # The marker comment itself is metadata, not a note -> drop it from parsing.
+    lines = [ln for ln in lines if not _FORMAT_MARKER_RE.search(ln)]
 
     notes = []
     current_section = ""
@@ -728,18 +807,29 @@ def append_notes_to_md(path, section, items):
     - section 미지정 시 파일 끝에 append.
     원본 파일에 직접 쓴다(진실의 원천).
     """
+    # F6: redact any secret in the items before they are written to disk.
+    items = [redact_secrets(it) for it in items]
+
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
     lines = content.splitlines()
 
     # 적재 구분자를 대상 파일 형식에 맞춘다(청킹 깨짐 방지).
-    # parse_markdown 의 has_sep 판정(any(line.strip()=='§'))과 정확히 일치시켜야
-    # 양쪽 파서가 같은 모드로 본다:
-    #   - § 기반 파일(__AGENT_LABEL__ 주제파일/inbox): 기존대로 "§\n{item}".
-    #   - 불릿 기반 파일: "- {item}" (§ 섞으면 has_sep=True 로 뒤집혀
-    #     헤더 단위로 뭉쳐 청킹이 깨진다).
-    has_sep = any(ln.strip() == "§" for ln in lines)
+    # M5: 명시적 format 마커가 있으면 그 모드를 신뢰(사람이 § 하나 토글해도 안 뒤집힘).
+    # 마커 없으면 기존 § 스니핑 폴백(하위호환) — 그리고 이번 쓰기에서 그 모드를
+    # 반영한 마커를 파일에 심어 다음 machine write 부터는 마커가 정본이 된다.
+    #   - § 기반 파일(__AGENT_LABEL__ 주제파일/inbox): "§\n{item}".
+    #   - 불릿 기반 파일: "- {item}".
+    marker = _format_marker(content)
+    if marker is not None:
+        has_sep = (marker == "section")
+    else:
+        has_sep = any(ln.strip() == "§" for ln in lines)
+        # 마커 부재 → 스니핑한 모드로 마커를 심는다(자가치유, 이후 안정).
+        mode = "section" if has_sep else "bullet"
+        content = _marker_line(mode) + "\n" + content
+        lines = content.splitlines()
     if has_sep:
         block = "\n".join(f"§\n{it}" for it in items)
     else:
@@ -1176,6 +1266,9 @@ def index_transcript_fts(conn, now=None):
             return 0
         cur = conn.cursor()
         for ts, speaker, text, session in rows:
+            # F6: redact secrets before the raw message enters the same-day FTS
+            # (transcript_notes/transcript_fts are recalled + re-injected by the hook).
+            text = redact_secrets(text)
             cur.execute(
                 "INSERT INTO transcript_notes(ts, role, session, text) VALUES(?,?,?,?)",
                 (ts, speaker, session, text),
@@ -1286,7 +1379,9 @@ def archive_raw_transcript(watermark_iso, now):
         # Group by month (YYYY-MM of the message ts) so a span crossing a month
         # boundary lands in the right monthly file.
         for ts, role, text, _session in rows:
-            clean = _scrub_binary_blobs(text)
+            # F6: redact secrets so a pasted secret does not sit in _raw either
+            # (the raw archive is a permanent replay substrate).
+            clean = redact_secrets(_scrub_binary_blobs(text))
             if not clean:
                 continue  # pure image/tool message -> skip (TEXT ONLY)
             month = (ts or "")[:7]  # ISO8601 -> YYYY-MM
@@ -1700,7 +1795,10 @@ def cmd_consolidate(args):
         #  _backup_md/append_notes_to_md 가 FileNotFoundError 로 죽던 FATAL 방어.)
         os.makedirs(MEMORIES_DIR, exist_ok=True)
         if not os.path.isfile(TARGET_MEMORY_MD):
-            open(TARGET_MEMORY_MD, "a", encoding="utf-8").close()
+            # M5: seed the section-format marker so append doesn't sniff an empty
+            # file as bullet-mode (inbox.md is a § section-mode file).
+            with open(TARGET_MEMORY_MD, "w", encoding="utf-8") as _f:
+                _f.write(_marker_line("section") + "\n")
         bak = _backup_md(TARGET_MEMORY_MD)
         if bak:
             print(f"[consolidate] 백업 생성: {os.path.basename(bak)}")
@@ -1924,7 +2022,9 @@ def _rewrite_inbox(path, keep_items):
     if mcomment:
         seed_comment = mcomment.group(0)
 
-    parts = [header_line, "§"]
+    # M5: write the explicit section-format marker at the top of the rewritten
+    # file so a later human § edit can't flip its chunking mode.
+    parts = [_marker_line("section"), header_line, "§"]
     if seed_comment:
         parts.append(seed_comment)
         parts.append("§")

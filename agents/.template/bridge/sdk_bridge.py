@@ -32,6 +32,7 @@ from claude_agent_sdk import (
 from bridge import messages
 from bridge.config import CLAUDE_CLI_PATH, PROCESS_TIMEOUT, config
 from bridge.options import OPTIONS_MARKER, classify_is_choice, has_numbered_list
+from bridge.permissions import extract_outside_paths, extract_protected_paths
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,22 @@ def _is_retryable_sdk_error(error: Exception) -> bool:
     if type(error).__name__ in _RETRYABLE_TYPES:
         return True
     return any(p in msg.lower() for p in _RETRYABLE_MSG)
+
+
+def _no_pending_guard(tool_name: str, tool_input: Any):
+    """Default-deny guard for the no-pending (proactive/background) branch.
+
+    With no user turn to answer a one-time confirm, a protected-zone or
+    out-of-root path is hard-denied; everything else is allowed so background
+    work still runs. (F4)
+    """
+    protected = extract_protected_paths(tool_name, tool_input, PROJECT_ROOT)
+    outside = extract_outside_paths(
+        tool_name, tool_input, PROJECT_ROOT, config.extra_allowed_roots
+    )
+    if protected or outside:
+        return PermissionResultDeny(message=messages.OUTSIDE_PATH_DENY_NO_CONFIRM)
+    return PermissionResultAllow()
 
 
 def _format_ask_user_question(tool_input: dict) -> str:
@@ -192,7 +209,12 @@ class SdkBridge:
                 return PermissionResultDeny(message=messages.ASK_USER_QUESTION_DENY)
             state = state_holder.get("state")
             if not state or not state.pending:
-                return PermissionResultAllow()
+                # No pending request => a proactive/background turn with no user
+                # to answer a confirm prompt. Do NOT blanket-allow: still enforce
+                # the guard as a default-deny for protected/out-of-root paths
+                # (there is no interactive one-time confirm available here). Other
+                # tools remain allowed so background work can proceed. (F4)
+                return _no_pending_guard(tool_name, tool_input)
             req = state.pending[0]
             if not req.permission_callback:
                 return PermissionResultAllow()
@@ -240,7 +262,7 @@ class SdkBridge:
                     pass
                 except Exception as e:
                     logger.error("Error cancelling task for user %s: %s", user_id, e)
-        msg = cancel_message or "Task terminated."
+        msg = cancel_message or messages.TASK_TERMINATED
         while state.pending:
             req = state.pending.popleft()
             if not req.future.done():
@@ -713,7 +735,9 @@ class SdkBridge:
             )
 
     async def stop(self, user_id: int) -> bool:
-        return await self._disconnect_user_stream(user_id, cancel_message="Task terminated.")
+        return await self._disconnect_user_stream(
+            user_id, cancel_message=messages.TASK_TERMINATED
+        )
 
     async def handle_timeout_preserve(self, user_id: int) -> Tuple[Optional[str], bool]:
         """Preserve (finalize, not delete) partial drafts + capture resume sid."""
