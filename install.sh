@@ -920,14 +920,18 @@ UNIT
 # The macOS path uses the already-minted plists (schedule lives in the plist);
 # the Linux path uses the OnCalendar column to generate a systemd timer.
 # OnCalendar syntax: systemd.time(7). consolidate/cleanup = daily 04:30.
-# NOTE: classify-inbox is NOT a standalone routine -- it is a step inside
-# consolidate (memory.py consolidate), so scheduling consolidate covers it.
+# classify-inbox is layer-2 of the memory model and IS a standalone routine:
+# consolidate (04:30) only dumps the night's notes into inbox.md; classify-inbox
+# (05:00, AFTER consolidate) is what routes inbox.md into the topic files. Its
+# wrapper (routines/classify-inbox-check.sh) is cheap (7-day marker + inbox-count
+# guard) and only calls Opus when there is something to classify.
 # weekly-review was removed from the product (its script hardcoded per-user
 # Notion UUIDs = PII / dead code for generic users), so it is not scheduled here.
 default_routine_set() {
   # short-name <TAB> script <TAB> OnCalendar
-  printf '%s\t%s\t%s\n' "consolidate-0430"     "routines/consolidate-0430.sh" "*-*-* 04:30:00"
-  printf '%s\t%s\t%s\n' "cleanup-files"        "routines/cleanup-files.sh"    "*-*-* 04:30:00"
+  printf '%s\t%s\t%s\n' "consolidate-0430"     "routines/consolidate-0430.sh"      "*-*-* 04:30:00"
+  printf '%s\t%s\t%s\n' "classify-inbox-0500"  "routines/classify-inbox-check.sh"  "*-*-* 05:00:00"
+  printf '%s\t%s\t%s\n' "cleanup-files"        "routines/cleanup-files.sh"         "*-*-* 04:30:00"
 }
 
 step_routines() {

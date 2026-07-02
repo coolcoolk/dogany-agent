@@ -623,6 +623,16 @@ def cmd_stats(args):
     print("== 메모리 인덱스 통계 ==")
     print(f"총 노트: {total}  (임베딩 보유 {with_emb} / 누락 {total - with_emb})")
 
+    # M4: NULL 임베딩 비율이 높으면 의미검색이 죽었다는 신호(Ollama 부재/다운).
+    # 이 경우 자동회상은 키워드 FTS 폴백으로만 돈다 — 크게 한 줄 경고.
+    null_frac = ((total - with_emb) / total) if total else 0.0
+    if total and null_frac >= NULL_EMBED_WARN_FRAC:
+        print(
+            f"\n[!! 경고] 노트의 {null_frac*100:.0f}% 가 임베딩 없음 — 의미(벡터) 검색 저하. "
+            "Ollama(bge-m3) 미설치/다운 가능성. 자동회상은 키워드 검색으로만 동작 중. "
+            "Ollama 확인 후 `memory.py index` 재실행 권장."
+        )
+
     print("\n파일별 노트 수:")
     for row in conn.execute(
         "SELECT source_file, COUNT(*) c FROM notes GROUP BY source_file ORDER BY c DESC"
@@ -840,6 +850,10 @@ TRANSCRIPT_GLOB = os.path.join(
 )
 TARGET_MEMORY_MD = os.path.join(MEMORIES_DIR, "inbox.md")
 DEDUP_THRESHOLD = 0.82     # 후보가 기존 노트와 이 코사인 이상이면 "이미 아는 것"
+# 정정/개정/번복 마커. 이걸로 시작하는 후보는 near-verbatim 재진술이라 코사인 >=DEDUP_THRESHOLD
+# 존에 떨어져 하드 스킵으로 조용히 버려진다(=stale fact 가 authoritative 로 남음, DGN-055 위반).
+# 이런 후보는 dedup 하드 스킵에서 면제(=적재)한다. 일반 재진술은 그대로 스킵.
+CORRECTION_MARKERS = ("정정:", "정정 ", "correction:", "correction ")
 DEFAULT_LOOKBACK_DAYS = 3  # 워터마크 없을 때(최초) 최근 며칠치를 볼지
 MEMORY_LINES_CAP = 600     # inbox.md 줄 수가 이 값 넘으면 "정리할까요?" 제안
 CONSOLIDATE_REPORT_ENABLED = os.environ.get("DOGANY_MEMORY_REPORT", "0") == "1"  # product: nightly "memory saved" Telegram push OFF by default
@@ -1535,6 +1549,16 @@ def _send_silent_report(text):
     return True
 
 
+def _is_correction(text):
+    """후보 텍스트가 정정/개정/번복 마커로 시작하면 True.
+    이런 항목은 기존 사실을 뒤집는 near-verbatim 재진술이라 코사인이 높게 나와
+    dedup 하드 스킵에 걸리기 쉽다 → 스킵에서 면제해 반드시 적재한다(DGN-055)."""
+    if not text:
+        return False
+    s = text.lstrip().lower()
+    return any(s.startswith(m) for m in CORRECTION_MARKERS)
+
+
 def cmd_consolidate(args):
     now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -1637,7 +1661,11 @@ def cmd_consolidate(args):
             s = cosine(cvec, ev)
             if s > max_sim:
                 max_sim = s
-        if max_sim >= DEDUP_THRESHOLD:
+        # 정정 면제(M3/DGN-055): 정정 항목은 기존 사실을 뒤집는 near-verbatim 재진술이라
+        # 코사인이 DEDUP_THRESHOLD 를 넘어 하드 스킵에 걸린다. 그대로 두면 stale fact 가
+        # authoritative 로 남는다("confidently wrong"). 정정 마커 후보는 스킵에서 면제해 적재.
+        # 2차 필터를 이미 통과(KEEP)한 항목만 여기 오므로 필터-KEPT 조건은 이미 성립.
+        if max_sim >= DEDUP_THRESHOLD and not _is_correction(cand):
             dup_items.append(cand)
         else:
             new_items.append(cand)
@@ -1694,6 +1722,15 @@ def cmd_consolidate(args):
     if tagged:
         print("[consolidate] 재인덱싱...")
         cmd_index(argparse.Namespace(lock=None))
+
+    # 7b) M4: NULL 임베딩 비율 점검 — 높으면 의미검색 저하(Ollama 부재/다운) 크게 경고.
+    frac, nulls, ntot = null_embedding_fraction()
+    if ntot and frac >= NULL_EMBED_WARN_FRAC:
+        print(
+            f"[!! 경고] 노트 {nulls}/{ntot} ({frac*100:.0f}%) 임베딩 없음 — "
+            "의미(벡터) 검색 저하. Ollama(bge-m3) 확인 후 index 재실행 권장. "
+            "지금 자동회상은 키워드 검색으로만 동작."
+        )
 
     # 8) 리포트 생성 + 무음 발송
     try:
@@ -2061,6 +2098,21 @@ HOOK_EMBED_TIMEOUT = 6    # Ollama 임베딩 urlopen 타임아웃(초)
 HOOK_SEARCH_TIMEOUT = 9   # 검색 전체 스레드 타임아웃(초)
 HOOK_SNIPPET_MAX = 400    # 결과 본문 발췌 길이 상한
 HOOK_STALE_LOCK_SEC = 600  # 이보다 오래된 락은 죽은 프로세스 잔재로 보고 무시
+HOOK_KW_TOPK = 4          # 키워드 FTS 폴백에서 주입할 최대 노트 수
+HOOK_KW_MAX_TERMS = 6     # 프롬프트에서 뽑아 OR 로 묶을 키워드 상한
+HOOK_KW_MIN_LEN = 3       # 이 길이 미만 토큰은 버림(잡음/조사)
+# NULL 임베딩 비율이 이 값을 넘으면 "의미검색 저하" 경고를 크게 한 줄 낸다(Ollama 부재 감지).
+NULL_EMBED_WARN_FRAC = 0.5
+# 키워드 폴백에서 버릴 흔한 불용어(한/영). 프롬프트 통째 phrase 매칭 실패를 대신할
+# OR 키워드 쿼리를 만들 때 노이즈 토큰을 제거한다.
+HOOK_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "you", "your", "are", "was",
+    "were", "has", "have", "had", "not", "but", "can", "will", "please", "about",
+    "what", "when", "where", "which", "who", "how", "why", "from", "into", "then",
+    "그리고", "그러나", "하지만", "그런데", "그래서", "그거", "이거", "저거",
+    "뭐야", "뭔데", "무엇", "어떻게", "어디", "언제", "누구", "우리", "너는",
+    "해줘", "알려줘", "해주라", "인데", "인가", "하는", "했던", "했어", "한거",
+}
 
 
 def _now_local_line():
@@ -2314,6 +2366,120 @@ def _hook_build_context(results):
     return "\n".join(lines)
 
 
+def _has_vector_hit(results):
+    """벡터 레인이 실제로 뭔가 돌려줬나? cosine 값이 하나라도 있으면 True.
+    Ollama 다운/미설치면 vector_search 가 [] → 모든 결과 cosine=None → False."""
+    if not results:
+        return False
+    return any(r.get("cosine") is not None for r in results)
+
+
+def _tokenize_for_fts(prompt):
+    """프롬프트를 키워드 FTS 폴백용 토큰으로 쪼갠다.
+    - 영문/숫자/한글 단어만 남기고 구두점 제거.
+    - HOOK_KW_MIN_LEN 미만·불용어 제거.
+    - 등장 순서 보존, 중복 제거, 상위 HOOK_KW_MAX_TERMS 개만.
+    반환: [term, ...] (비어 있을 수 있음)."""
+    if not prompt:
+        return []
+    # 한글/영문/숫자 런만 토큰으로. (trigram FTS 라 부분일치도 잡힌다)
+    raw = re.findall(r"[0-9A-Za-z가-힣]+", prompt)
+    seen = set()
+    terms = []
+    for w in raw:
+        lw = w.lower()
+        if len(w) < HOOK_KW_MIN_LEN:
+            continue
+        if lw in HOOK_STOPWORDS:
+            continue
+        if lw in seen:
+            continue
+        seen.add(lw)
+        terms.append(w)
+        if len(terms) >= HOOK_KW_MAX_TERMS:
+            break
+    return terms
+
+
+def _fts_or_match(conn, terms, limit):
+    """키워드 term 들을 OR 로 묶어 notes_fts 를 MATCH. bm25 오름차순 note id 리스트.
+    trigram 이라 각 term 을 phrase 로 감싸 안전하게 OR 결합한다."""
+    if not terms:
+        return []
+    expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
+    try:
+        rows = conn.execute(
+            "SELECT rowid, bm25(notes_fts) AS rank FROM notes_fts "
+            "WHERE notes_fts MATCH ? ORDER BY rank LIMIT ?",
+            (expr, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [r["rowid"] for r in rows]
+
+
+def _hook_keyword_fallback(prompt):
+    """M4 폴백: 벡터 레인이 빈손일 때(임베딩 실패/전부 None) 키워드 FTS 로 회상.
+    프롬프트를 토큰화해 OR MATCH 하고, cosine 컷 없이 상위 히트 본문을 그대로 주입.
+    반환: additionalContext 문자열 또는 None(히트 없음)."""
+    terms = _tokenize_for_fts(prompt)
+    if not terms:
+        return None
+    try:
+        conn = connect()
+        init_db(conn)
+    except sqlite3.Error:
+        return None
+    try:
+        ids = _fts_or_match(conn, terms, HOOK_KW_TOPK)
+        if not ids:
+            return None
+        lines = ["[관련 기억 — 키워드검색]"]
+        for nid in ids:
+            row = conn.execute(
+                "SELECT section, text FROM notes WHERE id=?", (nid,)
+            ).fetchone()
+            if not row:
+                continue
+            section = row["section"] or "(no section)"
+            text = (row["text"] or "").strip().replace("\n", " ")
+            if len(text) > HOOK_SNIPPET_MAX:
+                text = text[:HOOK_SNIPPET_MAX] + "…"
+            lines.append(f"- [{section}] {text}")
+        if len(lines) == 1:
+            return None
+        return "\n".join(lines)
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+
+
+def null_embedding_fraction():
+    """전체 노트 중 embedding IS NULL 비율(0.0~1.0)과 (null, total) 반환.
+    노트가 0개면 (0.0, 0, 0). stats/consolidate 에서 '의미검색 저하' 경고에 쓴다."""
+    try:
+        conn = connect()
+        init_db(conn)
+    except sqlite3.Error:
+        return 0.0, 0, 0
+    try:
+        total = conn.execute("SELECT COUNT(*) c FROM notes").fetchone()["c"]
+        nulls = conn.execute(
+            "SELECT COUNT(*) c FROM notes WHERE embedding IS NULL"
+        ).fetchone()["c"]
+    except sqlite3.Error:
+        return 0.0, 0, 0
+    finally:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+    frac = (nulls / total) if total else 0.0
+    return frac, nulls, total
+
+
 def cmd_hook(args):
     """UserPromptSubmit hook. 내부에서 직접 exit(0) 처리(main rc에 의존 안 함).
     어떤 에러든 stdout에 아무것도 안 쓰고 exit 0(빈손폴백)."""
@@ -2342,12 +2508,17 @@ def cmd_hook(args):
 
         # 3) 검색(스레드 타임아웃 보호)
         results = _hook_search_with_timeout(prompt.strip())
-        if not results:
-            _emit_empty()
-            return
 
-        # 4) 컨텍스트 구성 + 약한매칭 컷
-        ctx = _hook_build_context(results)
+        # 4) 컨텍스트 구성 + 약한매칭 컷.
+        ctx = _hook_build_context(results) if results else None
+
+        # 4b) M4 폴백: 벡터 레인이 빈손이면(Ollama 다운/미설치 → cosine 전부 None,
+        #     프롬프트 통째 phrase 매칭도 거의 안 맞음) 키워드 FTS 로 회상해 주입한다.
+        #     제품 기본배포엔 Ollama 가 없어 이 경로가 없으면 자동회상이 시각줄만 넣는
+        #     사실상 no-op 가 된다. cosine 컷 없이 키워드 히트를 넣는다.
+        if not ctx and not _has_vector_hit(results):
+            ctx = _hook_keyword_fallback(prompt.strip())
+
         if not ctx:
             _emit_empty()
             return
