@@ -3,8 +3,9 @@
 #
 # The flagship, non-developer setup experience. Walks the user through:
 #   1. language   2. timezone   3. prerequisites   4. dependencies
-#   5. bot token + owner id (born-locked)   6. write .env   7. mint the agent
-#   8. service autostart (launchd/systemd/manual)   9. final message
+#   5. bot token + owner id (born-locked)   6. email connect (optional)
+#   7. mint the agent   8. write .env
+#   9. service autostart (launchd/systemd/manual)   10. final message
 #
 # BYO-compute: the user's OWN Claude Code auth is used as-is (personal/self-host
 # is within Anthropic policy). We only verify the `claude` CLI runs; we never
@@ -33,6 +34,10 @@ DOGANY_TZ="${DOGANY_TZ:-}"            # IANA tz string
 BOT_TOKEN=""
 OWNER_ID=""
 BOT_NAME=""
+# Optional email-send (dogany-mailer) connect. Blank = not connected.
+EMAIL_ADDRESS="${EMAIL_ADDRESS:-}"
+EMAIL_APP_PASSWORD="${EMAIL_APP_PASSWORD:-}"
+EMAIL_CC="${EMAIL_CC:-}"
 ENABLE_VOICE="${DOGANY_VOICE:-0}"     # 0 core-only (default), 1 full
 INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$SCRIPT_PATH/agents/main}"
 # Lite = 1 agent. Pro flips this knob (env or config) to allow more; !=1 bypasses the single-agent refusal.
@@ -296,7 +301,7 @@ py_version_ok() {
 
 check_prereqs() {
   hr
-  msg "[3/9] 사전 조건 확인" "[3/9] Checking prerequisites"
+  msg "[3/10] 사전 조건 확인" "[3/10] Checking prerequisites"
   hr
 
   # --- claude CLI (BYO-compute; verify it runs, do NOT dictate auth) ---
@@ -364,7 +369,7 @@ check_prereqs() {
 # ---------------------------------------------------------------------------
 step_language() {
   hr
-  msg "[1/9] 언어" "[1/9] Language"
+  msg "[1/10] 언어" "[1/10] Language"
   hr
   # detect_lang already ran; show detected, let user switch.
   if [ "$DOGANY_LANG" = "ko" ]; then
@@ -386,7 +391,7 @@ step_language() {
 # ---------------------------------------------------------------------------
 step_timezone() {
   hr
-  msg "[2/9] 타임존" "[2/9] Timezone"
+  msg "[2/10] 타임존" "[2/10] Timezone"
   hr
   msg "감지된 타임존: $DOGANY_TZ" "Detected timezone: $DOGANY_TZ"
   if ! confirm "이 타임존이 맞나요?" "Is this timezone correct?" "y"; then
@@ -403,7 +408,7 @@ step_timezone() {
 # ---------------------------------------------------------------------------
 step_dependencies() {
   hr
-  msg "[4/9] 의존성" "[4/9] Dependencies"
+  msg "[4/10] 의존성" "[4/10] Dependencies"
   hr
   msg "기본은 핵심 의존성만 설치합니다 (빠르고 가벼움)." \
       "Default installs core dependencies only (fast and light)."
@@ -428,7 +433,7 @@ step_dependencies() {
 # ---------------------------------------------------------------------------
 step_bot_token() {
   hr
-  msg "[5/9] 텔레그램 봇 토큰 + 오너 ID" "[5/9] Telegram bot token + owner id"
+  msg "[5/10] 텔레그램 봇 토큰 + 오너 ID" "[5/10] Telegram bot token + owner id"
   hr
   msg "봇 만들기:" "Create your bot:"
   msg "  1) 텔레그램에서 @BotFather 를 엽니다." "  1) Open @BotFather in Telegram."
@@ -498,7 +503,50 @@ lookup_bot_name() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6 + 7: mint the instance, then write/augment .env atomically
+# Step 6: email connect (OPTIONAL -- dogany-mailer send capability)
+# ---------------------------------------------------------------------------
+# Wires the agent's outbound email at install time. Fully optional and
+# skip-friendly (default = no). The app password is NEVER echoed anywhere
+# (no logs, no dry-run preview). Whitespace in the app password is stripped
+# because Google displays it as 4x4 groups with spaces.
+step_email_connect() {
+  hr
+  msg "[6/10] 이메일 연결 (선택)" "[6/10] Email connect (optional)"
+  hr
+  if ! confirm \
+      "에이전트가 메일을 보낼 수 있도록 이메일 계정을 연결할까요? 선택 사항 -- 건너뛰고 나중에 메인 에이전트를 통해 추가할 수 있습니다. 연결한다면 개인 계정이 아닌 전용(신규) 계정을 권장합니다." \
+      "Connect an email account so the agent can send mail? Optional -- you can skip and add it later via the main agent. If you connect, a NEW dedicated account (not your personal) is recommended." \
+      "n"; then
+    # Skip: leave globals blank -> mailer stays 'not connected'.
+    EMAIL_ADDRESS=""
+    EMAIL_APP_PASSWORD=""
+    EMAIL_CC=""
+    msg "이메일 연결을 건너뜁니다. 나중에 메인 에이전트에게 요청해 추가할 수 있습니다." \
+        "Skipping email connect. You can add it later by asking the main agent."
+    return 0
+  fi
+
+  ask EMAIL_ADDRESS "에이전트 발신 이메일 (신규 전용 Gmail 권장): " \
+                    "agent's sending email (a new dedicated Gmail is recommended): "
+
+  msg "앱 비밀번호는 2단계 인증이 필요하며 myaccount.google.com/apppasswords 에서 생성합니다 (16자)." \
+      "The app password needs 2-step verification; generate at myaccount.google.com/apppasswords (16 chars)."
+  ask EMAIL_APP_PASSWORD "앱 비밀번호 붙여넣기: " "Paste the app password: "
+  # Google shows the app password as 4x4 groups with spaces -> strip ALL
+  # whitespace. Do NOT lowercase. Never echo the value.
+  EMAIL_APP_PASSWORD="$(printf '%s' "$EMAIL_APP_PASSWORD" | tr -d '[:space:]')"
+
+  ask EMAIL_CC "본인 이메일 (에이전트가 발신 시 참조로 넣습니다): " \
+               "your own email (the agent CCs you on sends): "
+
+  if [ -n "$EMAIL_ADDRESS" ]; then
+    msg "이메일 연결됨: $EMAIL_ADDRESS (앱 비밀번호는 저장만 되고 화면에 표시하지 않습니다)." \
+        "Email connected: $EMAIL_ADDRESS (app password stored, never displayed)."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Step 7 + 8: mint the instance, then write/augment .env atomically
 # ---------------------------------------------------------------------------
 # The env path inside the instance (matches config.py BOT_DATA_DIR).
 env_path_for_root() { printf '%s/.telegram_bot/.env' "$1"; }
@@ -507,6 +555,7 @@ env_path_for_root() { printf '%s/.telegram_bot/.env' "$1"; }
 # real augmentation. Uses the exact key names config.py reads.
 render_env() {
   local token="$1" ids="$2" locale="$3" tz="$4"
+  local email_addr="${5:-}" email_pw="${6:-}" email_cc="${7:-}"
   printf '# Dogany bridge configuration -- generated by install.sh\n'
   printf '# Do NOT commit this file (contains your bot token).\n\n'
   printf 'TELEGRAM_BOT_TOKEN=%s\n' "$token"
@@ -518,16 +567,16 @@ render_env() {
   printf 'EXTRA_ALLOWED_ROOTS=\n'
   printf '# --- Email (dogany-mailer; optional, connect-time). Blank = not connected.\n'
   printf '# Gmail: use an App Password (not your login password). Never commit real values.\n'
-  printf 'EMAIL_ADDRESS=\n'
-  printf 'EMAIL_APP_PASSWORD=\n'
-  printf 'EMAIL_CC=\n'
+  printf 'EMAIL_ADDRESS=%s\n' "$email_addr"
+  printf 'EMAIL_APP_PASSWORD=%s\n' "$email_pw"
+  printf 'EMAIL_CC=%s\n' "$email_cc"
   printf '# SMTP_HOST=smtp.gmail.com   # optional, default smtp.gmail.com\n'
   printf '# SMTP_PORT=587              # optional, default 587 (STARTTLS)\n'
 }
 
 step_mint_and_env() {
   hr
-  msg "[6-7/9] 에이전트 생성 및 설정 파일 작성" "[6-7/9] Mint the agent and write config"
+  msg "[7-8/10] 에이전트 생성 및 설정 파일 작성" "[7-8/10] Mint the agent and write config"
   hr
 
   local target env_file backup
@@ -543,10 +592,15 @@ step_mint_and_env() {
         "Would call: mint.sh --root '$target' --name '$AGENT_NAME' --token <token> $(mint_dep_flag)"
     msg "작성될 .env: $env_file" "Would write .env: $env_file"
     msg "--- .env 미리보기 ---" "--- .env preview ---"
-    render_env "$(mask_token "$BOT_TOKEN")" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ"
+    # Mask the app password in the preview: the REAL value must never reach
+    # stdout. Show *** when set, blank when unset (mirrors token masking).
+    local pw_mask=""; [ -n "$EMAIL_APP_PASSWORD" ] && pw_mask="***"
+    render_env "$(mask_token "$BOT_TOKEN")" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
+               "$EMAIL_ADDRESS" "$pw_mask" "$EMAIL_CC"
     msg "--- 끝 ---" "--- end ---"
     # Actually write the mock .env into the temp dir so the flow is testable.
-    render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" > "$env_file"
+    render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
+               "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" > "$env_file"
     chmod 600 "$env_file" 2>/dev/null || true
     return 0
   fi
@@ -581,7 +635,8 @@ step_mint_and_env() {
   mkdir -p "$(dirname "$env_file")"
   local tmp_env
   tmp_env="$(mktemp "${env_file}.tmp.XXXXXX")"
-  render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" > "$tmp_env"
+  render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
+             "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" > "$tmp_env"
   chmod 600 "$tmp_env"
   mv -f "$tmp_env" "$env_file"
   msg "설정 파일 작성 완료: $env_file" "Wrote config: $env_file"
@@ -596,11 +651,11 @@ mint_dep_flag() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 8: service autostart
+# Step 9: service autostart
 # ---------------------------------------------------------------------------
 step_service() {
   hr
-  msg "[8/9] 자동 시작 서비스 (선택)" "[8/9] Autostart service (optional)"
+  msg "[9/10] 자동 시작 서비스 (선택)" "[9/10] Autostart service (optional)"
   hr
   local manual_cmd="bash \"$INSTALL_ROOT/bridge/start.sh\" --path \"$INSTALL_ROOT\""
 
@@ -709,11 +764,11 @@ UNIT
 }
 
 # ---------------------------------------------------------------------------
-# Step 9: final message
+# Step 10: final message
 # ---------------------------------------------------------------------------
 step_final() {
   hr
-  msg "[9/9] 완료" "[9/9] Done"
+  msg "[10/10] 완료" "[10/10] Done"
   hr
   local at="@your_bot"
   [ -n "$BOT_NAME" ] && at="@$BOT_NAME"
@@ -792,6 +847,7 @@ main() {
   check_prereqs
   step_dependencies
   step_bot_token
+  step_email_connect
   step_mint_and_env
   step_service
   step_final
