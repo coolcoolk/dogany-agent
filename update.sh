@@ -42,6 +42,23 @@ DOGANY_LANG="${DOGANY_LANG:-en}"
 msg() { if [ "$DOGANY_LANG" = "ko" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 die() { msg "[오류] $1" "[ERROR] $1" >&2; exit 1; }
 
+# Portable in-place sed: BSD (macOS) and GNU (Linux) disagree on `sed -i`'s
+# flavor (BSD requires a mandatory backup-suffix arg, GNU forbids the space).
+# Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
+# Args: <file> <sed-arg>...  (the sed args are the -e expressions to apply).
+# Preserves LC_ALL=C. GNU-safe by construction (no -i used at all).
+sed_inplace() {
+  local f="$1"; shift
+  local tmp
+  tmp="$(mktemp "${f}.sed.XXXXXX")"
+  if LC_ALL=C sed "$@" "$f" > "$tmp"; then
+    mv -f "$tmp" "$f"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Args.
 # ---------------------------------------------------------------------------
@@ -371,16 +388,14 @@ fi
 if [ "$DRY_RUN" = "0" ]; then
   subst_one() {
     local f="$1"
-    LC_ALL=C sed -i '' \
+    sed_inplace "$f" \
       -e "s#__PROJECT_ROOT__#${INSTANCE}#g" \
-      -e "s#__HOME__#${HOME}#g" \
-      "$f"
+      -e "s#__HOME__#${HOME}#g"
     if [ "$IDENTITY_OK" = "1" ]; then
-      LC_ALL=C sed -i '' \
+      sed_inplace "$f" \
         -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
         -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
-        -e "s#__USER_LABEL__#${USER_LABEL}#g" \
-        "$f"
+        -e "s#__USER_LABEL__#${USER_LABEL}#g"
     fi
   }
   # Substitute across refreshed framework file types, but NEVER identity/user
@@ -410,9 +425,8 @@ if [ "$DRY_RUN" = "0" ]; then
   # Record the framework version this instance now matches.
   if [ -f "$INSTANCE/.instance.conf" ]; then
     if grep -q '^DOGANY_FW_VERSION=' "$INSTANCE/.instance.conf"; then
-      LC_ALL=C sed -i '' \
-        -e "s#^DOGANY_FW_VERSION=.*#DOGANY_FW_VERSION=${REPO_VERSION}#" \
-        "$INSTANCE/.instance.conf"
+      sed_inplace "$INSTANCE/.instance.conf" \
+        -e "s#^DOGANY_FW_VERSION=.*#DOGANY_FW_VERSION=${REPO_VERSION}#"
     else
       printf 'DOGANY_FW_VERSION=%s\n' "$REPO_VERSION" >> "$INSTANCE/.instance.conf"
     fi

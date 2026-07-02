@@ -130,18 +130,34 @@ if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL --exclude '__pycache__' --exclude '*.pyc' "$REPO_ROOT/service/" "$PROJECT_ROOT/service/"
 fi
 
+# Portable in-place sed: BSD (macOS) and GNU (Linux) disagree on `sed -i`'s
+# flavor (BSD requires a mandatory backup-suffix arg, GNU forbids the space).
+# Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
+# Args: <file> <sed-arg>...  (the sed args are the -e expressions to apply).
+# Preserves LC_ALL=C. GNU-safe by construction (no -i used at all).
+sed_inplace() {
+  local f="$1"; shift
+  local tmp
+  tmp="$(mktemp "${f}.sed.XXXXXX")"
+  if LC_ALL=C sed "$@" "$f" > "$tmp"; then
+    mv -f "$tmp" "$f"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 # 2) substitute the five placeholders across text files.
 #    '#' delimiter since values (paths) contain '/'. Tokens are distinct and the
 #    substituted values never reintroduce another token, so order is irrelevant.
 substitute() {
   local f="$1"
-  LC_ALL=C sed -i '' \
+  sed_inplace "$f" \
     -e "s#__PROJECT_ROOT__#${PROJECT_ROOT}#g" \
     -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
     -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
     -e "s#__USER_LABEL__#${USER_LABEL}#g" \
-    -e "s#__HOME__#${HOME_DIR}#g" \
-    "$f"
+    -e "s#__HOME__#${HOME_DIR}#g"
 }
 
 while IFS= read -r -d '' f; do

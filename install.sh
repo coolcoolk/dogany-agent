@@ -207,6 +207,27 @@ ask() {
   eval "$__var=\$reply"
 }
 
+# ask_secret VAR "ko prompt" "en prompt"  -- like ask() but the typed value is
+# NOT echoed to the terminal (read -rs). Use for secrets (e.g. app passwords).
+# Dry-run-safe: keeps any preset value / echoes a mock, exactly like ask().
+ask_secret() {
+  local __var="$1" ko="$2" en="$3"
+  local __cur
+  eval "__cur=\${$__var:-}"
+  if [ "$DRY_RUN" = "1" ]; then
+    msgn "$ko" "$en"; printf '[dry-run mock: %s]\n' "${__cur:+***}"
+    eval "$__var=\$__cur"
+    return 0
+  fi
+  msgn "$ko" "$en"
+  local reply
+  # -s: silent (no echo while typing). read has no trailing newline in -s mode,
+  # so print one explicitly after the (invisible) input finishes.
+  IFS= read -rs reply || reply=""
+  printf '\n'
+  eval "$__var=\$reply"
+}
+
 # confirm "ko question" "en question" [default_yes]  -> returns 0 for yes.
 confirm() {
   local ko="$1" en="$2" def="${3:-y}" reply
@@ -435,12 +456,15 @@ step_bot_token() {
   hr
   msg "[5/10] 텔레그램 봇 토큰 + 오너 ID" "[5/10] Telegram bot token + owner id"
   hr
+  msg "이 토큰은 에이전트가 당신의 텔레그램 봇으로 대화하기 위한 열쇠입니다. 봇은 이 ID에 born-locked 되어 오너 전용으로 동작합니다." \
+      "This token is the key that lets the agent talk as your Telegram bot. The bot is born-locked to your id and answers only you."
   msg "봇 만들기:" "Create your bot:"
-  msg "  1) 텔레그램에서 @BotFather 를 엽니다." "  1) Open @BotFather in Telegram."
-  msg "  2) /newbot 를 보내고 이름과 사용자명을 정합니다." \
-      "  2) Send /newbot and pick a name and username."
-  msg "  3) BotFather 가 보낸 메시지 전체를 그대로 여기에 붙여넣으세요." \
-      "  3) Paste the WHOLE message BotFather sends you, right here."
+  msg "  1) 텔레그램에서 @BotFather (공식 봇 생성기) 를 엽니다." \
+      "  1) Open @BotFather (Telegram's official bot maker) in Telegram."
+  msg "  2) /newbot 를 보내고 표시 이름과 사용자명(@...bot)을 정합니다." \
+      "  2) Send /newbot and pick a display name and a username (must end in 'bot')."
+  msg "  3) BotFather 가 보낸 답장 전체를 그대로 여기에 붙여넣으세요 -- 토큰만 자동으로 추출합니다." \
+      "  3) Paste BotFather's WHOLE reply here -- we auto-extract just the token."
 
   # --- token ---
   while :; do
@@ -464,12 +488,15 @@ step_bot_token() {
 
   # --- owner id ---
   msg "" ""
+  msg "이 숫자 ID 로 봇을 당신에게 잠급니다 -- 다른 사람은 봇과 대화할 수 없습니다." \
+      "This numeric id locks the bot to you -- nobody else can talk to it."
   msg "당신의 숫자 텔레그램 ID 가져오기:" "Get your numeric Telegram id:"
-  msg "  1) 텔레그램에서 @userinfobot 를 엽니다." "  1) Open @userinfobot in Telegram."
-  msg "  2) 아무 메시지나 보내면 당신의 ID 를 알려줍니다." \
-      "  2) Send it any message; it replies with your id."
-  msg "  3) 그 메시지를 그대로 붙여넣으세요 (건너뛰려면 빈 줄)." \
-      "  3) Paste that message here (leave blank to skip)."
+  msg "  1) 텔레그램에서 @userinfobot (당신의 ID 를 알려주는 봇) 를 엽니다." \
+      "  1) Open @userinfobot (a bot that tells you your id) in Telegram."
+  msg "  2) 아무 메시지나 보내면 당신의 숫자 ID 를 답장으로 보냅니다." \
+      "  2) Send it any message; it replies with your numeric id."
+  msg "  3) 그 답장을 그대로 붙여넣으세요 -- ID 만 자동 추출합니다 (건너뛰려면 빈 줄)." \
+      "  3) Paste that reply here -- we auto-extract just the id (leave blank to skip)."
   local id_blob=""
   ask id_blob "userinfobot 메시지 붙여넣기 (선택): " \
               "Paste userinfobot message (optional): " \
@@ -529,9 +556,12 @@ step_email_connect() {
   ask EMAIL_ADDRESS "에이전트 발신 이메일 (신규 전용 Gmail 권장): " \
                     "agent's sending email (a new dedicated Gmail is recommended): "
 
-  msg "앱 비밀번호는 2단계 인증이 필요하며 myaccount.google.com/apppasswords 에서 생성합니다 (16자)." \
-      "The app password needs 2-step verification; generate at myaccount.google.com/apppasswords (16 chars)."
-  ask EMAIL_APP_PASSWORD "앱 비밀번호 붙여넣기: " "Paste the app password: "
+  msg "앱 비밀번호는 로그인 비밀번호가 아니라 이 앱 전용 16자리 코드입니다 (계정 비밀번호는 절대 입력하지 마세요)." \
+      "The app password is a 16-char app-only code, NOT your login password (never enter your account password)."
+  msg "먼저 2단계 인증을 켠 뒤 myaccount.google.com/apppasswords 에서 생성하세요. 4x4 그룹의 공백은 자동으로 제거됩니다." \
+      "Turn on 2-step verification first, then create one at myaccount.google.com/apppasswords. The 4x4 spaces are stripped automatically."
+  ask_secret EMAIL_APP_PASSWORD "앱 비밀번호 붙여넣기 (입력은 화면에 표시되지 않습니다): " \
+                                "Paste the app password (input is hidden): "
   # Google shows the app password as 4x4 groups with spaces -> strip ALL
   # whitespace. Do NOT lowercase. Never echo the value.
   EMAIL_APP_PASSWORD="$(printf '%s' "$EMAIL_APP_PASSWORD" | tr -d '[:space:]')"
@@ -659,6 +689,8 @@ step_service() {
   hr
   local manual_cmd="bash \"$INSTALL_ROOT/bridge/start.sh\" --path \"$INSTALL_ROOT\""
 
+  msg "자동 시작을 켜면 로그인(또는 재부팅) 때마다 봇이 알아서 실행됩니다 -- 매번 직접 켤 필요가 없습니다 (권장)." \
+      "Autostart runs the bot for you on every login (or reboot) -- no need to launch it by hand each time (recommended)."
   if ! confirm "로그인 시 봇을 자동으로 실행하도록 설정할까요? (n = 수동 실행)" \
                "Auto-start the bot at login? (n = run manually)" "y"; then
     SERVICE_CHOICE="manual"
@@ -713,7 +745,21 @@ install_launchd() {
   cp -p "$src" "$dest"
   launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null \
     || launchctl load "$dest" 2>/dev/null || true
-  msg "launchd 서비스 설치됨: $label" "launchd service installed: $label"
+
+  # VERIFY the agent is actually registered before claiming success. Errors above
+  # are swallowed (bootstrap vs load vary by macOS version), so the truth comes
+  # from launchctl print / list, not from the install command's exit status.
+  if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 \
+     || launchctl list 2>/dev/null | grep -q -- "$label"; then
+    msg "launchd 서비스 설치됨: $label" "launchd service installed: $label"
+  else
+    msg "[경고] launchd 서비스 등록을 확인하지 못했습니다: $label" \
+        "[WARN] Could not verify the launchd service is registered: $label" >&2
+    msg "다음 명령으로 수동 등록하거나 봇을 직접 실행하세요:" \
+        "Register it manually with the command below, or run the bot directly:" >&2
+    printf '  launchctl bootstrap gui/%s "%s"\n' "$(id -u)" "$dest" >&2
+    printf '  %s\n' "$manual_cmd" >&2
+  fi
 }
 
 install_systemd() {
@@ -758,9 +804,34 @@ WantedBy=default.target
 UNIT
   systemctl --user daemon-reload 2>/dev/null || true
   systemctl --user enable --now dogany-agent.service 2>/dev/null || true
-  msg "systemd 서비스 설치됨: dogany-agent.service" "systemd service installed: dogany-agent.service"
-  msg "재부팅 후에도 유지하려면:  loginctl enable-linger $USER" \
-      "To persist across reboots:  loginctl enable-linger $USER"
+
+  # VERIFY the unit is actually active before claiming success. The enable above
+  # swallows errors, so the truth comes from is-active, not the exit status.
+  if systemctl --user is-active --quiet dogany-agent.service; then
+    msg "systemd 서비스 설치됨: dogany-agent.service" "systemd service installed: dogany-agent.service"
+  else
+    msg "[경고] systemd 서비스가 활성 상태인지 확인하지 못했습니다: dogany-agent.service" \
+        "[WARN] Could not verify the systemd service is active: dogany-agent.service" >&2
+    msg "다음 명령으로 수동 활성화하거나 봇을 직접 실행하세요:" \
+        "Enable it manually with the command below, or run the bot directly:" >&2
+    printf '  systemctl --user enable --now dogany-agent.service\n' >&2
+    printf '  %s\n' "$manual_cmd" >&2
+  fi
+
+  # F3: a systemd --user service is killed on logout unless lingering is enabled.
+  # Enabling linger is normally allowed for one's OWN user without sudo. Actually
+  # run it (not just advise), then verify Linger=yes; WARN loudly if it fails.
+  if loginctl enable-linger "$USER" 2>/dev/null \
+     && [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = "yes" ]; then
+    msg "로그아웃/재부팅 후에도 유지되도록 linger 를 활성화했습니다." \
+        "Enabled linger so the service survives logout/reboot."
+  else
+    msg "[경고] linger 를 활성화하지 못했습니다. linger 없이는 로그아웃 시 봇이 종료됩니다." \
+        "[WARN] Could not enable linger. Without it the bot stops on logout." >&2
+    msg "다음 명령을 수동으로 실행하세요 (필요 시 sudo):" \
+        "Run this manually (with sudo if needed):" >&2
+    printf '  loginctl enable-linger %s\n' "$USER" >&2
+  fi
 }
 
 # ---------------------------------------------------------------------------
