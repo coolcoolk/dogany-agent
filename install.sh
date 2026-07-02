@@ -516,6 +516,13 @@ render_env() {
   printf 'TZ=%s\n' "$tz"
   printf '# Extra path-guard roots (os.pathsep-separated). Empty for the product.\n'
   printf 'EXTRA_ALLOWED_ROOTS=\n'
+  printf '# --- Email (dogany-mailer; optional, connect-time). Blank = not connected.\n'
+  printf '# Gmail: use an App Password (not your login password). Never commit real values.\n'
+  printf 'EMAIL_ADDRESS=\n'
+  printf 'EMAIL_APP_PASSWORD=\n'
+  printf 'EMAIL_CC=\n'
+  printf '# SMTP_HOST=smtp.gmail.com   # optional, default smtp.gmail.com\n'
+  printf '# SMTP_PORT=587              # optional, default 587 (STARTTLS)\n'
 }
 
 step_mint_and_env() {
