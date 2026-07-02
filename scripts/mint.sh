@@ -126,7 +126,7 @@ rsync -aL \
   --exclude '*.pyc' \
   --exclude '*.bak.*' \
   --exclude '.DS_Store' \
-  --exclude 'memory/state.db' \
+  --exclude 'memory-engine/state.db' \
   --exclude '*.db' \
   --exclude 'config/lifekit.conf' \
   --exclude 'config/agent.conf' \

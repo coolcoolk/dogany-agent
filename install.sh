@@ -1128,6 +1128,10 @@ step_final() {
       "Identity onboarding happens in-chat, not during install."
   msg "온보딩이 끝나면 봇이 생활관리(라이프킷) 묶음을 한 번 제안합니다. 언제든 '생활관리 켜줘'라고 말해도 됩니다." \
       "After onboarding, the bot offers the lifekit (life-management) bundle once. You can also say 'set up life management' anytime."
+  msg "에이전트와 모든 데이터(기억, 파일, 데이터)는 이 폴더 안에 있습니다: $INSTALL_ROOT" \
+      "Your agent and all its data (memory, files, database) live inside this folder: $INSTALL_ROOT"
+  msg "백업하려면 이 폴더를 통째로 복사하세요." \
+      "To back it up, copy that whole folder."
   if [ "$SERVICE_CHOICE" = "manual" ]; then
     msg "봇을 시작하려면 위의 수동 실행 명령을 사용하세요." \
         "Start the bot with the manual run command shown above."

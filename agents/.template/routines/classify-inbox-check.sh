@@ -33,7 +33,7 @@ set -uo pipefail
 
 # BASE derived from the script's own location (dynamic) -- survives workspace moves.
 BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MEM_DIR="$BASE/memory"
+MEM_DIR="$BASE/memory-engine"
 MARKER="$BASE/.classify_inbox_last"
 PY="/usr/bin/python3"
 

@@ -15,7 +15,7 @@ root, and each agent lives under `agents/`.
   `RULES.md` (immutable operating rules, symlinked to the shared `rules/`),
   `AGENT.md` (the agent's own identity -- a blank onboarding skeleton by
   default), and `USER.md` (the owner's profile, symlinked to `rules/USER.md`,
-  blank by default). It also carries `bridge/`, `memory/`, `memories/`,
+  blank by default). It also carries `bridge/`, `memory-engine/`, `memories/`,
   `routines/`, `files/`, `worklog/`, `.telegram_bot/`, and `.claude/`.
 - **`agents/.template/`** -- the mint source. A placeholder-ized agent
   (`__PROJECT_ROOT__`, `__AGENT_NAME__`, etc.) with framework skills and

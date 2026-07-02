@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __PROJECT_ROOT__/memory/memory.py hook",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/memory-engine/memory.py hook",
             "timeout": 12
           }
         ]

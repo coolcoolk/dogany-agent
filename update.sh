@@ -13,7 +13,7 @@
 # What it NEVER touches (user data is preserved verbatim):
 #   - memories/            (long-term memory markdown)
 #   - .telegram_bot/.env   (bot token, allowed users) and runtime/.env
-#   - *.db                 (lifekit.db, memory/state.db -- user data + cache)
+#   - *.db                 (lifekit.db, memory-engine/state.db -- user data + cache)
 #   - bridge/venv/         (built virtualenv)
 #   - AGENT.md / USER.md / CLAUDE.md / RULES.md   (identity + user-owned entrypoints)
 #   - NON-dogany skills under .claude/skills/     (user-authored skills)
@@ -178,11 +178,11 @@ if [ -d "$TEMPLATE/routines" ]; then
 fi
 
 # 3c) memory engine code ONLY (*.py + taxonomy doc) -- never memory markdown/db.
-if [ -d "$TEMPLATE/memory" ]; then
+if [ -d "$TEMPLATE/memory-engine" ]; then
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
     --include '*/' --include '*.py' --include '*.md' --exclude '*' \
-    "$TEMPLATE/memory/" "$INSTANCE/memory/"
-  UPDATED+=("memory/*.py")
+    "$TEMPLATE/memory-engine/" "$INSTANCE/memory-engine/"
+  UPDATED+=("memory-engine/*.py")
 fi
 
 # 3d) config: i18n locales are FRAMEWORK (refresh); agent.conf + lifekit.conf
@@ -432,6 +432,20 @@ if [ "$DRY_RUN" = "0" ] && [ ${#NEW_MANIFEST_LINES[@]} -gt 0 ]; then
   } > "$SKILLS_MANIFEST"
 fi
 
+# 3j) dormant lifekit bundle skills (framework). These live as real dirs under
+#     .claude/skills-bundle/ and are activated by an instance-local symlink in
+#     .claude/skills/ (created post-mint by dogany-lifekit-setup). Without this
+#     refresh the bundle skills (diet-log, workout-log, appointment-log,
+#     relationship, task-update) would stay frozen at mint time forever.
+#     Framework-owned area: plain rsync (no --delete) so the activation symlinks
+#     in .claude/skills/ are untouched and any user files are never pruned.
+if [ -d "$TEMPLATE/.claude/skills-bundle" ]; then
+  mkdir -p "$INSTANCE/.claude/skills-bundle"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+    "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
+  UPDATED+=(".claude/skills-bundle/")
+fi
+
 # ---------------------------------------------------------------------------
 # 4) Re-substitute the five mint placeholders on the refreshed files.
 #    Path placeholders (PROJECT_ROOT, HOME) are always safe to re-apply.
@@ -446,7 +460,7 @@ if [ "$DRY_RUN" = "0" ]; then
   while IFS= read -r -d '' f; do
     subst_one "$f"
   done < <(find \
-      "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory" \
+      "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
       "$INSTANCE/config" "$INSTANCE/service" "$INSTANCE/database" \
       "$INSTANCE/.claude/settings.json" \
       "$INSTANCE/worklog/_TEMPLATE.md" \
@@ -478,7 +492,7 @@ if [ "$DRY_RUN" = "0" ]; then
   # Sanity: warn on any surviving placeholders in active code.
   LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME)__' \
             --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
-            "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory" \
+            "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
             "$INSTANCE/config" "$INSTANCE/.claude" 2>/dev/null || true)"
   if [ -n "$LEFT" ]; then
     msg "[update][경고] 치환되지 않은 플레이스홀더:" "[update][WARN] unsubstituted placeholders in:"

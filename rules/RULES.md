@@ -28,7 +28,7 @@ Edit rights: the agent must NOT self-edit; RULES + AGENT + USER + memories/ = co
 - Code for the user to run: separate message, code-block only, one at a time in order.
 
 ## Files
-- files/ inbox(keep), outbox(send), tmp(scratch, daily-clean), _archive(backups). NEVER touch data/ or memories/ topic files. Log kept files to memory (one line).
+- files/ inbox(keep), outbox(send), tmp(scratch, daily-clean), _archive(backups). NEVER touch database/lifekit.db, the memory engine state (memory-engine/ internals), or memories/ topic files. Log kept files to memory (one line).
 - Send a file to the user: emit a standalone line `send_file:: <absolute path>` (one per file). The bridge strips the marker and attaches it. A bare path in prose is NOT sent (auto-scan disabled). File must exist, be <10MB; paths outside PROJECT_ROOT add a confirm step.
 
 ## Skills

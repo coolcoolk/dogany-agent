@@ -6,7 +6,7 @@ description: Use to recall past facts, records, preferences, or context about th
 # dogany-memory-search — long-term memory recall
 
 Persistent facts about the user stored in `memories/*.md` as § atomic notes.
-Indexed by `memory/memory.py` using bge-m3 embeddings (local Ollama) + SQLite FTS5 (trigram).
+Indexed by `memory-engine/memory.py` using bge-m3 embeddings (local Ollama) + SQLite FTS5 (trigram).
 Hybrid search (FTS + vector, RRF fusion) -> finds by meaning even without keyword match.
 
 ## when to use
@@ -16,7 +16,7 @@ Hybrid search (FTS + vector, RRF fusion) -> finds by meaning even without keywor
 
 ## usage
 ```bash
-cd memory
+cd memory-engine
 /usr/bin/python3 memory.py search "search_query" --k 5
 ```
 - search_query = core meaning of user's question in natural language. no need to extract only nouns; semantic match works across paraphrase.
@@ -30,7 +30,7 @@ user says something worth remembering permanently -> use compressed write. markd
 ### recommended — compressed write
 pass raw text (user utterance etc.) -> cheap model (Haiku) extracts only persistent facts, compresses to single-line atomic items, auto-attaches `(YYYY-MM-DD, source)` meta, writes to file, updates index.
 ```bash
-cd memory
+cd memory-engine
 echo "user utterance / context" | /usr/bin/python3 memory.py write --source "텔레그램 대화"
 ```
 - default target: `inbox.md` (unsorted temp). if topic clear -> `--file`: identity->identity.md / work-rules->work-rules.md / routines->routines.md / infra->infra.md / user profile+health->about-user.md. section within file: `--section "header"`. (ambiguous -> inbox.md; nightly cleanup distributes to topic files)
@@ -40,7 +40,7 @@ echo "user utterance / context" | /usr/bin/python3 memory.py write --source "텔
 ### manual — direct edit
 need exact wording -> add `§` atomic item directly to `memories/*.md`. each item must have `(YYYY-MM-DD, source/context)` meta. then update index:
 ```bash
-cd memory
+cd memory-engine
 /usr/bin/python3 memory.py index
 ```
 - only changed files re-embedded (incremental). low overhead.
