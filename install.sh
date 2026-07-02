@@ -135,6 +135,15 @@ check_lite_single_agent() {
     return 0
   fi
 
+  # --- recorded root no longer exists on disk -> stale marker, self-heal ---
+  # (e.g. user deleted the install dir). Treat as absent so a fresh install
+  # at a new location is not permanently blocked.
+  if [ ! -d "$recorded" ]; then
+    msg "[경고] 기록된 설치 경로가 더 이상 존재하지 않습니다: $recorded. 마커를 무시하고 신규 설치로 진행합니다." \
+        "[WARN] Recorded install root no longer exists: $recorded. Ignoring stale marker; proceeding as a new install."
+    return 0
+  fi
+
   local recorded_canon
   recorded_canon="$(canon_path "$recorded")"
 
@@ -1117,6 +1126,8 @@ step_final() {
       "It will greet you and walk you through a short setup (name, emoji, tone)."
   msg "정체성 온보딩은 앱 설치가 아니라 채팅 안에서 이뤄집니다." \
       "Identity onboarding happens in-chat, not during install."
+  msg "온보딩이 끝나면 봇이 생활관리(라이프킷) 묶음을 한 번 제안합니다. 언제든 '생활관리 켜줘'라고 말해도 됩니다." \
+      "After onboarding, the bot offers the lifekit (life-management) bundle once. You can also say 'set up life management' anytime."
   if [ "$SERVICE_CHOICE" = "manual" ]; then
     msg "봇을 시작하려면 위의 수동 실행 명령을 사용하세요." \
         "Start the bot with the manual run command shown above."

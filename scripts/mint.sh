@@ -105,6 +105,18 @@ echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 # 1) copy agents/.template -> target, DEREFERENCING symlinks (-L) so the shared
 #    RULES.md + framework skills land as real files in the self-contained instance.
 #    Excludes VCS / runtime / build cruft.
+#
+#    config/lifekit.conf is EXCLUDED here and copied write-if-absent below
+#    (same contract as .env / lifekit.db): a re-mint with --force must never
+#    reset the instance's lifekit activation state.
+#
+#    CONSTRAINT (lifekit bundle dormancy): bundle skills live as REAL dirs in
+#    .claude/skills-bundle/ and are activated by an instance-local symlink
+#    .claude/skills/<id> -> ../skills-bundle/<id>, created ONLY post-mint by
+#    the dogany-lifekit-setup skill. NEVER pre-place such symlinks in the
+#    template: rsync -aL would dereference them into permanent real dirs and
+#    break the off-toggle. Instance-created symlinks survive a re-mint because
+#    this rsync has no --delete and the template has no such paths.
 rsync -aL \
   --exclude '.git' \
   --exclude 'bridge/venv' \
@@ -115,7 +127,17 @@ rsync -aL \
   --exclude '.DS_Store' \
   --exclude 'memory/state.db' \
   --exclude '*.db' \
+  --exclude 'config/lifekit.conf' \
   "$TEMPLATE/" "$PROJECT_ROOT/"
+
+# 1a) lifekit activation state: scaffold only if absent (idempotent re-mint).
+if [ ! -f "$PROJECT_ROOT/config/lifekit.conf" ] && [ -f "$TEMPLATE/config/lifekit.conf" ]; then
+  mkdir -p "$PROJECT_ROOT/config"
+  cp -p "$TEMPLATE/config/lifekit.conf" "$PROJECT_ROOT/config/lifekit.conf"
+  echo "[mint] wrote config/lifekit.conf (LIFEKIT=pending)"
+elif [ -f "$PROJECT_ROOT/config/lifekit.conf" ]; then
+  echo "[mint] config/lifekit.conf exists -> keep (idempotent)"
+fi
 
 # 1b) bundle the hoisted shared roots the instance needs to be self-contained:
 #     - rules/USER.md scaffold (RULES.md already dereferenced from the template),

@@ -57,5 +57,9 @@ __USER_LABEL__ assigns recurring task -> agent registers it end-to-end. macOS = 
 - Linux update: edit the .service/.timer -> `systemctl --user daemon-reload` -> `systemctl --user restart dogany-<name>.timer`. delete: `systemctl --user disable --now dogany-<name>.timer` then move the unit files with `trash`.
 
 ## registered crons
-- retro-2100 — daily 21:00 KST retrospective (haiku, conversational). registered 2026-06-24.
-- morning-brief-0600 — daily 06:00 KST adaptive morning briefing (haiku). routines/morning-brief.sh reads yesterday's unfinished items, today's tasks, today's appointments from Notion REST. registered 2026-06-24.
+- Per-instance registrations live in the instance's `routines.md` (step 6),
+  never in this shared skill file.
+- Lifekit bundle routines (morning-brief, daily-retro) are NOT registered via
+  this skill: the dogany-lifekit-setup skill schedules them through the
+  non-conversational helper `routines/lib/routine-ctl.sh` (idempotent, no
+  test-fire). Use this skill only for ad-hoc recurring jobs the user asks for.

@@ -7,6 +7,11 @@ AGENT.md가 아예 없으면) "온보딩 필요" 신호를 새 세션 컨텍스�
 에이전트가 AGENT.md 최상단 온보딩 블록 + dogany-user-onboarding 스킬을 따라 스스로 정체성을
 채우도록 유도한다. 질문 스크립트는 여기 두지 않는다(단일 소스 = AGENT.md 블록).
 
+Secondary signal (lifekit): onboarding complete AND config/lifekit.conf says
+LIFEKIT=pending -> inject a one-shot "lifekit pending" offer context instead.
+Onboarding always wins (never both signals in one session). This hook stays
+READ-ONLY: the dogany-lifekit-setup skill flips pending -> offered, not us.
+
 stdin(JSON): {session_id, transcript_path, cwd, source, ...}
 stdout(JSON): {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": "..."}}
@@ -37,6 +42,27 @@ def needs_onboarding(path):
         return False
 
 
+def resolve_lifekit_conf(data):
+    env_path = os.environ.get("LIFEKIT_FILE")
+    if env_path:
+        return os.path.expanduser(env_path)
+    cwd = (data.get("cwd") if isinstance(data, dict) else None) or os.getcwd()
+    return os.path.join(cwd, "config", "lifekit.conf")
+
+
+def lifekit_pending(path):
+    """True iff lifekit.conf exists and LIFEKIT=pending (missing/other -> False)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("LIFEKIT="):
+                    return line.split("=", 1)[1].strip() == "pending"
+    except Exception:
+        return False
+    return False
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -53,9 +79,40 @@ def main():
         return
 
     try:
-        if not needs_onboarding(path):
-            return
+        onboarding = needs_onboarding(path)
     except Exception:
+        return
+
+    if not onboarding:
+        # Onboarding done -> check the one-shot lifekit offer signal.
+        try:
+            if not lifekit_pending(resolve_lifekit_conf(data)):
+                return
+        except Exception:
+            return
+        ctx = (
+            "[lifekit pending] User onboarding is complete but the lifekit "
+            "(life-management) default bundle has not been offered yet "
+            "(config/lifekit.conf LIFEKIT=pending). Once this session, at a "
+            "natural moment (greeting or idle turn, never mid-task), offer the "
+            "lifekit walkthrough via the dogany-lifekit-setup skill. Base the "
+            "offer wording on the i18n key 'lifekit.offer' in "
+            "config/i18n/<lang>.json. BEFORE presenting the offer, set "
+            "LIFEKIT=offered in config/lifekit.conf so this signal never fires "
+            "again (one-shot; the user can start anytime by asking). If the "
+            "user declines for now, leave it as offered; if they say never, "
+            "set LIFEKIT=off."
+        )
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": ctx,
+            }
+        }
+        try:
+            print(json.dumps(out, ensure_ascii=False))
+        except Exception:
+            pass
         return
 
     ctx = (
