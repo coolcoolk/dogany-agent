@@ -6,7 +6,8 @@ description: One-shot (single-fire) reminders. Fires when the user asks to be re
 # dogany-reminder — one-shot (single-fire) reminder
 
 Use when user wants single alert at specific future time ("remind me in 10 minutes").
-At target time: one-shot launchd job sends one message via push.sh, then self-removes (no leftovers, survives reboot).
+At target time: one-shot scheduler job sends one message via push.sh, then self-removes (no leftovers, survives reboot).
+Cross-platform: launchd on macOS, a transient systemd --user timer on Linux. reminder.sh detects the OS and picks the right mechanism; the assistant does not need to care which.
 
 Portable / distributable: no hardcoded user name, absolute paths, or chat IDs.
 Paths derive from script location and `$HOME`. Recipient + bot token come from `runtime/.env`.
@@ -50,9 +51,10 @@ List / cancel:
 - "cancel that reminder" / "never mind" -> find label via `list`, then cancel.
 
 ## mechanics (precision / durability)
-- launchd StartCalendarInterval (Month/Day/Hour/Minute) -> minute-level precision. after firing, plist/meta/job self-remove.
-- delays under 90s -> background sleep (sub-minute precision; not reboot-durable — fine for short ones).
-- no TZ forced into job — fires in system local time, same clock target was computed against.
+- macOS: launchd StartCalendarInterval (Month/Day/Hour/Minute) -> minute-level precision. after firing, plist/meta/job self-remove.
+- Linux: transient `systemd-run --user --on-calendar` timer (Persistent=true) -> minute-level precision, survives logout when linger is on (reminder.sh enables it best-effort). after firing, meta self-removes and the transient unit auto-vanishes.
+- delays under 90s -> background sleep on BOTH OSes (sub-minute precision; not reboot-durable — fine for short ones).
+- no TZ forced into job — fires in system local time, same clock target was computed against. Date parsing is portable (BSD `date -j` on macOS, GNU `date -d` on Linux).
 - recipient/token resolved by push.sh from `runtime/.env`.
 - meta files: `routines/.reminders/<label>.meta` (for list/cancel; deleted on fire).
 

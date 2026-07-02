@@ -1,11 +1,11 @@
 ---
 name: dogany-cron-register
-description: __USER_LABEL__이 반복작업(크론/정기루틴)을 맡기면 에이전트가 launchd로 끝까지 직접 등록한다. "매일 몇시에 X 해줘", "이거 정기적으로", "크론 걸어줘" 류 요청에 발동. plist 작성→검증→테스트 발송→launchctl load까지 에이전트가 처리하고, 코드만 던지고 __USER_LABEL__께 미루지 않는다. 게이트웨이/메인 봇 재시작만 예외(__USER_LABEL__께 요청).
+description: __USER_LABEL__이 반복작업(크론/정기루틴)을 맡기면 에이전트가 OS에 맞는 스케줄러(macOS launchd / Linux systemd --user 타이머)로 끝까지 직접 등록한다. "매일 몇시에 X 해줘", "이거 정기적으로", "크론 걸어줘" 류 요청에 발동. 유닛 작성→검증→테스트 발송→등록까지 에이전트가 처리하고, 코드만 던지고 __USER_LABEL__께 미루지 않는다. 게이트웨이/메인 봇 재시작만 예외(__USER_LABEL__께 요청).
 ---
 
-# dogany-cron-register — recurring task launchd registration
+# dogany-cron-register — recurring task registration (launchd / systemd)
 
-__USER_LABEL__ assigns recurring task -> agent handles plist write through launchctl load. (dogany-skill-creator convention output.)
+__USER_LABEL__ assigns recurring task -> agent registers it end-to-end. macOS = launchd plist; Linux = systemd --user timer. (dogany-skill-creator convention output.)
 
 ## trigger signals
 - "매일/매주 몇시에 X 해줘", "정기적으로", "크론 걸어줘", "루틴으로 만들어"
@@ -15,9 +15,10 @@ __USER_LABEL__ assigns recurring task -> agent handles plist write through launc
 - exception: gateway/main bot restart/stop -> do not do alone (__USER_LABEL__ must approve). new routine job load -> agent does directly.
 - model: recurring/simple -> haiku (model routing).
 - message-generation prompt must embed tone rules: __USER_LABEL__ address, polite form (no casual), no **, minimal symbols.
+- pick the mechanism by OS: `uname -s` = Darwin -> launchd (procedure A); else -> systemd --user timer (procedure B). Same push.sh command either way.
 
-## procedure
-1. check current time + timezone (`date "+%Z %z %H:%M"`, `readlink /etc/localtime`). macOS = Asia/Seoul KST = launchd local time base.
+## procedure A -- macOS (launchd)
+1. check current time + timezone (`date "+%Z %z %H:%M"`, `readlink /etc/localtime`). launchd fires in system local time.
 2. write plist — copy template `template.plist` then fill in:
    - Label: `com.telegram-skill-bot.telegram-agent.<name>` (kebab, time suffix e.g. retro-2100)
    - StartCalendarInterval Hour/Minute (Weekday if needed)
@@ -35,11 +36,26 @@ __USER_LABEL__ assigns recurring task -> agent handles plist write through launc
    ```
 6. atomically record in `routines.md` (date, Label, time, model, context).
 
+## procedure B -- Linux (systemd --user timer)
+1. check current time + timezone (`date "+%Z %z %H:%M"`, `timedatectl` if present). systemd OnCalendar fires in system local time.
+2. write a .service + .timer under `~/.config/systemd/user/` (name `dogany-<name>`):
+   - `dogany-<name>.service`: `[Service] Type=oneshot`, `ExecStart=/bin/bash <ROOT>/routines/push.sh --model haiku --prompt "<prompt with tone rules>"`, `Environment=HOME=$HOME`, `WorkingDirectory=<ROOT>`.
+   - `dogany-<name>.timer`: `[Timer] OnCalendar=<schedule>` (systemd.time(7): e.g. daily `*-*-* 21:00:00`; Sunday `Sun *-*-* 22:00:00`), `Persistent=true`, `[Install] WantedBy=timers.target`.
+3. syntax check: `systemd-analyze --user verify ~/.config/systemd/user/dogany-<name>.timer` (or `systemctl --user cat`) -> confirm no errors.
+4. real test send: run the same push.sh command once directly to verify tone/content/delivery.
+5. pass -> register + verify:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now dogany-<name>.timer
+   systemctl --user is-enabled dogany-<name>.timer
+   loginctl enable-linger "$USER"   # survive logout/reboot
+   ```
+6. atomically record in `routines.md` (date, unit name, OnCalendar, model, context).
+
 ## update / delete
-- update: `launchctl unload <plist>` -> edit file -> reload.
-- delete: `launchctl unload <plist>` then move plist with `trash` (avoid rm).
+- macOS update: `launchctl unload <plist>` -> edit file -> reload. delete: `launchctl unload <plist>` then move plist with `trash` (avoid rm).
+- Linux update: edit the .service/.timer -> `systemctl --user daemon-reload` -> `systemctl --user restart dogany-<name>.timer`. delete: `systemctl --user disable --now dogany-<name>.timer` then move the unit files with `trash`.
 
 ## registered crons
 - retro-2100 — daily 21:00 KST retrospective (haiku, conversational). registered 2026-06-24.
 - morning-brief-0600 — daily 06:00 KST adaptive morning briefing (haiku). routines/morning-brief.sh reads yesterday's unfinished items, today's tasks, today's appointments from Notion REST. registered 2026-06-24.
-- weekly-review-sun2200 — weekly Sunday 22:00 KST weekly review (haiku). routines/weekly-review.sh: part 1 weekly briefing (this-week aggregate) + part 2 reflective review (good/bad moments, thoughts, encounters). registered 2026-06-24.

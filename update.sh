@@ -311,6 +311,36 @@ manifest_sha() {
   awk -v n="$name" '$1==n {print $2; exit}' "$SKILLS_MANIFEST"
 }
 
+# Substitute the mint placeholders on a single file, in place. Hoisted here (out
+# of section 4) so the skills refresh loop can substitute a freshly installed
+# skill BEFORE it checksums the result -- otherwise the manifest records the
+# pre-substitution sha while the on-disk copy is post-substitution, and every
+# placeholder-bearing skill is falsely flagged "user-modified" on the next update.
+subst_one() {
+  local f="$1"
+  sed_inplace "$f" \
+    -e "s#__PROJECT_ROOT__#${INSTANCE}#g" \
+    -e "s#__HOME__#${HOME}#g"
+  if [ "$IDENTITY_OK" = "1" ]; then
+    sed_inplace "$f" \
+      -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
+      -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
+      -e "s#__USER_LABEL__#${USER_LABEL}#g"
+  fi
+}
+
+# Substitute placeholders across every text file in one skill dir (in place).
+subst_skill_dir() {
+  local dir="$1"
+  while IFS= read -r -d '' f; do
+    subst_one "$f"
+  done < <(find "$dir" -type f \
+      \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
+         -o -name '*.md' -o -name '*.conf' -o -name '*.txt' -o -name '*.example' \) \
+      -not -path '*/venv/*' -not -path '*/__pycache__/*' -not -name '*.bak.*' \
+      -print0 2>/dev/null)
+}
+
 mkdir -p "$INSTANCE/.claude/skills"
 DOGANY_SKILLS=()
 # Collect new manifest lines as we install; rewrite the manifest at the end so a
@@ -362,6 +392,12 @@ for d in "$SKILLS_ROOT"/dogany-*/; do
   rsync -aL --delete "${COMMON_EXCLUDES[@]}" \
     "$d" "$dest/"
 
+  # Substitute the mint placeholders on the freshly installed skill NOW, before we
+  # checksum it -- so the manifest sha reflects the exact on-disk (post-substitution)
+  # bytes. If we hashed before substitution, the next update would see the
+  # substituted copy as "user-modified" and spuriously back it up every run.
+  subst_skill_dir "$dest"
+
   # Record the sha of what we JUST installed (re-checksum the destination so the
   # manifest reflects the on-disk result, not the source).
   installed_sha="$(skill_checksum "$dest")"
@@ -386,18 +422,9 @@ fi
 #    Identity placeholders are applied only when recovered from the manifest.
 # ---------------------------------------------------------------------------
 if [ "$DRY_RUN" = "0" ]; then
-  subst_one() {
-    local f="$1"
-    sed_inplace "$f" \
-      -e "s#__PROJECT_ROOT__#${INSTANCE}#g" \
-      -e "s#__HOME__#${HOME}#g"
-    if [ "$IDENTITY_OK" = "1" ]; then
-      sed_inplace "$f" \
-        -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
-        -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
-        -e "s#__USER_LABEL__#${USER_LABEL}#g"
-    fi
-  }
+  # subst_one is hoisted above (defined before the skills loop). Skills are already
+  # substituted in-loop (section 3i) so the manifest sha matches on-disk bytes;
+  # this pass covers the remaining refreshed framework files.
   # Substitute across refreshed framework file types, but NEVER identity/user
   # entrypoints (they carry the user's filled-in identity, not placeholders).
   while IFS= read -r -d '' f; do
@@ -406,7 +433,7 @@ if [ "$DRY_RUN" = "0" ]; then
       "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory" \
       "$INSTANCE/config" "$INSTANCE/service" "$INSTANCE/database" \
       "$INSTANCE/.claude/settings.json" \
-      "$INSTANCE/.claude/skills" "$INSTANCE/worklog/_TEMPLATE.md" \
+      "$INSTANCE/worklog/_TEMPLATE.md" \
       \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
          -o -name '*.md' -o -name '*.conf' -o -name '*.txt' -o -name '*.example' \) \
       -type f \

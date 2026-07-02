@@ -5,7 +5,7 @@ description: __USER_LABEL__ 텔레그램으로 능동적으로 메시지를 보�
 
 # dogany-proactive-push — outbound Telegram push
 
-Bot sends message to __USER_LABEL__ Telegram first (bot token + chat_id read from `runtime/.env`).
+Bot sends message to __USER_LABEL__ Telegram first (bot token + chat_id read from `.telegram_bot/.env`).
 Core script: `routines/push.sh`.
 
 ## when to use
@@ -34,6 +34,6 @@ routines/push.sh --model sonnet --prompt "아래 데이터를 마아서 주간 �
 ## notes
 - Telegram 4096-char limit -> script auto-cuts at 4000.
 - sends as plain text (no markdown parsing) — prevents rendering breakage.
-- bot token + chat_id read from `runtime/.env`.
+- bot token + chat_id read from `.telegram_bot/.env`.
 - routine channel split (design A/B) confirmed -> `--thread <id>` arg to be added.
 - exit codes: 0 success / 1 config error / 2 Telegram send failure.

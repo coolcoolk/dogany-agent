@@ -3,8 +3,9 @@
 # 헤드리스 claude로 내용 생성 → 텔레그램으로 능동 푸시
 #
 # 봇 토큰/대상은 "자기 인스턴스"의 .env에서 읽는다:
-#   <스크립트>/../runtime/.env  (예: <workspace>/runtime/.env)
-#   토큰이 비었거나 플레이스홀더면 전역 ~/telegram_bot/.env 로 폴백.
+#   <스크립트>/../.telegram_bot/.env  (config.py BOT_DATA_DIR / install.sh 가 만드는 실제 경로)
+#   구경로(../runtime/.env)와 전역 ~/telegram_bot/.env 는 폴백으로만 유지.
+#   토큰이 비었거나 플레이스홀더면 다음 후보로 폴백.
 # → each instance sends via its own bot token / chat id (no IDs hardcoded here).
 #
 # 사용법:
@@ -18,7 +19,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTANCE_ENV="$SCRIPT_DIR/../runtime/.env"
+# 실제 인스턴스 env 경로(config.py BOT_DATA_DIR / install.sh). runtime/.env 는 구경로 폴백.
+INSTANCE_ENV="$SCRIPT_DIR/../.telegram_bot/.env"
+LEGACY_ENV="$SCRIPT_DIR/../runtime/.env"
 GLOBAL_ENV="$HOME/telegram_bot/.env"
 PLACEHOLDER="your_bot_token_here"
 
@@ -46,17 +49,28 @@ done
 # ---- .env 골라 토큰/대상 읽기 ----
 read_kv() { grep -E "^$1=" "$2" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
 
-ENV_FILE="${ENV_OVERRIDE:-$INSTANCE_ENV}"
+# env 후보 순서: --env 지정 > 인스턴스(.telegram_bot) > 구경로(runtime) > 전역(~/telegram_bot)
+if [[ -n "$ENV_OVERRIDE" ]]; then
+  ENV_CANDIDATES=("$ENV_OVERRIDE")
+else
+  ENV_CANDIDATES=("$INSTANCE_ENV" "$LEGACY_ENV" "$GLOBAL_ENV")
+fi
+
+# 첫 후보를 진단 메시지용 기본 ENV_FILE 로 둔다.
+ENV_FILE="${ENV_CANDIDATES[0]}"
 TOKEN=""; CHAT_ID=""
-if [[ -f "$ENV_FILE" ]]; then
-  TOKEN="$(read_kv TELEGRAM_BOT_TOKEN "$ENV_FILE")"
-  CHAT_ID="$(read_kv ALLOWED_USER_IDS "$ENV_FILE" | cut -d, -f1)"
-fi
-# 토큰이 비었거나 플레이스홀더면 전역으로 폴백
-if [[ -z "$TOKEN" || "$TOKEN" == "$PLACEHOLDER" ]]; then
-  TOKEN="$(read_kv TELEGRAM_BOT_TOKEN "$GLOBAL_ENV")"
-  [[ -z "$CHAT_ID" ]] && CHAT_ID="$(read_kv ALLOWED_USER_IDS "$GLOBAL_ENV" | cut -d, -f1)"
-fi
+# 유효 토큰이 나올 때까지 후보를 순회. chat id 는 처음 발견되는 값을 유지.
+for cand in "${ENV_CANDIDATES[@]}"; do
+  [[ -f "$cand" ]] || continue
+  cand_token="$(read_kv TELEGRAM_BOT_TOKEN "$cand")"
+  cand_chat="$(read_kv ALLOWED_USER_IDS "$cand" | cut -d, -f1)"
+  [[ -z "$CHAT_ID" && -n "$cand_chat" ]] && CHAT_ID="$cand_chat"
+  if [[ -n "$cand_token" && "$cand_token" != "$PLACEHOLDER" ]]; then
+    TOKEN="$cand_token"
+    ENV_FILE="$cand"
+    break
+  fi
+done
 # no hardcoded recipient — chat id must come from .env (ALLOWED_USER_IDS).
 if [[ -z "$CHAT_ID" ]]; then
   echo "no chat id found (set ALLOWED_USER_IDS in $ENV_FILE or $GLOBAL_ENV)" >&2; exit 1

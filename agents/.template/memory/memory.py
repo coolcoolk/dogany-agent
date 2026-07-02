@@ -1464,9 +1464,14 @@ def _second_stage_filter(candidates):
 
 
 def _backup_md(path):
-    """대상 md 백업 <path>.bak.YYYYMMDD 생성. 경로 반환."""
+    """대상 md 백업 <path>.bak.YYYYMMDD 생성. 경로 반환.
+    파일이 없거나(fresh install) 비어 있으면 백업할 것이 없으므로 None 반환.
+    """
     import shutil
 
+    # fresh install: inbox.md 미존재 or 0바이트면 백업 스킵(FileNotFoundError 방지).
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return None
     stamp = datetime.date.today().strftime("%Y%m%d")
     bak = path + ".bak." + stamp
     shutil.copy(path, bak)
@@ -1662,8 +1667,15 @@ def cmd_consolidate(args):
 
     # 5b) 적재 (신규 있을 때만 백업+append+재인덱스). inbox.md 는 § 기반 → has_sep 자동판정.
     if tagged:
+        # fresh install 방어: memories/ 디렉토리 + inbox.md 가 없으면 먼저 만든다.
+        # (.gitignore 는 MEMORY.md 만 배포 → 최초 consolidate 시 inbox.md 부재로
+        #  _backup_md/append_notes_to_md 가 FileNotFoundError 로 죽던 FATAL 방어.)
+        os.makedirs(MEMORIES_DIR, exist_ok=True)
+        if not os.path.isfile(TARGET_MEMORY_MD):
+            open(TARGET_MEMORY_MD, "a", encoding="utf-8").close()
         bak = _backup_md(TARGET_MEMORY_MD)
-        print(f"[consolidate] 백업 생성: {os.path.basename(bak)}")
+        if bak:
+            print(f"[consolidate] 백업 생성: {os.path.basename(bak)}")
         where = append_notes_to_md(TARGET_MEMORY_MD, None, tagged)
         print(f"[consolidate] {where}")
 
@@ -1968,7 +1980,8 @@ def cmd_classify_inbox(args):
     today = datetime.date.today().isoformat()
     if assign:
         bak = _backup_md(inbox_path)
-        print(f"[classify-inbox] inbox 백업: {os.path.basename(bak)}")
+        if bak:
+            print(f"[classify-inbox] inbox 백업: {os.path.basename(bak)}")
         for fn, lst in assign.items():
             target = os.path.join(MEMORIES_DIR, fn)
             if not os.path.isfile(target):

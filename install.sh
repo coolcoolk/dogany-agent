@@ -320,6 +320,48 @@ py_version_ok() {
   return 1
 }
 
+# claude_auth_ok -- lightweight probe that `claude` is actually AUTHENTICATED,
+# not merely installed. Strategy (cheapest signal first):
+#   1) A short non-interactive `claude -p` call. If it returns 0 with output,
+#      the model was reachable -> authenticated. A wrapped timeout keeps a hung
+#      auth prompt from blocking install (macOS lacks `timeout` by default, so
+#      we background + poll). This costs one tiny token call, only when needed.
+#   2) Fallback: inspect ~/.claude.json for an oauthAccount block (present after
+#      a successful subscription login) as a best-effort offline signal.
+# Returns 0 if authenticated-looking, non-zero otherwise. Never prints secrets.
+claude_auth_ok() {
+  # --- probe 1: a tiny -p sanity call, time-bounded ---
+  local out_file rc
+  out_file="$(mktemp "${TMPDIR:-/tmp}/dogany-auth.XXXXXX")"
+  ( claude -p "reply with the single word: ok" >"$out_file" 2>/dev/null ) &
+  local pid=$!
+  # poll up to ~30s (auth-failure returns fast; a real call is a few seconds).
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    waited=$((waited+1))
+    if [ "$waited" -ge 30 ]; then
+      kill "$pid" 2>/dev/null || true
+      break
+    fi
+  done
+  wait "$pid" 2>/dev/null; rc=$?
+  if [ "$rc" = "0" ] && [ -s "$out_file" ]; then
+    rm -f "$out_file"
+    return 0
+  fi
+  rm -f "$out_file"
+
+  # --- probe 2: offline config inspection (best-effort) ---
+  if [ -r "$HOME/.claude.json" ]; then
+    if grep -q '"oauthAccount"' "$HOME/.claude.json" 2>/dev/null \
+       || grep -q '"hasCompletedOnboarding"[[:space:]]*:[[:space:]]*true' "$HOME/.claude.json" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 check_prereqs() {
   hr
   msg "[3/10] 사전 조건 확인" "[3/10] Checking prerequisites"
@@ -338,6 +380,37 @@ check_prereqs() {
     msg "  본인 계정으로 로그인(구독/자체호스팅 모두 가능)한 뒤 다시 실행하세요." \
         "  sign in with your own account (subscription or self-host both fine), then re-run."
     exit 1
+  fi
+
+  # --- claude AUTH probe (presence != authenticated) ---
+  # Presence alone lets a logged-OUT user pass, then the bot crashes on its first
+  # chat. Probe that the CLI can actually reach the model; if not, launch the
+  # OFFICIAL interactive login inline so the user signs in DURING install, then
+  # re-probe. We NEVER reimplement auth -- we only invoke `claude`.
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "  [dry-run] claude 인증 프로브/로그인은 건너뜁니다." \
+        "  [dry-run] Skipping claude auth probe/login."
+  else
+    if claude_auth_ok; then
+      msg "  [OK] claude 인증됨 (모델 응답 확인)." "  [OK] claude authenticated (model responded)."
+    else
+      msg "  [주의] claude 가 설치되어 있으나 로그인되지 않은 것으로 보입니다." \
+          "  [NOTE] claude is installed but does not appear to be logged in."
+      msg "  지금 공식 로그인 화면을 실행합니다. 안내에 따라 로그인/인증을 마치세요." \
+          "  Launching the official login now. Complete sign-in/auth as prompted."
+      # Official interactive flow. `claude` with no -p opens the TUI where /login
+      # is available; this inherits the terminal so the user can complete OAuth.
+      claude || true
+      if claude_auth_ok; then
+        msg "  [OK] claude 인증 완료." "  [OK] claude authentication complete."
+      else
+        msg "  [실패] claude 인증을 확인하지 못했습니다." \
+            "  [FAIL] Could not verify claude authentication."
+        msg "  터미널에서  claude  를 실행해 로그인(/login)한 뒤 설치를 다시 실행하세요." \
+            "  Run  claude  in a terminal, sign in (/login), then re-run the installer."
+        exit 1
+      fi
+    fi
   fi
 
   # --- Python 3.11+ ---
@@ -835,6 +908,196 @@ UNIT
 }
 
 # ---------------------------------------------------------------------------
+# Step 9b: default routines (nightly consolidate, cleanup)
+# ---------------------------------------------------------------------------
+# The memory engine's nightly consolidate is a separate scheduled job from the
+# bot itself. mint.sh already substitutes placeholders in the
+# routine plists (routines/*.plist) and renames them to the agent name. Here we
+# actually SCHEDULE them: launchd on macOS, systemd --user timers on Linux.
+#
+# The default routine set is a small, stable table. Fields (tab-separated):
+#   <short-name>  <script-relative-to-INSTALL_ROOT>  <OnCalendar for systemd>
+# The macOS path uses the already-minted plists (schedule lives in the plist);
+# the Linux path uses the OnCalendar column to generate a systemd timer.
+# OnCalendar syntax: systemd.time(7). consolidate/cleanup = daily 04:30.
+# NOTE: classify-inbox is NOT a standalone routine -- it is a step inside
+# consolidate (memory.py consolidate), so scheduling consolidate covers it.
+# weekly-review was removed from the product (its script hardcoded per-user
+# Notion UUIDs = PII / dead code for generic users), so it is not scheduled here.
+default_routine_set() {
+  # short-name <TAB> script <TAB> OnCalendar
+  printf '%s\t%s\t%s\n' "consolidate-0430"     "routines/consolidate-0430.sh" "*-*-* 04:30:00"
+  printf '%s\t%s\t%s\n' "cleanup-files"        "routines/cleanup-files.sh"    "*-*-* 04:30:00"
+}
+
+step_routines() {
+  hr
+  msg "[9b/10] 기본 루틴 예약 (야간 공고화 / 정리)" \
+      "[9b/10] Scheduling default routines (nightly consolidate / cleanup)"
+  hr
+  if [ "$SERVICE_CHOICE" = "manual" ]; then
+    msg "수동 실행 모드입니다. 루틴은 예약하되, 봇 자동시작은 건너뛴 상태입니다." \
+        "Manual-run mode. Routines are still scheduled below; only the bot autostart was skipped."
+  fi
+  if [ "$OS_KIND" = "macos" ]; then
+    schedule_routines_launchd
+  else
+    schedule_routines_systemd
+  fi
+}
+
+# --- macOS: load each minted routine plist, verify via launchctl print/list ---
+schedule_routines_launchd() {
+  local uid; uid="$(id -u)"
+  local plist_dir; plist_dir="$INSTALL_ROOT/routines"
+  local la_dir="$HOME/Library/LaunchAgents"
+
+  if [ "$DRY_RUN" = "1" ]; then
+    # In dry-run there is no minted instance; show the template routine plists.
+    plist_dir="$REPO_ROOT/agents/.template/routines"
+    msg "루틴 plist 로드(모의): $plist_dir/*.plist -> $la_dir" \
+        "Would load routine plists (mock): $plist_dir/*.plist -> $la_dir"
+    local p
+    for p in "$plist_dir"/*.plist; do
+      [ -e "$p" ] || continue
+      msg "  모의: cp '$(basename "$p")' && launchctl bootstrap gui/$uid" \
+          "  mock: cp '$(basename "$p")' && launchctl bootstrap gui/$uid"
+    done
+    return 0
+  fi
+
+  mkdir -p "$la_dir"
+  local any=0 ok=0
+  local p
+  for p in "$plist_dir"/*.plist; do
+    [ -e "$p" ] || continue
+    any=1
+    local name dest label
+    name="$(basename "$p")"
+    label="$(basename "$name" .plist)"
+    dest="$la_dir/$name"
+    if [ -f "$dest" ]; then
+      cp -p "$dest" "${dest}.bak.$(date +%Y%m%d-%H%M%S)"
+    fi
+    cp -p "$p" "$dest"
+    # bootstrap (modern) with load fallback; errors swallowed -- truth via print.
+    launchctl bootstrap "gui/$uid" "$dest" 2>/dev/null \
+      || launchctl load "$dest" 2>/dev/null || true
+    if launchctl print "gui/$uid/$label" >/dev/null 2>&1 \
+       || launchctl list 2>/dev/null | grep -q -- "$label"; then
+      msg "  [OK] 루틴 예약됨: $label" "  [OK] Routine scheduled: $label"
+      ok=$((ok+1))
+    else
+      msg "  [경고] 루틴 등록을 확인하지 못했습니다: $label" \
+          "  [WARN] Could not verify routine is registered: $label" >&2
+      printf '    launchctl bootstrap gui/%s "%s"\n' "$uid" "$dest" >&2
+    fi
+  done
+  if [ "$any" = "0" ]; then
+    msg "[경고] 예약할 루틴 plist 를 찾지 못했습니다: $plist_dir" \
+        "[WARN] No routine plists found to schedule: $plist_dir" >&2
+  fi
+}
+
+# --- Linux: generate a systemd --user .service + .timer per routine, enable,
+#     and verify via systemctl --user is-active/is-enabled. ---
+schedule_routines_systemd() {
+  local unit_dir="$HOME/.config/systemd/user"
+
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "systemd 루틴 타이머 생성(모의): $unit_dir/dogany-<name>.{service,timer}" \
+        "Would generate systemd routine timers (mock): $unit_dir/dogany-<name>.{service,timer}"
+    default_routine_set | while IFS="$(printf '\t')" read -r rn rs rc; do
+      [ -n "$rn" ] || continue
+      msg "  모의: dogany-$rn.timer OnCalendar=$rc -> $rs" \
+          "  mock: dogany-$rn.timer OnCalendar=$rc -> $rs"
+    done
+    msg "그리고: systemctl --user enable --now dogany-<name>.timer" \
+        "Then: systemctl --user enable --now dogany-<name>.timer"
+    return 0
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    msg "[경고] systemctl 이 없어 루틴을 예약할 수 없습니다. cron 등으로 수동 예약하세요:" \
+        "[WARN] No systemctl; cannot schedule routines. Schedule them manually (e.g. cron):" >&2
+    default_routine_set | while IFS="$(printf '\t')" read -r rn rs rc; do
+      [ -n "$rn" ] || continue
+      printf '    %s  (%s)\n' "$INSTALL_ROOT/$rs" "$rc" >&2
+    done
+    return 0
+  fi
+
+  mkdir -p "$unit_dir"
+  # Read the table into a plain string first: the while-read loop that generates
+  # units must run in THIS shell (not a subshell) so counters survive; feed it
+  # via a here-string, not a pipe.
+  local table; table="$(default_routine_set)"
+  local any=0
+  while IFS="$(printf '\t')" read -r rn rs rc; do
+    [ -n "$rn" ] || continue
+    any=1
+    local svc="$unit_dir/dogany-$rn.service"
+    local tmr="$unit_dir/dogany-$rn.timer"
+    # service: oneshot that runs the routine script once when the timer fires.
+    cat > "$svc" <<SVC
+[Unit]
+Description=Dogany routine: $rn
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $INSTALL_ROOT/$rs
+Environment=HOME=$HOME
+WorkingDirectory=$INSTALL_ROOT
+SVC
+    # timer: persistent so a missed run (machine off) fires at next boot.
+    cat > "$tmr" <<TMR
+[Unit]
+Description=Dogany routine timer: $rn
+
+[Timer]
+OnCalendar=$rc
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TMR
+  done <<< "$table"
+
+  if [ "$any" = "0" ]; then
+    msg "[경고] 예약할 루틴 정의가 없습니다." "[WARN] No routine definitions to schedule." >&2
+    return 0
+  fi
+
+  systemctl --user daemon-reload 2>/dev/null || true
+
+  # enable + verify each timer. enable swallows errors; truth via is-enabled.
+  while IFS="$(printf '\t')" read -r rn rs rc; do
+    [ -n "$rn" ] || continue
+    systemctl --user enable --now "dogany-$rn.timer" 2>/dev/null || true
+    if systemctl --user is-enabled --quiet "dogany-$rn.timer" 2>/dev/null \
+       || systemctl --user is-active --quiet "dogany-$rn.timer" 2>/dev/null; then
+      msg "  [OK] 루틴 타이머 예약됨: dogany-$rn.timer ($rc)" \
+          "  [OK] Routine timer scheduled: dogany-$rn.timer ($rc)"
+    else
+      msg "  [경고] 루틴 타이머를 확인하지 못했습니다: dogany-$rn.timer" \
+          "  [WARN] Could not verify routine timer: dogany-$rn.timer" >&2
+      printf '    systemctl --user enable --now dogany-%s.timer\n' "$rn" >&2
+    fi
+  done <<< "$table"
+
+  # Routines need linger too (they run while the user is logged out). install_systemd
+  # already tries to enable it for the bot; make it robust if this ran standalone.
+  if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+    loginctl enable-linger "$USER" 2>/dev/null || true
+    if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+      msg "[경고] linger 미활성 -- 로그아웃 시 루틴 타이머가 멈춥니다. 수동:" \
+          "[WARN] linger not enabled -- routine timers stop on logout. Manually:" >&2
+      printf '    loginctl enable-linger %s\n' "$USER" >&2
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Step 10: final message
 # ---------------------------------------------------------------------------
 step_final() {
@@ -921,6 +1184,7 @@ main() {
   step_email_connect
   step_mint_and_env
   step_service
+  step_routines
   step_final
 }
 

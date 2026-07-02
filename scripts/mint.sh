@@ -39,7 +39,7 @@ mint.sh -- instantiate a standalone dogany-agent
     --root  <path>    instance dir (becomes PROJECT_ROOT). REQUIRED.
     --name  <text>    agent name / launchd slug        (default: basename of --root)
     --label <text>    assistant speaker label          (default: <name>)
-    --user  <text>    user honorific label             (default: 사용자)
+    --user  <text>    user honorific label             (default: you)
     --token <token>   Telegram bot token for .env      (default: placeholder)
     --no-venv         skip building the bridge venv
     --core-only       build venv with core deps only (skip faster-whisper/voice)
@@ -54,7 +54,7 @@ USAGE
 TARGET=""
 AGENT_NAME=""
 AGENT_LABEL=""
-USER_LABEL="사용자"
+USER_LABEL="you"
 BOT_TOKEN="your_bot_token_here"
 BUILD_VENV=1
 CORE_ONLY=0

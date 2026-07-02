@@ -1,14 +1,20 @@
 #!/bin/bash
-# reminder.sh — one-shot (single-fire) reminder: register / list / cancel.
+# reminder.sh -- one-shot (single-fire) reminder: register / list / cancel.
 #
 # Turns "remind me in 10 minutes", "remind me at 3pm", etc. into a single
-# delivery at the target time. Mechanism: a one-shot launchd job fires once
-# via push.sh at the target time, then removes itself (plist + meta + job).
-# Survives logout/reboot. Minute-level precision. Delays under 90s use a
-# background sleep instead (sub-minute precision; not reboot-durable).
+# delivery at the target time.
 #
-# PORTABLE: no hardcoded user name or absolute paths. Paths derive from this
-# script's location and $HOME. User-facing strings come from config/i18n via
+# PORTABLE across macOS and Linux:
+#   - macOS: a one-shot launchd job fires once via push.sh at the target time,
+#     then removes itself (plist + meta + job). BSD `date -j` parsing.
+#   - Linux: a transient systemd --user timer (systemd-run --user --on-calendar)
+#     fires reminder-fire.sh once; --unit lets us cancel it by name. GNU `date`
+#     parsing. Both survive logout/reboot (linger) with minute-level precision.
+#   - Delays under 90s use a background sleep on BOTH (sub-minute precision; not
+#     reboot-durable -- fine for very short ones).
+#
+# No hardcoded user name or absolute paths. Paths derive from this script's
+# location and $HOME. User-facing strings come from config/i18n via
 # reminder-fire.sh. Recipient/token come from runtime/.env (read by push.sh).
 #
 # Usage:
@@ -24,10 +30,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LA_DIR="$HOME/Library/LaunchAgents"
 META_DIR="$SCRIPT_DIR/.reminders"
 LABEL_PREFIX="com.telegram-skill-bot.telegram-agent.reminder"
 mkdir -p "$META_DIR"
+
+# ---- OS kind (macos = launchd/BSD date, linux = systemd/GNU date) ----
+case "$(uname -s)" in
+  Darwin) OS_KIND="macos" ;;
+  *)      OS_KIND="linux" ;;
+esac
+LA_DIR="$HOME/Library/LaunchAgents"   # macOS only
 
 # ---- relative time (10m, 1h30m, 90s, 2d) -> seconds ----
 parse_relative() {
@@ -46,6 +58,32 @@ parse_relative() {
   echo "$total"
 }
 
+# ---- portable epoch helpers (BSD vs GNU date) ----------------------------
+# date_to_epoch "%Y-%m-%d %H:%M" "<string>" -> epoch seconds (or fail).
+date_to_epoch() {
+  local fmt="$1" val="$2"
+  if [ "$OS_KIND" = "macos" ]; then
+    date -j -f "$fmt" "$val" +%s 2>/dev/null
+  else
+    # GNU date parses "YYYY-MM-DD HH:MM" natively; the fmt is macOS-only.
+    date -d "$val" +%s 2>/dev/null
+  fi
+}
+# epoch_to_fmt <epoch> "<out-format>" -> formatted string.
+epoch_to_fmt() {
+  local epoch="$1" outfmt="$2"
+  if [ "$OS_KIND" = "macos" ]; then
+    date -j -f "%s" "$epoch" "$outfmt"
+  else
+    date -d "@$epoch" "$outfmt"
+  fi
+}
+# today_date -> YYYY-MM-DD ; tomorrow_date -> YYYY-MM-DD (portable).
+today_date()    { date +%Y-%m-%d; }
+tomorrow_date() {
+  if [ "$OS_KIND" = "macos" ]; then date -v +1d +%Y-%m-%d; else date -d "tomorrow" +%Y-%m-%d; fi
+}
+
 # ---- when -> target epoch (uses system local time, no hardcoded TZ) ----
 resolve_target() {
   local when="$1" now rel target
@@ -54,17 +92,25 @@ resolve_target() {
     echo $(( now + rel )); return 0
   fi
   if [[ "$when" =~ ^([0-9]{1,2}):([0-9]{2})$ ]]; then
-    target=$(date -j -f "%Y-%m-%d %H:%M" "$(date +%Y-%m-%d) $when" +%s 2>/dev/null) || return 1
+    target=$(date_to_epoch "%Y-%m-%d %H:%M" "$(today_date) $when") || return 1
     if [[ "$target" -le "$now" ]]; then
-      target=$(date -v +1d -j -f "%Y-%m-%d %H:%M" "$(date -v +1d +%Y-%m-%d) $when" +%s 2>/dev/null) || return 1
+      target=$(date_to_epoch "%Y-%m-%d %H:%M" "$(tomorrow_date) $when") || return 1
     fi
     echo "$target"; return 0
   fi
   if [[ "$when" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{1,2}:[0-9]{2}$ ]]; then
-    target=$(date -j -f "%Y-%m-%d %H:%M" "$when" +%s 2>/dev/null) || return 1
+    target=$(date_to_epoch "%Y-%m-%d %H:%M" "$when") || return 1
     echo "$target"; return 0
   fi
   return 1
+}
+
+# ---- immediate (sub-90s) path: background sleep, both OSes ----
+fire_via_sleep() {
+  local label="$1" delay="$2" msg="$3"
+  nohup bash -c "sleep $delay; \
+    '$SCRIPT_DIR/reminder-fire.sh' '$label' '' \"\$0\"" "$msg" \
+    >/dev/null 2>&1 &
 }
 
 cmd_add() {
@@ -79,33 +125,41 @@ cmd_add() {
   fi
 
   local human label delay
-  human=$(date -j -f "%s" "$target" "+%Y-%m-%d %H:%M (%a)")
+  human=$(epoch_to_fmt "$target" "+%Y-%m-%d %H:%M (%a)")
   label="${LABEL_PREFIX}-${target}-$$"
   delay=$(( target - now ))
 
   # meta (for list/cancel)
   printf '%s\t%s\t%s\n' "$target" "$human" "$msg" > "$META_DIR/$label.meta"
 
-  # under 90s -> background sleep (minute-granularity launchd could miss it)
+  # under 90s -> background sleep (minute-granularity schedulers could miss it)
   if [[ "$delay" -lt 90 ]]; then
-    nohup bash -c "sleep $delay; \
-      '$SCRIPT_DIR/reminder-fire.sh' '$label' '' \"\$0\"" "$msg" \
-      >/dev/null 2>&1 &
-    echo "registered (immediate ${delay}s): $human — $msg"
+    fire_via_sleep "$label" "$delay" "$msg"
+    echo "registered (immediate ${delay}s): $human -- $msg"
     return 0
   fi
 
-  # one-shot launchd job. PATH/HOME are expanded now so they are portable
-  # (no hardcoded user). No TZ override -> fires in system local time, same
-  # clock the target was computed against.
+  if [ "$OS_KIND" = "macos" ]; then
+    add_launchd "$label" "$target" "$msg"
+  else
+    add_systemd "$label" "$target" "$msg"
+  fi
+  echo "registered: $human -- $msg"
+  echo "label: $label"
+}
+
+# ---- macOS: one-shot launchd job ----
+add_launchd() {
+  local label="$1" target="$2" msg="$3"
   local plist="$LA_DIR/$label.plist"
   local MIN HOUR DAY MONTH plist_home plist_path
-  MIN=$(( 10#$(date -j -f "%s" "$target" +%M) ))
-  HOUR=$(( 10#$(date -j -f "%s" "$target" +%H) ))
-  DAY=$(( 10#$(date -j -f "%s" "$target" +%d) ))
-  MONTH=$(( 10#$(date -j -f "%s" "$target" +%m) ))
+  MIN=$(( 10#$(epoch_to_fmt "$target" +%M) ))
+  HOUR=$(( 10#$(epoch_to_fmt "$target" +%H) ))
+  DAY=$(( 10#$(epoch_to_fmt "$target" +%d) ))
+  MONTH=$(( 10#$(epoch_to_fmt "$target" +%m) ))
   plist_home="$HOME"
   plist_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.npm-global/bin"
+  mkdir -p "$LA_DIR"
 
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -151,8 +205,30 @@ PLIST
   plutil -lint "$plist" >/dev/null || { echo "plist validation failed" >&2; rm -f "$plist"; exit 2; }
   launchctl unload "$plist" 2>/dev/null || true
   launchctl load "$plist"
-  echo "registered: $human — $msg"
-  echo "label: $label"
+}
+
+# ---- Linux: transient systemd --user timer ----
+# systemd-run --user schedules a one-shot: --on-calendar at the exact minute,
+# --unit gives it our label so cancel/list can target it by name. The unit runs
+# reminder-fire.sh, which self-cleans meta (the transient units auto-vanish
+# after firing). Persistent linger keeps --user timers alive across logout.
+add_systemd() {
+  local label="$1" target="$2" msg="$3"
+  command -v systemctl >/dev/null 2>&1 || {
+    echo "systemctl not found; cannot schedule reminder on this host" >&2; exit 2; }
+  # systemd unit names cannot contain ':' -> the label is dot/dash only, safe.
+  local oncal
+  oncal=$(epoch_to_fmt "$target" "+%Y-%m-%d %H:%M:00")
+  # enable linger so the timer survives logout (best-effort; needs no sudo for self).
+  if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+    loginctl enable-linger "$USER" 2>/dev/null || true
+  fi
+  mkdir -p "$SCRIPT_DIR/../runtime/logs"
+  systemd-run --user \
+    --unit="$label" \
+    --on-calendar="$oncal" \
+    --timer-property=Persistent=true \
+    /bin/bash "$SCRIPT_DIR/reminder-fire.sh" "$label" "" "$msg" >/dev/null
 }
 
 cmd_list() {
@@ -165,10 +241,25 @@ cmd_list() {
     label=$(basename "$f" .meta)
     IFS=$'\t' read -r target human msg < "$f"
     local left=$(( (target - now) / 60 ))
-    echo "• $human (in ${left}m) — $msg"
+    echo "- $human (in ${left}m) -- $msg"
     echo "  $label"
   done
   [[ "$found" -eq 0 ]] && echo "no scheduled reminders"
+}
+
+# ---- remove one job by label (OS-appropriate) ----
+remove_job() {
+  local label="$1"
+  if [ "$OS_KIND" = "macos" ]; then
+    launchctl remove "$label" 2>/dev/null || true
+    rm -f "$LA_DIR/$label.plist"
+  else
+    # stop + reset the transient timer/service (both share the unit name).
+    systemctl --user stop "$label.timer" 2>/dev/null || true
+    systemctl --user stop "$label.service" 2>/dev/null || true
+    systemctl --user reset-failed "$label.timer" 2>/dev/null || true
+    systemctl --user reset-failed "$label.service" 2>/dev/null || true
+  fi
 }
 
 cmd_cancel() {
@@ -178,14 +269,14 @@ cmd_cancel() {
   if [[ "$target" == "all" ]]; then
     for f in "$META_DIR"/*.meta; do
       local label; label=$(basename "$f" .meta)
-      launchctl remove "$label" 2>/dev/null || true
-      rm -f "$LA_DIR/$label.plist" "$f"
+      remove_job "$label"
+      rm -f "$f"
     done
     echo "all reminders cancelled"
     return 0
   fi
-  launchctl remove "$target" 2>/dev/null || true
-  rm -f "$LA_DIR/$target.plist" "$META_DIR/$target.meta"
+  remove_job "$target"
+  rm -f "$META_DIR/$target.meta"
   echo "cancelled: $target"
 }
 
