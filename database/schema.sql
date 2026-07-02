@@ -1,3 +1,4 @@
+PRAGMA user_version = 1;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -89,7 +90,6 @@ CREATE TABLE persons (
   mbti            TEXT,                  -- comma-joined multi_select
   groups          TEXT,                  -- 같이 속한 그룹, comma-joined
   manual_priority REAL,
-  soge_pool       INTEGER NOT NULL DEFAULT 0,  -- 소개팅풀 checkbox
   notion_id       TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 , aliases TEXT);

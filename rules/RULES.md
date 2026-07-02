@@ -36,6 +36,7 @@ Edit rights: the agent must NOT self-edit; RULES + AGENT + USER + memories/ = co
 - Feedback on a skill's output = signal to edit that SKILL.md (or its script) directly, not just an on-the-spot fix.
 
 ## Memory
-- Markdown = source of truth; vector index optional/regenerable. Hot inject = @USER.md + @AGENT.md only; MEMORY.md is cold (hook auto-searches; read it directly if needed).
-- New fact: append to MEMORY.md atomically with (date, source), core facts only.
+- Markdown = source of truth; vector index optional/regenerable. Hot inject = @USER.md + @AGENT.md only; the rest is cold (recall hook auto-searches; read directly if needed).
+- Write path: nightly consolidate distills chat into `inbox.md` (staging, no routing). Weekly classify-inbox routes inbox items into topic files under `memories/` (append + remove from inbox), proposes `NEW:<label>` for a genuinely new cluster, or DROPs noise.
+- A fact you must persist now: append one line to `inbox.md` with (date, source), core facts only; it gets routed on the next classify pass. `MEMORY.md` is just the general topic file, not the landing zone.
 - User profile: USER.md only. Edited by the main agent on change (confirm if it differs); other agent reads only and hands profile changes to the main agent or user. Onboarding signal: dogany-user-onboarding skill

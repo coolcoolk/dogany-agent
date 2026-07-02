@@ -5,25 +5,21 @@ description: One-shot (single-fire) reminders. Fires when the user asks to be re
 
 # dogany-reminder — one-shot (single-fire) reminder
 
-Use when the user wants a single alert at a specific future time ("remind me in
-10 minutes"). At the target time a one-shot launchd job sends one message via
-push.sh, then removes itself (no leftovers, survives reboot).
+Use when user wants single alert at specific future time ("remind me in 10 minutes").
+At target time: one-shot launchd job sends one message via push.sh, then self-removes (no leftovers, survives reboot).
 
 Portable / distributable: no hardcoded user name, absolute paths, or chat IDs.
-Paths derive from the script location and `$HOME`. The recipient and bot token
-come from `runtime/.env`. User-facing strings (the header, the address
-term) come from `config/i18n/<lang>.json` (see config/agent.conf → AGENT_LANG).
+Paths derive from script location and `$HOME`. Recipient + bot token come from `runtime/.env`.
+User-facing strings (header, address term) come from `config/i18n/<lang>.json` (see config/agent.conf -> AGENT_LANG).
 
 Core scripts: `<repo>/routines/reminder.sh` and `reminder-fire.sh`.
 (Shared helpers: `routines/lib/agentlib.sh`.)
 
-## Trigger signals
-- "remind me in X minutes/hours/days", "remind me at N o'clock", "tomorrow
-  morning at 9 ...", and the Korean equivalents above.
-- One-time only. If it repeats every day/week, this is NOT the skill — use
-  dogany-cron-register.
+## trigger signals
+- "remind me in X minutes/hours/days", "remind me at N o'clock", "tomorrow morning at 9 ...", and Korean equivalents above.
+- one-time only. repeats every day/week -> NOT this skill — use dogany-cron-register.
 
-## Usage
+## usage
 Relative time (s / m / h / d, combinable):
 ```bash
 <repo>/routines/reminder.sh add "10m" "take meds"
@@ -45,34 +41,26 @@ List / cancel:
 ```
 `add` is optional: `reminder.sh "10m" "take meds"` also works.
 
-## How the assistant should operate
-- Extract time + content from the user's message and register it directly. Do
-  not just hand over the command — run it.
-- If the time is ambiguous ("later", "in a bit"), ask once, then register. If
-  the content is empty, ask briefly what to remind about.
-- After registering, confirm in one line: when + what.
+## how the assistant should operate
+- extract time + content from user message and register directly. do not just hand over command — run it.
+- time ambiguous ("later", "in a bit") -> ask once, then register. content empty -> ask briefly what to remind about.
+- after registering, confirm in one line: when + what.
   e.g. "Set a reminder for 3:30pm to prep the meeting materials."
-- The delivered message is auto-formatted as "<reminder_header>\n<content>";
-  the header is localized. No extra tone shaping needed — pass the content
-  through as the user gave it.
-- On "cancel that reminder" / "never mind", find the label via `list`, then cancel.
+- delivered message auto-formatted as "<reminder_header>\n<content>"; header is localized. no extra tone shaping — pass content through as user gave it.
+- "cancel that reminder" / "never mind" -> find label via `list`, then cancel.
 
-## Mechanics (precision / durability)
-- launchd StartCalendarInterval (Month/Day/Hour/Minute) → minute-level
-  precision. After firing, the plist/meta/job self-remove.
-- Delays under 90s use a background sleep (sub-minute precision; not
-  reboot-durable — fine for short ones).
-- No TZ is forced into the job — it fires in system local time, the same clock
-  the target was computed against.
-- Recipient/token resolved by push.sh from `runtime/.env`.
-- Meta files: `routines/.reminders/<label>.meta` (for list/cancel; deleted on fire).
+## mechanics (precision / durability)
+- launchd StartCalendarInterval (Month/Day/Hour/Minute) -> minute-level precision. after firing, plist/meta/job self-remove.
+- delays under 90s -> background sleep (sub-minute precision; not reboot-durable — fine for short ones).
+- no TZ forced into job — fires in system local time, same clock target was computed against.
+- recipient/token resolved by push.sh from `runtime/.env`.
+- meta files: `routines/.reminders/<label>.meta` (for list/cancel; deleted on fire).
 
-## Localization (i18n)
-- Strings live in `config/i18n/<lang>.json`: `reminder_header`, `address`, etc.
-- `config/agent.conf` → `AGENT_LANG` picks the locale (en, ko, ...).
-- Add a language by dropping a new `<lang>.json`; missing keys fall back to en.
+## localization (i18n)
+- strings in `config/i18n/<lang>.json`: `reminder_header`, `address`, etc.
+- `config/agent.conf` -> `AGENT_LANG` picks locale (en, ko, ...).
+- add language by dropping new `<lang>.json`; missing keys fall back to en.
 
-## Boundaries
-- Recurring schedules are out of scope → dogany-cron-register.
-- Never touch the gateway / main bot. This skill only loads/removes its own
-  one-shot jobs.
+## boundaries
+- recurring schedules out of scope -> dogany-cron-register.
+- never touch gateway / main bot. this skill only loads/removes its own one-shot jobs.

@@ -176,6 +176,36 @@ DOGANY_REPO_ROOT=${REPO_ROOT}
 MANIFEST
 echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
 
+# 3c) write the dogany-* skills checksum manifest. This records the sha of every
+#     framework skill AS INSTALLED so update.sh can later tell whether the user
+#     hand-edited one and must back it up before a framework refresh overwrites
+#     it. Format: "<skill-name>  <sha>" (must match update.sh's skill_checksum).
+skill_checksum() {
+  local dir="$1"
+  [ -d "$dir" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
+  ( cd "$dir" && \
+    find . -type f ! -name '.DS_Store' -print0 2>/dev/null \
+      | LC_ALL=C sort -z \
+      | xargs -0 shasum 2>/dev/null \
+      | shasum \
+      | awk '{print $1}' )
+}
+SKILLS_MANIFEST="$PROJECT_ROOT/.claude/.dogany-skills.sha"
+if [ -d "$PROJECT_ROOT/.claude/skills" ]; then
+  mkdir -p "$PROJECT_ROOT/.claude"
+  {
+    printf '# .dogany-skills.sha -- checksums of framework dogany-* skills as installed\n'
+    printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
+    printf '# framework refresh overwrites them. Format: "<skill-name>  <sha>".\n'
+    for sd in "$PROJECT_ROOT"/.claude/skills/dogany-*/; do
+      [ -d "$sd" ] || continue
+      sname="$(basename "$sd")"
+      printf '%s  %s\n' "$sname" "$(skill_checksum "$sd")"
+    done
+  } > "$SKILLS_MANIFEST"
+  echo "[mint] wrote $SKILLS_MANIFEST (dogany-* skill checksums)"
+fi
+
 # 4) create the project .env from example (token in; placeholder otherwise).
 ENV_SRC="$PROJECT_ROOT/.telegram_bot/.env.example"
 ENV_DST="$PROJECT_ROOT/.telegram_bot/.env"

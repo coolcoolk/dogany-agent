@@ -80,6 +80,17 @@ First run triggers onboarding: `AGENT.md` is a blank skeleton, and the
 SessionStart onboarding check walks you through naming the agent and setting
 tone. `USER.md` fills in over time via the memory write path.
 
+The `dogany-*` skills are framework and are refreshed by `./update.sh`. If you
+edited one, `update.sh` detects the change and backs your copy up to
+`.claude/skills/<skill>.user-<date>/` before replacing it -- so no edit is lost.
+To customize durably, copy the skill under your own (non-`dogany-`) name and edit
+that instead of editing a `dogany-*` skill directly.
+
+Recommended: create a dedicated Gmail/Apple account for the agent instead of
+reusing your personal one -- isolation from personal data and a clean agent
+identity for email and integrations. Connecting that account (email send, etc.)
+is an optional, opt-in step handled during onboarding.
+
 ## Notes
 
 - English/ASCII in code; markdown docs may be in the agent's working language.

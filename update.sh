@@ -194,6 +194,47 @@ for f in schema.sql lifekit.py lifekit.sh README.md; do
 done
 UPDATED+=("database/schema.sql+CLI")
 
+# 3f-migrate) apply pending lifekit.db schema migrations, forward-only.
+#   The DB carries its schema version in SQLite's PRAGMA user_version. A DB freshly
+#   created from schema.sql is version 1; real migrations start at 002. We apply
+#   every migrations/NNN_*.sql whose NNN > the DB's current user_version, in
+#   ascending numeric order, backing up the *.db before each apply. This is the
+#   ONLY controlled path that mutates an existing lifekit.db (never delete/clobber).
+MIG_DIR="$REPO_ROOT/database/migrations"
+DB="$INSTANCE/database/lifekit.db"
+if [ -d "$MIG_DIR" ] && [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+  cur_ver="$(sqlite3 "$DB" 'PRAGMA user_version;' 2>/dev/null || echo 0)"
+  cur_ver="${cur_ver:-0}"
+  applied_migs=()
+  # Iterate migrations in ascending numeric order (NNN prefix). Glob is sorted,
+  # and zero-padded 3-digit prefixes sort correctly lexically == numerically.
+  for mig in "$MIG_DIR"/[0-9][0-9][0-9]_*.sql; do
+    [ -e "$mig" ] || continue
+    base="$(basename "$mig")"
+    nnn="${base%%_*}"
+    # Strip leading zeros for a clean numeric compare (avoid octal via 10#).
+    n=$((10#$nnn))
+    [ "$n" -gt "$cur_ver" ] || continue
+    if [ "$DRY_RUN" = "1" ]; then
+      msg "  [dry-run] 마이그레이션 $nnn 적용 예정 ($base)" \
+          "  [dry-run] would apply migration $nnn ($base)"
+    else
+      # Back up the DB BEFORE applying this migration.
+      ts="$(date +%Y%m%d-%H%M%S)"
+      bak="$INSTANCE/database/lifekit.db.bak-$ts"
+      cp -p "$DB" "$bak" || die "failed to back up lifekit.db before migration $nnn"
+      msg "  [update] DB 백업 -> $bak" "  [update] backed up DB -> $bak"
+      sqlite3 "$DB" < "$mig" || die "migration $nnn failed to apply ($base); DB backup at $bak"
+      msg "  [update] 마이그레이션 $nnn 적용 완료 ($base)" \
+          "  [update] applied migration $nnn ($base)"
+    fi
+    applied_migs+=("$nnn")
+  done
+  if [ ${#applied_migs[@]} -gt 0 ]; then
+    UPDATED+=("database/migrations: ${applied_migs[*]}")
+  fi
+fi
+
 # 3g) harness config: .claude/settings.json (framework), keep the skills dir intact.
 if [ -f "$TEMPLATE/.claude/settings.json" ]; then
   mkdir -p "$INSTANCE/.claude"
@@ -218,18 +259,109 @@ fi
 
 # 3i) official framework skills: refresh ONLY skills/dogany-* into the instance.
 #     User-authored (non-dogany-) skills under .claude/skills/ are left alone.
+#
+#     BACKUP-ON-MODIFY guard: a dogany-* skill is FRAMEWORK, refreshed with
+#     `rsync -aL --delete` (prunes upstream-removed files). If the user has
+#     hand-edited an installed dogany-* skill, that overwrite would silently
+#     destroy their edits. To prevent data loss we keep a checksum manifest of
+#     what WE last installed (.claude/.dogany-skills.sha, "<name>  <sha>" lines):
+#       * unmodified (instance sha == manifest sha) -> just refresh, as before.
+#       * user-modified (differs from manifest, OR manifest entry missing but the
+#         instance copy differs from the incoming template copy) -> back the
+#         instance dir up to <name>.user-<timestamp>/ and WARN, THEN refresh.
+#     After each refresh the manifest is updated to the newly installed sha.
+
+# Deterministic, path-independent digest of a skill dir: hash each file's content
+# together with its path RELATIVE to the dir, sorted, then hash the roll-up. Same
+# content under repo-side and instance-side yields the same sha (absolute path is
+# never part of the digest). Empty/missing dir -> stable empty marker.
+skill_checksum() {
+  local dir="$1"
+  [ -d "$dir" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
+  ( cd "$dir" && \
+    find . -type f ! -name '.DS_Store' -print0 2>/dev/null \
+      | LC_ALL=C sort -z \
+      | xargs -0 shasum 2>/dev/null \
+      | shasum \
+      | awk '{print $1}' )
+}
+
+# Read a skill's recorded sha from the manifest ("<name>  <sha>"); empty if none.
+SKILLS_MANIFEST="$INSTANCE/.claude/.dogany-skills.sha"
+manifest_sha() {
+  local name="$1"
+  [ -f "$SKILLS_MANIFEST" ] || { printf '%s' ""; return; }
+  awk -v n="$name" '$1==n {print $2; exit}' "$SKILLS_MANIFEST"
+}
+
 mkdir -p "$INSTANCE/.claude/skills"
 DOGANY_SKILLS=()
+# Collect new manifest lines as we install; rewrite the manifest at the end so a
+# --dry-run leaves it untouched.
+NEW_MANIFEST_LINES=()
 for d in "$SKILLS_ROOT"/dogany-*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"
   DOGANY_SKILLS+=("$name")
+  dest="$INSTANCE/.claude/skills/$name"
+
+  # Decide whether the instance copy was user-modified BEFORE overwriting it.
+  recorded="$(manifest_sha "$name")"
+  cur_sha="$(skill_checksum "$dest")"
+  incoming_sha="$(skill_checksum "$d")"
+  user_modified=0
+  if [ -d "$dest" ]; then
+    if [ -n "$recorded" ]; then
+      [ "$cur_sha" != "$recorded" ] && user_modified=1
+    else
+      # No manifest entry (e.g. pre-guard instance): treat as modified only if the
+      # instance copy actually differs from what we're about to install.
+      [ "$cur_sha" != "$incoming_sha" ] && user_modified=1
+    fi
+  fi
+
+  if [ "$DRY_RUN" = "1" ]; then
+    if [ "$user_modified" = "1" ]; then
+      msg "  [dry-run] 사용자 수정 스킬 백업 예정: $name" \
+          "  [dry-run] would back up user-modified $name"
+    fi
+    msg "  [dry-run] 스킬 갱신 예정: $name" "  [dry-run] would refresh $name"
+    # Do NOT rsync, back up, or touch the manifest in dry-run.
+    continue
+  fi
+
+  # Back up the user's version before it is overwritten/pruned.
+  if [ "$user_modified" = "1" ]; then
+    # Reuse the section 3f-migrate timestamp pattern for the backup suffix.
+    ts="$(date +%Y%m%d-%H%M%S)"
+    bak="$INSTANCE/.claude/skills/$name.user-$ts"
+    cp -a "$dest" "$bak" || die "failed to back up user-modified skill $name"
+    msg "  [update][경고] 사용자 수정 스킬 발견 -- 백업: $bak" \
+        "  [update][WARN] user-modified skill detected -- backed up to: $bak"
+  fi
+
   # --delete here is scoped to the single dogany-* skill dir, so it prunes files
   # removed upstream WITHOUT affecting sibling user skills.
-  rsync -aL --delete $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
-    "$d" "$INSTANCE/.claude/skills/$name/"
+  rsync -aL --delete "${COMMON_EXCLUDES[@]}" \
+    "$d" "$dest/"
+
+  # Record the sha of what we JUST installed (re-checksum the destination so the
+  # manifest reflects the on-disk result, not the source).
+  installed_sha="$(skill_checksum "$dest")"
+  NEW_MANIFEST_LINES+=("$name  $installed_sha")
 done
 [ ${#DOGANY_SKILLS[@]} -gt 0 ] && UPDATED+=("skills: ${DOGANY_SKILLS[*]}")
+
+# Rewrite the skills manifest with the freshly installed checksums (skip in
+# dry-run, where NEW_MANIFEST_LINES is empty and nothing was installed).
+if [ "$DRY_RUN" = "0" ] && [ ${#NEW_MANIFEST_LINES[@]} -gt 0 ]; then
+  {
+    printf '# .dogany-skills.sha -- checksums of framework dogany-* skills as installed\n'
+    printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
+    printf '# framework refresh overwrites them. Format: "<skill-name>  <sha>".\n'
+    for line in "${NEW_MANIFEST_LINES[@]}"; do printf '%s\n' "$line"; done
+  } > "$SKILLS_MANIFEST"
+fi
 
 # ---------------------------------------------------------------------------
 # 4) Re-substitute the five mint placeholders on the refreshed files.

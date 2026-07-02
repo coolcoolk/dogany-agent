@@ -3,47 +3,49 @@ name: dogany-memory-search
 description: 사용자에 대한 과거 사실·기록·선호·맥락을 회상해야 할 때 사용. "전에 뭐라고 했지", 사용자의 운동/식단/투자/가계부 기록, 신상·일정·관계·과거 결정 등 장기기억 조회가 필요하면 답하기 전에 먼저 이걸로 검색한다. 한국어 의미검색이라 키워드가 안 겹쳐도 의미로 찾고, 검색 자체는 토큰 0이다.
 ---
 
-# dogany-memory-search — 장기기억 회상
+# dogany-memory-search — long-term memory recall
 
-사용자에 대한 영속적 사실은 `memories/*.md`에 § 단위 원자 노트로 저장돼 있다. 이걸 bge-m3 임베딩(로컬 Ollama) + SQLite FTS5(trigram)로 인덱싱한 회상 도구가 `memory/memory.py`다. FTS와 벡터를 RRF로 융합한 하이브리드 검색이라, 키워드가 정확히 안 맞아도 의미로 찾는다.
+Persistent facts about the user stored in `memories/*.md` as § atomic notes.
+Indexed by `memory/memory.py` using bge-m3 embeddings (local Ollama) + SQLite FTS5 (trigram).
+Hybrid search (FTS + vector, RRF fusion) -> finds by meaning even without keyword match.
 
-## 언제 쓰나
-- 사용자의 과거 발언·기록·선호·신상·관계·일정·결정을 참조해야 할 때
-- 확신이 없는 사실은 추측하지 말고 먼저 검색한다 (회상은 토큰 0이라 비용 부담 없음)
-- 답하기 전에 "이거 내가 아는 게 사용자 기억에 있나?" 싶으면 일단 검색
+## when to use
+- need to reference user's past utterances, records, preferences, profile, relations, schedule, decisions
+- uncertain fact -> search before guessing (recall = 0 tokens, no cost concern)
+- "do I already know this about the user?" -> search first
 
-## 사용법
+## usage
 ```bash
 cd memory
-/usr/bin/python3 memory.py search "검색어" --k 5
+/usr/bin/python3 memory.py search "search_query" --k 5
 ```
-- 검색어는 사용자 질문의 핵심 의미로 자연어로 넣는다. 키워드가 안 겹쳐도 의미로 찾으니 억지로 명사만 뽑지 않아도 된다.
-- 결과의 `source_file › section`과 원문을 근거로 답한다.
-- 결과가 비거나 관련 없으면 "기억에 없다"고 솔직히 말하고 추측하지 않는다.
-- 결과가 많이 필요하면 `--k` 를 키우고, JSON이 필요하면 `--json`.
+- search_query = core meaning of user's question in natural language. no need to extract only nouns; semantic match works across paraphrase.
+- use `source_file › section` and original text from results as basis for answer.
+- empty/irrelevant results -> honestly say "not in memory", do not guess.
+- need more results -> increase `--k`. need JSON -> add `--json`.
 
-## 기억 갱신 (새 사실을 알게 됐을 때)
-사용자가 기억할 가치가 있는 영속적 사실을 말하면, 다음 압축 적재로 기억한다. 마크다운이 진실의 원천이고, 압축·메타부착·인덱스 갱신이 한 번에 처리된다.
+## memory update (new fact learned)
+user says something worth remembering permanently -> use compressed write. markdown = source of truth; compression + meta-tagging + index update all in one step.
 
-### 권장 — 압축 적재 (write)
-원시 텍스트(사용자 발언 등)를 넘기면 싼 모델(Haiku)이 영속 사실만 골라 한 줄 원자 항목으로 압축하고, `(YYYY-MM-DD, 소스)` 메타를 자동으로 붙여 적재한 뒤 인덱스까지 갱신한다.
+### recommended — compressed write
+pass raw text (user utterance etc.) -> cheap model (Haiku) extracts only persistent facts, compresses to single-line atomic items, auto-attaches `(YYYY-MM-DD, source)` meta, writes to file, updates index.
 ```bash
 cd memory
-echo "사용자 발언/맥락 원문" | /usr/bin/python3 memory.py write --source "텔레그램 대화"
+echo "user utterance / context" | /usr/bin/python3 memory.py write --source "텔레그램 대화"
 ```
-- 적재 대상은 기본 `inbox.md`(미분류 임시). 주제가 명확하면 `--file`로 지정: 정체성→identity.md / 작업규칙·관례→work-rules.md / 정기루틴·크론→routines.md / 인프라·연동→infra.md / 사용자 신상·건강→about-user.md. 같은 파일 안 섹션은 `--section "헤더"`. (애매하면 그냥 inbox.md — 잘 때 정리가 나중에 주제 파일로 분배)
-- 먼저 `--dry-run`을 붙이면 무엇이 압축·적재될지 미리 보고 파일은 안 건드린다. 애매하면 dry-run으로 확인하고 사용자께 보여준 뒤 본적재.
-- 잡담/일시적 내용은 모델이 알아서 버린다. 기억할 게 없으면 적재 안 한다.
+- default target: `inbox.md` (unsorted temp). if topic clear -> `--file`: identity->identity.md / work-rules->work-rules.md / routines->routines.md / infra->infra.md / user profile+health->about-user.md. section within file: `--section "header"`. (ambiguous -> inbox.md; nightly cleanup distributes to topic files)
+- add `--dry-run` first to preview what gets compressed/written without touching files. ambiguous -> dry-run, show user, then write.
+- casual/transient content -> model discards. nothing worth keeping -> no write.
 
-### 수동 — 직접 편집
-정밀하게 문구를 정해 넣고 싶으면 `memories/*.md`에 `§` 원자 항목으로 직접 추가하되 **각 항목에 `(YYYY-MM-DD, 소스/맥락)` 메타를 반드시** 붙이고, 끝나면 인덱스를 갱신한다:
+### manual — direct edit
+need exact wording -> add `§` atomic item directly to `memories/*.md`. each item must have `(YYYY-MM-DD, source/context)` meta. then update index:
 ```bash
 cd memory
 /usr/bin/python3 memory.py index
 ```
-- 바뀐 파일만 재임베딩되므로(증분) 부담 없다.
+- only changed files re-embedded (incremental). low overhead.
 
-## 운영 메모
-- 인덱스(`state.db`)는 마크다운에서 언제든 `index`로 재생성 가능한 캐시다. db에만 있는 데이터를 만들지 않는다.
-- 검색 품질은 `python memory.py stats`로 미스율을 본다. 미스율이 자주 높으면 사용자께 보고한다(인덱스 보강/모델 점검 신호).
-- 정제 규칙(노이즈 필터)을 바꾼 경우 증분 해시 때문에 자동 반영이 안 되므로, 1회 풀 리인덱스: rm state.db 후 python memory.py index.
+## operational notes
+- index (`state.db`) = cache, regenerable anytime from markdown via `index`. do not store data only in db.
+- search quality -> `python memory.py stats` for miss rate. frequent high miss rate -> report to user (index repair / model check signal).
+- changed refinement rules (noise filters) -> incremental hash skips them; do 1 full reindex: rm state.db then python memory.py index.

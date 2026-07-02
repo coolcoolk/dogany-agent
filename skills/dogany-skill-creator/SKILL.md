@@ -1,53 +1,67 @@
 ---
 name: dogany-skill-creator
-description: 에이전트가 새 스킬을 만들 때 이 시스템의 컨벤션대로 찍어내는 메타 스킬. 사용자가 "이거 스킬로 만들어줘", "반복되는 거 스킬화해줘" 류를 요청하거나, 에이전트가 반복 절차(크론·루틴·작업흐름)를 스킬로 패키징할 때 먼저 이걸 읽고 따른다. 네이밍·경로·텔레그램 톤·모델 라우팅·테스트 규칙을 일관되게 강제한다.
+description: Meta-skill. Make new skills THIS system's way. Triggers: user says make / skillify a skill; agent packages a repeated procedure (cron / routine / workflow). Read before ANY skill / cron / routine. Enforces naming, path, caveman-English body, model routing, tests.
 ---
 
-# dogany-skill-creator — 스킬 제작 표준
+# skill-creator -- skill-making standard
 
-새 스킬을 만들 때 매번 미묘하게 달라지는 것(드리프트)을 막는다. 일반적인 "스킬 작성법"이 아니라 이 시스템만의 컨벤션을 박아둔 것. 새 스킬·크론·루틴을 만들기 전에 이 문서를 따른다.
+Stop drift. Read before ANY skill / cron / routine. THIS system's rules, not
+generic. Self-obeys (caveman body).
 
-## 언제 쓰나
-- 사용자가 반복 작업을 스킬로 만들어달라고 할 때
-- 같은 절차를 두 번 이상 반복했다고 느낄 때 (스킬화 신호)
-- 크론/루틴을 새로 짤 때 (절차 부분은 스킬로 빼는 게 깔끔)
-- **(능동 제안) 사용자가 시킨 다단계 워크플로우를 한 번 완료한 직후** — 그게 또 쓰일 만한 절차면 사용자가 시키기 전에 "이거 스킬로 만들어둘까요?"라고 먼저 제안한다. 기다리지 말고 에이전트가 띄운다. 제안만 하고, 실제 제작은 사용자 승인 후.
+## when
+- user says: make a skill.
+- same procedure done 2+ times -> skillify.
+- new cron / routine -> pull procedure into a skill.
+- multi-step workflow just finished (user-asked) -> offer "make this a skill?".
+  propose only, build after OK.
 
-## 메모리 vs 스킬 — 어디에 넣나
-- 메모리(MEMORY.md): 사실·선호·결정. 짧고 항상 주입돼야 하는 한두 줄. 트리거(언제·왜).
-- 스킬: 반복 절차(how). 단계가 여럿이고 스크립트·템플릿이 딸린 것. 필요할 때만 로드 → context 절약.
-- 규칙: 트리거는 메모리, 실행은 스킬. 둘을 섞지 말 것.
+## memory vs skill
+- memory (MEMORY.md): facts / prefs / decisions. short, always-injected. = the
+  trigger (when / why).
+- skill: procedure (how). multi-step, scripts / templates. load on demand -> save
+  context.
+- trigger -> memory. execution -> skill. never mix.
 
-## 스킬 위치·구조
-- 프로젝트 스킬은 `~/<작업공간>/.claude/skills/<이름>/SKILL.md`.
-- 이름은 소문자-하이픈(kebab-case), 동사형 권장 (dogany-cron-register, diet-brief).
-- 보조 파일(템플릿·스크립트)은 같은 스킬 폴더 안에 둔다.
-- 프론트매터는 name, description 두 개. description = 세션 시작 때 항상 로드되는 "매칭 텍스트"라 자동발동의 핵심 — 부실하면 에이전트가 스킬을 안 부르고 손코딩한다. 자족적으로 써서 외부 트리거(AGENT.md/CLAUDE.md) 없이도 발동되게:
-  1. 발동 트리거를 실제 발화로 구체 나열 ("점심 삼겹살 먹었어", "오늘 칼로리 현황").
-  2. 모든 발동 상황 커버 — 기록/실행뿐 아니라 조회·현황·수정류도. (조회를 빠뜨리면 그 발화에서 스킬이 안 불린다 = 원인.)
-  3. 긍정 서술("~을 담당/처리한다"), 금지형 말고.
-  4. 산출물·부수효과 명시 (예: 최종 산출은 항상 상태 카드 send_file).
-  검증: 대표 발화 3~5개를 적고 그게 description 키워드에 걸리는지 자문.
+## language + tokens (default)
+- SKILL.md body = caveman English. meaning over grammar. drop articles + filler.
+  min tokens.
+- fuller sentences ONLY where meaning goes ambiguous, or in examples.
+- user language ONLY where needed: trigger phrases, field / column names, example
+  utterances, user-facing output strings.
+- agent-read text (steps, rules) = caveman.
 
-## 텔레그램 톤 규칙 (메시지 생성 스킬이면 반드시 박을 것)
-- 사용자 호칭을 일관되게 쓴다. 공손한 존댓말, 반말 금지.
-- 볼드(별표 둘로 감싸기)를 쓰지 않는다 — 텔레그램 가독성 떨어짐.
-- 따옴표·백틱 같은 기호는 꼭 필요할 때만.
-- 간결하되 꼼꼼히. 빈말("좋은 질문이에요") 금지.
+## location + structure
+- path: ~/<workspace>/.claude/skills/<name>/SKILL.md
+- name: kebab-case, verb-ish.
+- aux files (templates, scripts) -> same folder.
+- frontmatter: name + description only.
+- description = match text, loaded every session = auto-trigger core. weak desc ->
+  agent hand-codes instead of calling skill. make self-sufficient:
+  1. list real trigger utterances (user language).
+  2. cover ALL cases: log / run AND query / status / edit. (miss query -> skill
+     wont fire on that phrase.)
+  3. positive phrasing ("handles X"), not negative.
+  4. state outputs / side-effects. example: "final output = status card via
+     send_file".
+  check: write 3-5 sample utterances, confirm desc keywords catch them.
 
-## 모델 라우팅 (비용 레버)
-- 정기·고빈도 단순 잡일 → haiku
-- 데이터 마는 중간 난이도(요약·집계) → sonnet
-- 대화·어려운 추론 → opus
+## tone
+- message skills -> follow shared output rules (RULES output/notation + AGENT.md
+  output discipline). dont restate.
 
-## 제작 절차 (반드시 이 순서)
-1. 메모리에 넣을지 스킬로 만들지 먼저 판단 (위 기준).
-2. 폴더·SKILL.md 작성. description은 발동 상황 키워드 풍부하게.
-3. 보조 스크립트/템플릿이 있으면 같이 작성.
-4. 실제로 한 번 돌려서 테스트 (수동으로 흉내 X, 진짜 실행). 출력·전송까지 확인.
-5. 테스트 통과 후에야 사용자에게 보고. 안 되면 코드/스킬 수정으로 해결(수동 패치 금지).
-6. 새 영속 사실(스킬 생성·등록)은 MEMORY.md에 날짜·맥락과 함께 원자적으로 기록.
+## model routing (cost)
+- routine / high-freq / simple -> haiku
+- data wrangle (summarize, aggregate) -> sonnet
+- conversation / hard reasoning -> opus
 
-## 경계
-- 게이트웨이/메인 봇 서비스 재시작·중지는 스킬 안에서도 혼자 하지 말 것 — 사용자에게 요청.
-- 외부 행동(메일·공개글) 트리거가 들어가면 발송 전 사용자 확인 단계를 스킬에 포함.
+## build order (strict)
+1. decide: memory or skill.
+2. write folder + SKILL.md. keyword-rich desc.
+3. write aux scripts / templates.
+4. real run test (not simulated). check output + delivery.
+5. report only after pass. fix by code, not manual patch.
+6. log new fact (skill created) -> MEMORY.md, w/ date + context.
+
+## bounds
+- never restart / stop gateway or main bot from a skill -> ask user.
+- external action (mail, public post) -> add pre-send user-confirm step.

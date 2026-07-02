@@ -9,62 +9,62 @@ description: >-
   __USER_LABEL__께 확인하는 "사람 해소 규칙"이다.
 ---
 
-# appointment-log — 약속 관리
+# appointment-log
 
-__USER_LABEL__의 약속(appointments)을 lifekit.db에서 등록·수정·조회하고, 사람(persons)을
-참가자로 연결한다. 모든 DB 접근은 `lifekit.sh`(=lifekit.py 코어)를 통한다 — 생 SQL 금지.
+Manage __USER_LABEL__ appointments in lifekit.db — register, update, query, link persons.
+All DB access via `lifekit.sh` (= lifekit.py core). No raw SQL.
 
-- 헬퍼 경로: `$PROJECT_ROOT/database/lifekit.sh` (레포 루트 기준. PROJECT_ROOT 미설정 시 스킬 위치에서 상위로 올라가 database/를 찾는다)
-- SoT는 로컬 lifekit.db. Notion 동기화 없음(notion_id는 과거 임포트 잔재). 직접 수정 안전.
-- 시간대는 항상 __USER_LABEL__ 기준 GMT+9(+09:00). 날짜는 YYYY-MM-DD, 시작/끝은 ISO(+09:00) 권장.
+- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> walk up from skill dir to find database/)
+- SoT: local lifekit.db. No Notion sync (notion_id = legacy import artifact). Safe to edit directly.
+- timezone: always __USER_LABEL__ GMT+9 (+09:00). date = YYYY-MM-DD, start/end = ISO (+09:00) preferred.
 
-## 데이터 구조
+## data schema
 - `appointments`: id, title, start_at, end_at, location, location_url, purpose, summary
-- `persons`: id, name, relation, aliases(별명, 콤마조인), birthday, job …
-- `appointment_persons`: (appointment_id, person_id) N:M 조인
+- `persons`: id, name, relation, aliases (comma-joined), birthday, job ...
+- `appointment_persons`: (appointment_id, person_id) N:M join
 
-## 사람 해소 규칙 (참가자 붙일 때 반드시 이 순서)
-__USER_LABEL__이 약속에 사람을 언급하면(본명이든 별명이든) 곧장 등록하지 말고 먼저 찾는다.
+## person-resolution rule (follow this order every time a person is linked)
+__USER_LABEL__ mentions someone (name or alias) -> find first, never register blind.
 
 ```
-1. lifekit.sh person-find <이름또는별명>   (name + aliases 동시 검색)
-2. 정확히 1명 매치   → 그 사람으로 바로 연결 (appt-person)
-3. 0명 매치          → __USER_LABEL__께 질문:
-      "OO님은 기존에 등록된 누구의 별명인가요, 아니면 새 사람인가요?"
-      - 기존 사람의 별명 → person-alias <id> <별명> 로 별명 달고 → 연결
-      - 새 사람          → person-add <name> [relation] [aliases] 로 등록 후 → 연결
-4. 2명 이상 매치      → 후보를 보여주고 누구인지 __USER_LABEL__께 확인 후 연결
+1. lifekit.sh person-find <name_or_alias>   (searches name + aliases together)
+2. exactly 1 match   -> link directly (appt-person)
+3. 0 matches         -> ask __USER_LABEL__:
+      "Is OO an alias for someone existing, or a new person?"
+      - existing alias -> person-alias <id> <alias> -> link
+      - new person     -> person-add <name> [relation] [aliases] -> link
+4. 2+ matches        -> show candidates, ask __USER_LABEL__ to pick, then link
 ```
-질문은 [[OPTIONS]] 형식(번호 목록, 마지막 줄에 마커)으로 던진다. 추측해서 새로
-만들지 말 것 — 0명이어도 동명이인/별명일 수 있으니 반드시 __USER_LABEL__ 확인.
+Ask using [[OPTIONS]] format (numbered list, marker on last line).
+Never guess-create. Even 0 matches may be alias or duplicate — must confirm.
 
-## 약속 등록·수정 절차
-1. 시간 파싱: "내일 저녁 7시" 같은 표현은 현재 시각(GMT+9) 기준으로 ISO 변환.
-   start_at은 필수. end_at 미지정시 appt-add가 자동으로 시작+3시간을 디폴트로 넣는다
-   (__USER_LABEL__이 끝시간/소요시간을 주면 그 값 우선).
-2. `lifekit.sh appt-add <title> <start_at> [end_at location purpose summary]` → 새 id.
-3. 참가자는 위 "사람 해소 규칙"을 사람마다 적용해 `appt-person <appt_id> <person_id>`.
-4. 부분 수정은 `appt-upd <id> field=value ...` (지정 필드만 바뀜).
-5. 끝나면 `appt-show <id>`로 약속+참가자 한 번 확인하고 __USER_LABEL__께 요약 보고.
+## register / update procedure
+1. parse time: expressions like "내일 저녁 7시" -> ISO relative to now (GMT+9).
+   start_at required. end_at omitted -> appt-add defaults to start+3h
+   (__USER_LABEL__ gives end/duration -> use that value).
+2. `lifekit.sh appt-add <title> <start_at> [end_at location purpose summary]` -> new id.
+3. link persons: apply person-resolution rule per person -> `appt-person <appt_id> <person_id>`.
+4. partial update: `appt-upd <id> field=value ...` (only specified fields change).
+5. done -> `appt-show <id>` to verify, then report summary to __USER_LABEL__.
 
-## CLI 빠른 참조 (lifekit.sh)
+## CLI quick reference (lifekit.sh)
 ```
-person-find  <이름또는별명>                         → id  name  relation  aliases
-person-add   <name> [relation] [aliases]            → 새 person id
-person-alias <id> <별명>                            → 별명 추가(중복 무시)
-appt-find    <date_from> [date_to]                  → 기간 내 약속 목록
-appt-add     <title> <start_at> [end_at loc purpose summary] → 새 appt id
-appt-upd     <id> field=value ...                   → 부분 수정
+person-find  <name_or_alias>                        -> id  name  relation  aliases
+person-add   <name> [relation] [aliases]            -> new person id
+person-alias <id> <alias>                           -> add alias (dedup ignored)
+appt-find    <date_from> [date_to]                  -> appointments in range
+appt-add     <title> <start_at> [end_at loc purpose summary] -> new appt id
+appt-upd     <id> field=value ...                   -> partial update
             (field: title start_at end_at location location_url purpose summary)
-appt-person  <appt_id> <person_id>                  → 참가자 연결
-appt-show    <id>                                   → 약속 1건 + 참가자 전체
+appt-person  <appt_id> <person_id>                  -> link person to appointment
+appt-show    <id>                                   -> 1 appointment + all persons
 ```
-빈 인자는 ""로 자리만 잡는다. 예: `appt-add "AI Day" "2026-07-05T12:00:00+09:00" "" "우리집"`
+Empty arg -> hold place with "". e.g. `appt-add "AI Day" "2026-07-05T12:00:00+09:00" "" "우리집"`
 
-## 조회 응답
-- "이번 주 약속" 류는 회사·이동·준비 같은 반복 블록은 빼고 사람 약속·할 일만 추려 보고.
-- 표·정렬 데이터는 코드블록(monospace)으로. 볼드(별표) 금지, 호칭은 __USER_LABEL__, 존댓말.
+## query response
+- "이번 주 약속" style -> exclude recurring work/commute blocks; report personal appointments and tasks only.
+- tabular/sorted data -> code block (monospace). no bold (asterisk). address = __USER_LABEL__.
 
-## 경계
-- 캘린더(Google Calendar) 반영이 필요하면 별도로 __USER_LABEL__께 확인 후 처리(이 스킬은 로컬 DB만).
-- 약속 삭제는 되돌리기 어려우니 __USER_LABEL__ 확인 후에만.
+## boundaries
+- Google Calendar sync needed -> confirm with __USER_LABEL__ separately (this skill = local DB only).
+- appointment delete is hard to reverse -> confirm with __USER_LABEL__ first.
