@@ -106,9 +106,10 @@ echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 #    RULES.md + framework skills land as real files in the self-contained instance.
 #    Excludes VCS / runtime / build cruft.
 #
-#    config/lifekit.conf is EXCLUDED here and copied write-if-absent below
-#    (same contract as .env / lifekit.db): a re-mint with --force must never
-#    reset the instance's lifekit activation state.
+#    config/lifekit.conf + config/agent.conf are EXCLUDED here and copied
+#    write-if-absent below (same contract as .env / lifekit.db): a re-mint
+#    with --force must never reset the instance's lifekit activation state
+#    or the user's language/address settings.
 #
 #    CONSTRAINT (lifekit bundle dormancy): bundle skills live as REAL dirs in
 #    .claude/skills-bundle/ and are activated by an instance-local symlink
@@ -128,16 +129,19 @@ rsync -aL \
   --exclude 'memory/state.db' \
   --exclude '*.db' \
   --exclude 'config/lifekit.conf' \
+  --exclude 'config/agent.conf' \
   "$TEMPLATE/" "$PROJECT_ROOT/"
 
-# 1a) lifekit activation state: scaffold only if absent (idempotent re-mint).
-if [ ! -f "$PROJECT_ROOT/config/lifekit.conf" ] && [ -f "$TEMPLATE/config/lifekit.conf" ]; then
-  mkdir -p "$PROJECT_ROOT/config"
-  cp -p "$TEMPLATE/config/lifekit.conf" "$PROJECT_ROOT/config/lifekit.conf"
-  echo "[mint] wrote config/lifekit.conf (LIFEKIT=pending)"
-elif [ -f "$PROJECT_ROOT/config/lifekit.conf" ]; then
-  echo "[mint] config/lifekit.conf exists -> keep (idempotent)"
-fi
+# 1a) per-instance conf state: scaffold only if absent (idempotent re-mint).
+for conf in lifekit.conf agent.conf; do
+  if [ ! -f "$PROJECT_ROOT/config/$conf" ] && [ -f "$TEMPLATE/config/$conf" ]; then
+    mkdir -p "$PROJECT_ROOT/config"
+    cp -p "$TEMPLATE/config/$conf" "$PROJECT_ROOT/config/$conf"
+    echo "[mint] wrote config/$conf (scaffold)"
+  elif [ -f "$PROJECT_ROOT/config/$conf" ]; then
+    echo "[mint] config/$conf exists -> keep (idempotent)"
+  fi
+done
 
 # 1b) bundle the hoisted shared roots the instance needs to be self-contained:
 #     - rules/USER.md scaffold (RULES.md already dereferenced from the template),

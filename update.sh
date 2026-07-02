@@ -185,11 +185,27 @@ if [ -d "$TEMPLATE/memory" ]; then
   UPDATED+=("memory/*.py")
 fi
 
-# 3d) config (agent.conf + i18n locales).
+# 3d) config: i18n locales are FRAMEWORK (refresh); agent.conf + lifekit.conf
+#     are per-instance STATE scaffolds (user language/address, lifekit
+#     activation choices). Same write-if-absent contract as .env / lifekit.db
+#     in mint.sh: an update must NEVER reset user choices back to template
+#     defaults (e.g. LIFEKIT=pending, AGENT_LANG=ko).
 if [ -d "$TEMPLATE/config" ]; then
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+    --exclude 'agent.conf' \
+    --exclude 'lifekit.conf' \
     "$TEMPLATE/config/" "$INSTANCE/config/"
-  UPDATED+=("config/")
+  for f in agent.conf lifekit.conf; do
+    if [ ! -f "$INSTANCE/config/$f" ] && [ -f "$TEMPLATE/config/$f" ]; then
+      if [ "$DRY_RUN" = "1" ]; then
+        msg "  [dry-run] config/$f 스캐폴드 생성 예정 (없음)" \
+            "  [dry-run] would scaffold config/$f (absent)"
+      else
+        cp -p "$TEMPLATE/config/$f" "$INSTANCE/config/$f"
+      fi
+    fi
+  done
+  UPDATED+=("config/ (i18n; conf scaffolds only if absent)")
 fi
 
 # 3e) service SDK facade (hoisted at repo root, bundled into the instance).
