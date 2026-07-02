@@ -2,14 +2,14 @@
 # self_restart.sh -- safe self-restart of the metal bridge with auto Telegram notify.
 #
 # Why: restarting the bridge severs the live claude session, so nobody is left
-# to tell 사용자 "it came back". This detaches from the caller, SIGTERMs the bridge
+# to tell the user "it came back". This detaches from the caller, SIGTERMs the bridge
 # (launchd KeepAlive revives it with new code), waits until polling is REALLY up
 # (log marker, not just a live pid -> catches zombie-poll B2), then pushes a
 # Telegram message via push.sh on the metal bot. Optional --verify runs a
 # headless claude check after restart and includes its result in the notify.
 #
 # Usage:
-#   self_restart.sh --reason "download timeout fix"
+#   self_restart.sh --reason "DGN-052 download timeout fix"
 #   self_restart.sh --reason "..." --verify "방금 적용한 read_timeout이 라이브 코드에 있는지 한 줄로 확인"
 #   self_restart.sh --reason "..." --dry-run        # no kill; exercises notify path only
 #

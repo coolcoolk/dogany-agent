@@ -189,6 +189,19 @@ class StreamingMessageHandler:
     async def update_if_needed(self, new_chunk: str) -> bool:
         if self._finalized:
             return False
+        # Each call carries one COMPLETE TextBlock (no partial deltas are fed
+        # here), so a call boundary is a block boundary. Blocks from separate
+        # assistant messages (e.g. either side of a tool call) are distinct
+        # paragraphs; joining them bare glues the second block onto the last
+        # line of the first, which breaks line-anchored markers (send_file::,
+        # [[OPTIONS]]) -- they then neither strip nor act. Insert a newline.
+        if (
+            new_chunk
+            and self.accumulated_text
+            and not self._need_new_draft
+            and not self.accumulated_text.endswith("\n")
+        ):
+            new_chunk = "\n" + new_chunk
         if self._need_new_draft:
             # Previous bubble was sealed at the limit with no leftover; start the
             # tail as a brand-new bubble so this text is never lost.

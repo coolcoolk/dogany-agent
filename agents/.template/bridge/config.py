@@ -10,11 +10,11 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -89,7 +89,7 @@ class Config(BaseSettings):
             "allow all -- it stays in claim mode until claimed (see ownership.py)."
         ),
     )
-    extra_allowed_roots: List[Path] = Field(
+    extra_allowed_roots: Annotated[List[Path], NoDecode] = Field(
         default_factory=list,
         description=(
             "Extra absolute roots the path guard treats as inside PROJECT_ROOT "
