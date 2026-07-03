@@ -30,6 +30,9 @@ MINT_SH="$REPO_ROOT/scripts/mint.sh"
 
 # Populated as the flow proceeds.
 DOGANY_LANG="${DOGANY_LANG:-}"        # ko | en
+# Set to 1 when --lang was passed explicitly: skips the language confirm step
+# (the flag is the user's decision -- do not second-guess it interactively).
+LANG_FORCED=0
 DOGANY_TZ="${DOGANY_TZ:-}"            # IANA tz string
 BOT_TOKEN=""
 OWNER_ID=""
@@ -45,6 +48,10 @@ DOGANY_MAX_AGENTS="${DOGANY_MAX_AGENTS:-1}"
 AGENT_NAME="${DOGANY_AGENT_NAME:-dogany}"
 SERVICE_CHOICE=""                     # auto | manual
 OS_KIND=""                            # macos | linux
+# Claude model for the minted instance settings.json. Chosen at the model step
+# (recommended from the subscription tier). Empty until then; template default
+# stays "sonnet" and is only overwritten post-mint when this is set.
+DOGANY_MODEL="${DOGANY_MODEL:-}"      # sonnet | opus
 
 DRY_RUN=0
 # In --dry-run, all filesystem writes are redirected under this temp dir and no
@@ -89,11 +96,22 @@ hr() { printf '%s\n' "----------------------------------------------------------
 #     This covers the "pre-creation" path (install to a not-yet-existing dir).
 canon_path() {
   local p="$1"
+  # Expand a literal quoted tilde ("~/x" arrives verbatim when quoted).
+  case "$p" in "~/"*) p="$HOME/${p#\~/}" ;; "~") p="$HOME" ;; esac
+  # Relative paths anchor at the caller's cwd (a relative --root under a
+  # TCC-gated cwd must still resolve into the gated tree).
+  case "$p" in /*) : ;; *) p="$PWD/$p" ;; esac
   if [ -d "$p" ]; then
-    (cd "$p" && pwd)
+    (cd "$p" && pwd -P)   # physical: resolves symlinks and case (APFS)
   else
-    # Strip trailing slash(es), collapse repeated slashes, remove /./
-    printf '%s' "$p" \
+    # Not yet created: physically resolve the deepest existing ancestor,
+    # then re-append the tail.
+    local dir="$p" tail=""
+    while [ ! -d "$dir" ] && [ "$dir" != "/" ]; do
+      tail="/$(basename "$dir")$tail"
+      dir="$(dirname "$dir")"
+    done
+    printf '%s%s' "$(cd "$dir" && pwd -P)" "$tail" \
       | sed -E 's|/+$||; s|/+|/|g; s|/\./|/|g'
   fi
 }
@@ -196,6 +214,19 @@ trap 'on_error $LINENO' ERR
 # ---------------------------------------------------------------------------
 # 3. Small IO helpers
 # ---------------------------------------------------------------------------
+# Abort cleanly when an interactive prompt hits stdin EOF (e.g. piped input ran
+# out). Looping forever on a dead stdin reprints the prompt endlessly; instead
+# print a clear message and exit. NOT called in dry-run (which never reads).
+abort_on_eof() {
+  hr >&2
+  msg "[에러] 입력이 예기치 않게 끝났습니다 (stdin EOF). 설치를 중단합니다." \
+      "[ERROR] Input ended unexpectedly (stdin EOF). Aborting install." >&2
+  msg "설치 마법사는 대화형 입력이 필요합니다. 터미널에서 직접 실행하세요." \
+      "The install wizard needs interactive input. Run it directly in a terminal." >&2
+  hr >&2
+  exit 1
+}
+
 # ask VAR "ko prompt" "en prompt" [default]  -- reads a line into VAR.
 # In dry-run, if VAR is already set (from env/args), keep it and echo the mock.
 ask() {
@@ -211,7 +242,9 @@ ask() {
   fi
   msgn "$ko" "$en"
   local reply
-  IFS= read -r reply || reply=""
+  # read fails (nonzero) only on EOF, not on an empty line -> abort on EOF so a
+  # dead/exhausted stdin never loops the caller forever.
+  IFS= read -r reply || abort_on_eof
   if [ -z "$reply" ] && [ -n "$def" ]; then reply="$def"; fi
   eval "$__var=\$reply"
 }
@@ -232,7 +265,7 @@ ask_secret() {
   local reply
   # -s: silent (no echo while typing). read has no trailing newline in -s mode,
   # so print one explicitly after the (invisible) input finishes.
-  IFS= read -rs reply || reply=""
+  IFS= read -rs reply || { printf '\n'; abort_on_eof; }
   printf '\n'
   eval "$__var=\$reply"
 }
@@ -246,7 +279,7 @@ confirm() {
     [ "$def" = "y" ]; return
   fi
   msgn "$ko " "$en "; printf '%s ' "$hint"
-  IFS= read -r reply || reply=""
+  IFS= read -r reply || abort_on_eof
   reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
   [ -z "$reply" ] && reply="$def"
   case "$reply" in y|yes|예|ㅇ) return 0 ;; *) return 1 ;; esac
@@ -281,6 +314,41 @@ detect_os() {
     Linux)  OS_KIND="linux" ;;
     *) msg "지원되지 않는 OS 입니다: $(uname -s)" "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
   esac
+}
+
+# macOS TCC guard: launchd background services (and their child processes) run
+# under a context that CANNOT read TCC-gated folders -- ~/Documents, ~/Desktop,
+# ~/Downloads -- without an interactive "Operation not permitted" that a headless
+# service can never satisfy. An install rooted there yields a dead bot on first
+# boot. HARD refuse (a warned-past user still hits the dead bot). Linux: no-op.
+# Checks the resolved INSTALL_ROOT (which for the default in-repo mint is the
+# repo path itself, so a repo cloned under ~/Documents is caught too).
+tcc_guard() {
+  [ "$OS_KIND" = "macos" ] || return 0
+  local root_canon home_canon root_lc gated_lc
+  root_canon="$(canon_path "$INSTALL_ROOT")"
+  home_canon="$(cd "$HOME" && pwd -P)"
+  # Case-insensitive compare (APFS default is case-insensitive).
+  root_lc="$(printf '%s' "$root_canon" | tr '[:upper:]' '[:lower:]')"
+  local gated
+  for gated in "$home_canon/Documents" "$home_canon/Desktop" "$home_canon/Downloads"; do
+    gated_lc="$(printf '%s' "$gated" | tr '[:upper:]' '[:lower:]')"
+    case "$root_lc/" in
+      "$gated_lc"/*)
+        hr >&2
+        msg "[에러] 설치 경로가 macOS 보호 폴더 안에 있습니다: $root_canon" \
+            "[ERROR] Install path is inside a macOS protected folder: $root_canon" >&2
+        msg "launchd 백그라운드 서비스는 문서/데스크탑/다운로드 폴더(TCC 보호)를 읽을 수 없어" \
+            "launchd background services cannot read the Documents/Desktop/Downloads folders (TCC-gated)," >&2
+        msg "봇이 부팅 직후 'Operation not permitted' 로 죽습니다." \
+            "so the bot would die on boot with 'Operation not permitted'." >&2
+        msg "홈 디렉토리($HOME) 바로 아래나 일반 폴더에 클론/설치한 뒤 다시 실행하세요." \
+            "Clone/install directly under your home ($HOME) or another plain directory, then re-run." >&2
+        hr >&2
+        exit 1
+        ;;
+    esac
+  done
 }
 
 detect_lang() {
@@ -474,6 +542,11 @@ step_language() {
   hr
   msg "[1/10] 언어" "[1/10] Language"
   hr
+  # --lang was passed explicitly -> the user already decided; skip the confirm.
+  if [ "$LANG_FORCED" = "1" ]; then
+    msg "언어: 한국어 (--lang)" "Language: English (--lang)"
+    return 0
+  fi
   # detect_lang already ran; show detected, let user switch.
   if [ "$DOGANY_LANG" = "ko" ]; then
     msg "감지된 언어: 한국어" "Detected language: Korean"
@@ -505,6 +578,55 @@ PYEOF
   fi
   [ -f "/usr/share/zoneinfo/$tz" ] && return 0
   return 0  # no validator available -> accept
+}
+
+# Resolve the SYSTEM local timezone -- the clock launchd/systemd actually fire
+# on. This is independent of the user's chosen DOGANY_TZ (e.g. a UTC server with
+# a user in Asia/Seoul). Best-effort; empty -> caller treats as "same as chosen"
+# (no conversion, the safe common case).
+system_tz() {
+  local tz=""
+  if [ -L /etc/localtime ]; then
+    tz="$(readlink /etc/localtime 2>/dev/null | sed -E 's#.*/zoneinfo/##')"
+  fi
+  if [ -z "$tz" ] && [ "$OS_KIND" = "linux" ]; then
+    command -v timedatectl >/dev/null 2>&1 && \
+      tz="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+    [ -z "$tz" ] && [ -r /etc/timezone ] && tz="$(cat /etc/timezone 2>/dev/null || true)"
+  fi
+  printf '%s' "$tz"
+}
+
+# Convert a user-local HH:MM (in $DOGANY_TZ) to the equivalent HH:MM on the
+# SYSTEM clock (system_tz). launchd StartCalendarInterval / systemd OnCalendar
+# fire on the system clock, so a routine the user wants at 04:30 Asia/Seoul must
+# be stamped as 19:30 on a UTC host. Prints "HH MM" (space-separated, zero-padded
+# hour/minute as integers without leading zeros for arithmetic safety -> we emit
+# plain integers). Uses python3 zoneinfo with TODAY's offset.
+# NOTE (DST caveat, acceptable for v1.0.1): the offset is computed for today; a
+# zone that changes offset across DST will drift by an hour for part of the year.
+# If system TZ == chosen TZ (or either is unresolved) -> echoes the input
+# unchanged (zero behavior change in the common case).
+convert_routine_time() {
+  local hh="$1" mm="$2" user_tz="$3" sys_tz="$4"
+  # No conversion when either side is unknown or they match.
+  if [ -z "$user_tz" ] || [ -z "$sys_tz" ] || [ "$user_tz" = "$sys_tz" ]; then
+    printf '%s %s' "$hh" "$mm"; return 0
+  fi
+  command -v python3 >/dev/null 2>&1 || { printf '%s %s' "$hh" "$mm"; return 0; }
+  python3 - "$hh" "$mm" "$user_tz" "$sys_tz" <<'PYEOF' 2>/dev/null || printf '%s %s' "$hh" "$mm"
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+hh, mm, user_tz, sys_tz = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
+try:
+    today = datetime.now(ZoneInfo(user_tz)).date()
+    local = datetime(today.year, today.month, today.day, hh, mm, tzinfo=ZoneInfo(user_tz))
+    on_sys = local.astimezone(ZoneInfo(sys_tz))
+    print("%d %d" % (on_sys.hour, on_sys.minute))
+except Exception:
+    print("%d %d" % (hh, mm))
+PYEOF
 }
 
 step_timezone() {
@@ -552,6 +674,253 @@ step_dependencies() {
   else
     msg "  -> 핵심 전용 설치 (--core-only)" "  -> core-only install (--core-only)"
   fi
+
+  # Optional semantic-memory embedding backend (Ollama + bge-m3).
+  step_embedding
+}
+
+# Total system RAM in GB (integer, floor). macOS: sysctl hw.memsize (bytes).
+# Linux: /proc/meminfo MemTotal (kB). Unknown -> empty string.
+# Prints RAM in kB (empty if undetectable). Always returns 0 (fail-open:
+# a detection failure must never kill the install under set -e).
+system_ram_kb() {
+  local bytes="" kb=""
+  if [ "$OS_KIND" = "macos" ]; then
+    bytes="$(sysctl -n hw.memsize 2>/dev/null || true)"
+    [ -n "$bytes" ] && printf '%s' "$((bytes / 1024))"
+  else
+    kb="$(grep -E '^MemTotal:' /proc/meminfo 2>/dev/null | awk '{print $2}' || true)"
+    [ -n "$kb" ] && printf '%s' "$kb"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Step 4b: optional embedding backend (semantic memory)
+# ---------------------------------------------------------------------------
+# Semantic (cross-lingual) memory recall needs a local embedding model: Ollama
+# running bge-m3 (~1.2GB). Fully optional -- without it the agent falls back to
+# keyword recall. ALL failures fail-open (warn + continue install). Dry-run only
+# prints decisions.
+step_embedding() {
+  hr
+  msg "  [4b] 시맨틱 메모리 임베딩 (선택: Ollama + bge-m3, ~1.2GB)" \
+      "  [4b] Semantic memory embedding (optional: Ollama + bge-m3, ~1.2GB)"
+  hr
+
+  local have_ollama=0
+  command -v ollama >/dev/null 2>&1 && have_ollama=1
+
+  # Already installed AND model present -> nothing to do.
+  if [ "$have_ollama" = "1" ] && ollama list 2>/dev/null | grep -qi 'bge-m3'; then
+    msg "  [OK] Ollama + bge-m3 이미 설치됨 -> 시맨틱 메모리 사용 가능." \
+        "  [OK] Ollama + bge-m3 already present -> semantic memory available."
+    return 0
+  fi
+
+  # Recommend by RAM: 16GB-class or more -> default YES, else default NO.
+  # Threshold in kB (15,000,000 kB): real 16GB Linux reports ~16.2M kB minus
+  # kernel-reserved memory, so a GB floor would misclassify it as 15GB.
+  local ram_kb; ram_kb="$(system_ram_kb || true)"
+  local ram_disp="?"
+  [ -n "$ram_kb" ] && ram_disp="$((ram_kb / 1024 / 1024))"
+  local def="n"
+  if [ -n "$ram_kb" ] && [ "$ram_kb" -ge 15000000 ]; then
+    def="y"
+    msg "  감지된 RAM: ${ram_disp}GB급 (16GB 이상) -> 임베딩 설치 권장." \
+        "  Detected RAM: ${ram_disp}GB class (16GB+) -> installing embeddings is recommended."
+  else
+    def="n"
+    msg "  감지된 RAM: ${ram_disp}GB (16GB 미만/불명) -> 키워드 검색만으로도 동작합니다. 나중에 언제든 추가 가능." \
+        "  Detected RAM: ${ram_disp}GB (<16GB or unknown) -> keyword-only recall works; add later anytime."
+  fi
+
+  if ! confirm "지금 Ollama + bge-m3 를 설치할까요?" "Install Ollama + bge-m3 now?" "$def"; then
+    msg "  임베딩을 건너뜁니다. 키워드 검색으로 동작하며, 나중에 언제든 추가할 수 있습니다." \
+        "  Skipping embeddings. Keyword recall works; you can add this anytime later."
+    return 0
+  fi
+
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "  [dry-run] ollama 설치/서버기동/'ollama pull bge-m3' 를 수행할 예정 (실제 실행 안 함)." \
+        "  [dry-run] Would install ollama / start server / run 'ollama pull bge-m3' (not executed)."
+    return 0
+  fi
+
+  # Install ollama if missing. macOS: brew if available, else print manual URL and
+  # skip. Linux: print the official curl command but NEVER auto-run curl|sh.
+  if [ "$have_ollama" = "0" ]; then
+    if [ "$OS_KIND" = "macos" ]; then
+      if command -v brew >/dev/null 2>&1; then
+        msg "  Ollama 설치 중 (brew)..." "  Installing Ollama (brew)..."
+        if ! brew install ollama >/dev/null 2>&1; then
+          msg "  [경고] brew 로 Ollama 설치 실패. 수동 설치: https://ollama.com/download . 키워드 검색으로 계속합니다." \
+              "  [WARN] brew failed to install Ollama. Install manually: https://ollama.com/download . Continuing with keyword recall." >&2
+          return 0
+        fi
+      else
+        msg "  [주의] Homebrew 가 없습니다. https://ollama.com/download 에서 수동 설치 후 다시 시도하세요. 지금은 키워드 검색으로 계속합니다." \
+            "  [NOTE] Homebrew not found. Install manually from https://ollama.com/download and re-run. Continuing with keyword recall for now." >&2
+        return 0
+      fi
+    else
+      # Linux: security posture -- do NOT pipe curl to sh automatically.
+      msg "  [주의] Ollama 자동 설치는 하지 않습니다(보안). 아래 공식 명령을 직접 실행한 뒤 다시 시도하세요:" \
+          "  [NOTE] Not auto-installing Ollama (security). Run the official command below yourself, then re-run:" >&2
+      printf '    curl -fsSL https://ollama.com/install.sh | sh\n' >&2
+      msg "  지금은 키워드 검색으로 계속합니다." "  Continuing with keyword recall for now." >&2
+      return 0
+    fi
+    have_ollama=1
+  fi
+
+  # Ensure the server is running (least-invasive headless start).
+  if ! ollama list >/dev/null 2>&1; then
+    if [ "$OS_KIND" = "macos" ] && command -v brew >/dev/null 2>&1 \
+       && brew services list 2>/dev/null | grep -qi '^ollama'; then
+      brew services start ollama >/dev/null 2>&1 || true
+    else
+      # Headless background server; detach and give it a moment to bind.
+      nohup ollama serve >/dev/null 2>&1 &
+    fi
+    local waited=0
+    while ! ollama list >/dev/null 2>&1; do
+      sleep 1; waited=$((waited + 1))
+      [ "$waited" -ge 10 ] && break
+    done
+  fi
+
+  if ! ollama list >/dev/null 2>&1; then
+    msg "  [경고] Ollama 서버를 시작하지 못했습니다. 키워드 검색으로 계속합니다." \
+        "  [WARN] Could not start the Ollama server. Continuing with keyword recall." >&2
+    return 0
+  fi
+
+  msg "  bge-m3 모델을 내려받습니다 (~1.2GB, 시간이 걸릴 수 있습니다)..." \
+      "  Pulling bge-m3 (~1.2GB, this can take a while)..."
+  if ollama pull bge-m3 >/dev/null 2>&1; then
+    msg "  [OK] bge-m3 준비 완료 -> 시맨틱 메모리 사용 가능." \
+        "  [OK] bge-m3 ready -> semantic memory available."
+  else
+    msg "  [경고] bge-m3 다운로드 실패. 키워드 검색으로 계속합니다. 나중에  ollama pull bge-m3  로 재시도하세요." \
+        "  [WARN] Failed to pull bge-m3. Continuing with keyword recall; retry later with  ollama pull bge-m3 ." >&2
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Step 3b: model recommendation (subscription-tier based)
+# ---------------------------------------------------------------------------
+# Read ONLY organizationRateLimitTier + organizationType from ~/.claude.json and
+# map to a recommended model. PRIVACY: this helper reads NOTHING else from that
+# file -- never email, names, uuids or any other oauth field -- and echoes only
+# the single word "opus" or "sonnet" (or nothing on failure). Never log the tier
+# string itself (it is low-sensitivity but out of caution we print only the
+# derived model). "max" tier -> opus; pro / unknown / missing file -> sonnet.
+recommend_model() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$HOME/.claude.json" <<'PYEOF'
+import sys, json
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+    oa = data.get("oauthAccount") or {}
+    # Read ONLY these two fields. Do not touch any other key (PII).
+    tier = str(oa.get("organizationRateLimitTier") or "").lower()
+    otype = str(oa.get("organizationType") or "").lower()
+    if "max" in tier or "max" in otype:
+        print("opus")
+    else:
+        print("sonnet")
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+step_model() {
+  hr
+  msg "[3b/10] 모델 추천" "[3b/10] Model recommendation"
+  hr
+
+  # If a model was preset via env (dry-run/testing), honor it and skip detection.
+  if [ -n "$DOGANY_MODEL" ]; then
+    msg "모델(사전 설정): $DOGANY_MODEL" "Model (preset): $DOGANY_MODEL"
+    return 0
+  fi
+
+  local rec=""
+  rec="$(recommend_model 2>/dev/null || true)"
+
+  if [ -z "$rec" ]; then
+    # Detection failed (no python3 / no file / parse error) -> ask plainly.
+    msg "구독 등급을 확인하지 못했습니다. 사용할 모델을 선택하세요:" \
+        "Could not detect your subscription tier. Choose a model:"
+    msg "  1) sonnet (기본, 빠르고 경제적)" "  1) sonnet (default, fast and economical)"
+    msg "  2) opus   (더 강력한 추론, 더 느림/비쌈)" "  2) opus   (stronger reasoning, slower/costlier)"
+    local choice=""
+    ask choice "번호 선택 [1]: " "Pick a number [1]: " "1"
+    case "$choice" in
+      2|opus) DOGANY_MODEL="opus" ;;
+      *)      DOGANY_MODEL="sonnet" ;;
+    esac
+    msg "모델: $DOGANY_MODEL" "Model: $DOGANY_MODEL"
+    return 0
+  fi
+
+  # Recommendation available. Show it; the default answer keeps the recommended
+  # model, but the user can switch explicitly.
+  if [ "$rec" = "opus" ]; then
+    msg "구독 등급 기준 추천 모델: opus (강력한 추론)." \
+        "Recommended model for your subscription: opus (stronger reasoning)."
+    if confirm "opus 로 설정할까요? (n = sonnet)" "Use opus? (n = sonnet)" "y"; then
+      DOGANY_MODEL="opus"
+    else
+      DOGANY_MODEL="sonnet"
+    fi
+  else
+    msg "구독 등급 기준 추천 모델: sonnet (빠르고 경제적)." \
+        "Recommended model for your subscription: sonnet (fast and economical)."
+    if confirm "sonnet 으로 설정할까요? (n = opus)" "Use sonnet? (n = opus)" "y"; then
+      DOGANY_MODEL="sonnet"
+    else
+      DOGANY_MODEL="opus"
+    fi
+  fi
+  msg "모델: $DOGANY_MODEL" "Model: $DOGANY_MODEL"
+}
+
+# Write the chosen model into the minted instance's .claude/settings.json using
+# a python3 JSON round-trip (never sed -- settings.json is real JSON). No-op if
+# no model was chosen or the file is missing. Dry-run: print what would happen.
+write_instance_model() {
+  local root="$1" model="$2"
+  [ -n "$model" ] || return 0
+  local settings="$root/.claude/settings.json"
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "[dry-run] settings.json model 필드에 '$model' 기록 예정: $settings" \
+        "[dry-run] Would write model '$model' into settings.json: $settings"
+    return 0
+  fi
+  [ -f "$settings" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  if python3 - "$settings" "$model" <<'PYEOF'
+import sys, json
+path, model = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    data["model"] = model
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+except Exception:
+    sys.exit(1)
+PYEOF
+  then
+    msg "모델 설정: $model ($settings)" "Model set: $model ($settings)"
+  else
+    msg "[경고] settings.json 에 모델을 기록하지 못했습니다(파일 손상?). 수동 확인: $settings" \
+        "[warn] Could not write model into settings.json (malformed?). Check manually: $settings"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -571,7 +940,8 @@ step_bot_token() {
   msg "  3) BotFather 가 보낸 답장 전체를 그대로 여기에 붙여넣으세요 -- 토큰만 자동으로 추출합니다." \
       "  3) Paste BotFather's WHOLE reply here -- we auto-extract just the token."
 
-  # --- token ---
+  # --- token (capped retries: give up after 5 failed attempts) ---
+  local token_tries=0
   while :; do
     local blob=""
     ask blob "BotFather 메시지 붙여넣기: " "Paste BotFather message: " \
@@ -585,6 +955,12 @@ step_bot_token() {
       msg "토큰을 찾지 못했습니다. 다시 붙여넣어 주세요." \
           "No token found. Please paste again."
       [ "$DRY_RUN" = "1" ] && break
+    fi
+    token_tries=$((token_tries + 1))
+    if [ "$token_tries" -ge 5 ]; then
+      msg "[에러] 5회 시도 후에도 유효한 토큰을 받지 못했습니다. 설치를 중단합니다." \
+          "[ERROR] No valid token after 5 attempts. Aborting install." >&2
+      exit 1
     fi
   done
 
@@ -630,7 +1006,7 @@ lookup_bot_name() {
   command -v curl >/dev/null 2>&1 || return 0
   local resp uname
   resp="$(curl -fsS --max-time 8 "https://api.telegram.org/bot${BOT_TOKEN}/getMe" 2>/dev/null || true)"
-  uname="$(printf '%s' "$resp" | grep -oE '"username":"[^"]+"' | head -n1 | sed -E 's/.*:"([^"]+)"/\1/')"
+  uname="$(printf '%s' "$resp" | grep -oE '"username":"[^"]+"' | head -n1 | sed -E 's/.*:"([^"]+)"/\1/' || true)"
   [ -n "$uname" ] && BOT_NAME="$uname"
 }
 
@@ -754,6 +1130,8 @@ step_mint_and_env() {
     render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
                "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" > "$env_file"
     chmod 600 "$env_file" 2>/dev/null || true
+    # Show the model write that a real run would perform into settings.json.
+    write_instance_model "$target" "$DOGANY_MODEL"
     return 0
   fi
 
@@ -769,6 +1147,8 @@ step_mint_and_env() {
                  "Existing config found: $env_file . Overwrite? (backed up)" "n"; then
       msg "기존 설정을 유지합니다. mint 는 건너뜁니다." \
           "Keeping existing config. Skipping mint."
+      # Still honor the model the wizard just confirmed (reconfigure flow).
+      write_instance_model "$target" "$DOGANY_MODEL"
       return 0
     fi
     backup="${env_file}.bak.$(date +%Y%m%d-%H%M%S)"
@@ -798,6 +1178,10 @@ step_mint_and_env() {
   chmod 600 "$tmp_env"
   mv -f "$tmp_env" "$env_file"
   msg "설정 파일 작성 완료: $env_file" "Wrote config: $env_file"
+
+  # 7c) write the chosen model into the minted instance's .claude/settings.json
+  #     (template default is "sonnet"; overwrite only when a model was chosen).
+  write_instance_model "$target" "$DOGANY_MODEL"
 
   # Record this install root as the single Lite instance.
   write_lite_marker "$target"
@@ -835,6 +1219,30 @@ step_service() {
   fi
 }
 
+# Read the launchd Label from a plist. The registered service name is the plist's
+# <key>Label</key> value, which does NOT always equal the FILENAME (basename
+# minus .plist). Verifying against the filename is a false-negative bug -- e.g.
+# a file named com.telegram-skill-bot.<name>.newbridge.plist whose Label key is
+# com.telegram-skill-bot.<name>. Prefer plutil (ships on macOS), then PlistBuddy,
+# then a grep fallback. Empty output -> caller falls back to the filename.
+plist_label() {
+  local plist="$1" label=""
+  [ -f "$plist" ] || return 0
+  if command -v plutil >/dev/null 2>&1; then
+    label="$(plutil -extract Label raw -o - "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ] && [ -x /usr/libexec/PlistBuddy ]; then
+    label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ]; then
+    # Fallback: the <string> line immediately after the <key>Label</key> line.
+    label="$(grep -A1 '<key>Label</key>' "$plist" 2>/dev/null \
+             | grep '<string>' | head -n1 \
+             | sed -E 's#.*<string>(.*)</string>.*#\1#')"
+  fi
+  printf '%s' "$label"
+}
+
 install_launchd() {
   local manual_cmd="$1"
   local src plist_name dest label
@@ -855,7 +1263,11 @@ install_launchd() {
     return 0
   fi
   plist_name="$(basename "$src")"
-  label="$(basename "$plist_name" .plist)"
+  # Verify against the plist's real Label key, not the filename (they differ:
+  # file *.newbridge.plist vs Label com.telegram-skill-bot.<name>). Filename is
+  # only a fallback when the Label cannot be read.
+  label="$(plist_label "$src")"
+  [ -n "$label" ] || label="$(basename "$plist_name" .plist)"
   dest="$HOME/Library/LaunchAgents/$plist_name"
 
   if [ "$DRY_RUN" = "1" ]; then
@@ -1005,11 +1417,63 @@ step_routines() {
   fi
 }
 
+# Convert a copied routine plist's StartCalendarInterval (Hour/Minute) from the
+# user's chosen TZ to the system clock, in place. No-op when TZs match / unknown
+# or the plist has no StartCalendarInterval. Prints a one-line notice on change.
+# Args: <plist-path> <label> <sys_tz>. Uses python3 to read/rewrite the plist.
+convert_plist_time() {
+  local plist="$1" label="$2" sys_tz="$3"
+  [ -f "$plist" ] || return 0
+  [ -n "$DOGANY_TZ" ] && [ -n "$sys_tz" ] && [ "$DOGANY_TZ" != "$sys_tz" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  # Read the current Hour/Minute out of the plist (integers under
+  # StartCalendarInterval). plutil raw extract is the portable reader on macOS.
+  local hh mm
+  hh="$(plutil -extract StartCalendarInterval.Hour raw -o - "$plist" 2>/dev/null || true)"
+  mm="$(plutil -extract StartCalendarInterval.Minute raw -o - "$plist" 2>/dev/null || true)"
+  [ -n "$hh" ] && [ -n "$mm" ] || return 0
+  local conv new_hh new_mm
+  conv="$(convert_routine_time "$hh" "$mm" "$DOGANY_TZ" "$sys_tz")"
+  new_hh="${conv% *}"; new_mm="${conv#* }"
+  if [ "$new_hh" = "$hh" ] && [ "$new_mm" = "$mm" ]; then
+    return 0
+  fi
+  plutil -replace StartCalendarInterval.Hour -integer "$new_hh" "$plist" 2>/dev/null || return 0
+  plutil -replace StartCalendarInterval.Minute -integer "$new_mm" "$plist" 2>/dev/null || return 0
+  msg "    시간 변환: $(printf '%02d:%02d' "$hh" "$mm") ($DOGANY_TZ) -> $(printf '%02d:%02d' "$new_hh" "$new_mm") 시스템 시각 ($sys_tz)" \
+      "    Time convert: $(printf '%02d:%02d' "$hh" "$mm") ($DOGANY_TZ) -> $(printf '%02d:%02d' "$new_hh" "$new_mm") system time ($sys_tz)"
+}
+
+# Convert a systemd OnCalendar spec "*-*-* HH:MM:SS" from the user's chosen TZ to
+# the system clock. Echoes the (possibly rewritten) spec. No-op when TZs match /
+# unknown or the spec has no parseable HH:MM. systemd timers fire on the system
+# clock, so the same conversion as the launchd path applies.
+convert_oncalendar() {
+  local spec="$1" sys_tz="$2"
+  if [ -z "$DOGANY_TZ" ] || [ -z "$sys_tz" ] || [ "$DOGANY_TZ" = "$sys_tz" ]; then
+    printf '%s' "$spec"; return 0
+  fi
+  # Extract HH:MM from the time field (last space-separated token "HH:MM:SS").
+  local timefield hh mm rest
+  timefield="${spec##* }"          # e.g. 04:30:00
+  hh="${timefield%%:*}"            # 04
+  rest="${timefield#*:}"           # 30:00
+  mm="${rest%%:*}"                 # 30
+  case "$hh" in ''|*[!0-9]*) printf '%s' "$spec"; return 0 ;; esac
+  case "$mm" in ''|*[!0-9]*) printf '%s' "$spec"; return 0 ;; esac
+  local conv new_hh new_mm
+  conv="$(convert_routine_time "$((10#$hh))" "$((10#$mm))" "$DOGANY_TZ" "$sys_tz")"
+  new_hh="${conv% *}"; new_mm="${conv#* }"
+  # Rebuild "*-*-* HH:MM:00" (seconds forced to 00, matching the source table).
+  printf '*-*-* %02d:%02d:00' "$new_hh" "$new_mm"
+}
+
 # --- macOS: load each minted routine plist, verify via launchctl print/list ---
 schedule_routines_launchd() {
   local uid; uid="$(id -u)"
   local plist_dir; plist_dir="$INSTALL_ROOT/routines"
   local la_dir="$HOME/Library/LaunchAgents"
+  local sys_tz; sys_tz="$(system_tz)"
 
   if [ "$DRY_RUN" = "1" ]; then
     # In dry-run there is no minted instance; show the template routine plists.
@@ -1033,12 +1497,19 @@ schedule_routines_launchd() {
     any=1
     local name dest label
     name="$(basename "$p")"
-    label="$(basename "$name" .plist)"
+    # Verify against the plist's real Label key (see plist_label); the routine
+    # filenames happen to match today, but reading the Label is correct and
+    # future-proofs against a filename/Label divergence.
+    label="$(plist_label "$p")"
+    [ -n "$label" ] || label="$(basename "$name" .plist)"
     dest="$la_dir/$name"
     if [ -f "$dest" ]; then
       cp -p "$dest" "${dest}.bak.$(date +%Y%m%d-%H%M%S)"
     fi
     cp -p "$p" "$dest"
+    # Convert the routine's user-local time to the system clock IN the copied
+    # plist before loading it (launchd fires on the system clock).
+    convert_plist_time "$dest" "$label" "$sys_tz"
     # bootstrap (modern) with load fallback; errors swallowed -- truth via print.
     launchctl bootstrap "gui/$uid" "$dest" 2>/dev/null \
       || launchctl load "$dest" 2>/dev/null || true
@@ -1087,6 +1558,7 @@ schedule_routines_systemd() {
   fi
 
   mkdir -p "$unit_dir"
+  local sys_tz; sys_tz="$(system_tz)"
   # Read the table into a plain string first: the while-read loop that generates
   # units must run in THIS shell (not a subshell) so counters survive; feed it
   # via a here-string, not a pipe.
@@ -1095,6 +1567,14 @@ schedule_routines_systemd() {
   while IFS="$(printf '\t')" read -r rn rs rc; do
     [ -n "$rn" ] || continue
     any=1
+    # Convert the OnCalendar time from the user's TZ to the system clock (systemd
+    # timers fire on the system clock). No-op when TZs match.
+    local rc_conv; rc_conv="$(convert_oncalendar "$rc" "$sys_tz")"
+    if [ "$rc_conv" != "$rc" ]; then
+      msg "  시간 변환: $rc ($DOGANY_TZ) -> $rc_conv 시스템 시각 ($sys_tz)" \
+          "  Time convert: $rc ($DOGANY_TZ) -> $rc_conv system time ($sys_tz)"
+      rc="$rc_conv"
+    fi
     local svc="$unit_dir/dogany-$rn.service"
     local tmr="$unit_dir/dogany-$rn.timer"
     # service: oneshot that runs the routine script once when the timer fires.
@@ -1132,6 +1612,8 @@ TMR
   # enable + verify each timer. enable swallows errors; truth via is-enabled.
   while IFS="$(printf '\t')" read -r rn rs rc; do
     [ -n "$rn" ] || continue
+    # Report the system-clock time actually written into the timer.
+    rc="$(convert_oncalendar "$rc" "$sys_tz")"
     systemctl --user enable --now "dogany-$rn.timer" 2>/dev/null || true
     if systemctl --user is-enabled --quiet "dogany-$rn.timer" 2>/dev/null \
        || systemctl --user is-active --quiet "dogany-$rn.timer" 2>/dev/null; then
@@ -1218,7 +1700,9 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    --lang) DOGANY_LANG="$2"; shift 2 ;;
+    --lang)
+      case "$2" in ko|en) : ;; *) echo "invalid --lang: $2 (ko|en)" >&2; exit 1 ;; esac
+      DOGANY_LANG="$2"; LANG_FORCED=1; shift 2 ;;
     --root) INSTALL_ROOT="$2"; shift 2 ;;
     --name) AGENT_NAME="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -1231,6 +1715,9 @@ done
 # ---------------------------------------------------------------------------
 main() {
   detect_os
+  # TCC guard runs right after OS detection, before any interactive work, so a
+  # doomed install location is refused immediately (not after the whole wizard).
+  tcc_guard
   detect_lang
   detect_tz
 
@@ -1246,6 +1733,7 @@ main() {
   step_language
   step_timezone
   check_prereqs
+  step_model
   step_dependencies
   step_bot_token
   step_email_connect

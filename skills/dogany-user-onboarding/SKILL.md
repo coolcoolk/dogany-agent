@@ -40,13 +40,13 @@ tone when asking: clean and polite, short. no preamble or filler — greeting + 
 
 ### on answer received (fill own AGENT.md directly)
 fill received answers into the corresponding fields in own AGENT.md. five fields:
-- Identity `Name` (the `__AGENT_NAME__` slot; also the top `You are ... "__AGENT_NAME__"` line)
+- Identity `Name` (the `__AGENT_NAME__` slot)
 - Identity `Emoji` (the `(set at onboarding)` slot)
 - Relationship `Call the user` address term (the Call-the-user line)
 - Relationship `Tone` (the `(set at onboarding)` slot)
 - Relationship `Humor` (the `(set at onboarding)` slot)
 
-(also fill name in the `You are ... "__AGENT_NAME__"` line at top of AGENT.md. The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above.)
+(The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above.)
 
 all five filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
 

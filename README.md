@@ -195,6 +195,23 @@ reusing your personal one -- isolation from personal data and a clean agent
 identity for email and integrations. Connecting that account (email send, etc.)
 is an optional, opt-in step during install (you can skip it and add it later).
 
+## Talk to it locally (no Telegram needed)
+
+The agent is the folder, not the bot. Telegram is just one door; a terminal
+session in the instance directory is the SAME agent -- same identity, memory,
+hooks, and skills:
+
+    cd agents/main && claude
+
+Telegram and CLI conversations are separate threads but share one long-term
+memory: the nightly consolidate pass reads both, so tomorrow's Telegram chat
+remembers today's terminal session. Running both at once is safe.
+
+Tip for laptops: the agent runs only while the machine is awake. Keep it on
+AC power and disable system sleep (macOS: System Settings > Displays >
+Advanced > "Prevent automatic sleeping on power adapter", or
+`sudo pmset -c sleep 0`; display sleep is fine).
+
 ## Data and privacy
 
 - The bot is owner-locked: during install you specify an owner Telegram id (or
