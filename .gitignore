@@ -10,6 +10,9 @@ agents/main/
 **/runtime/
 **/logs/
 **/sessions.json
+# instance .claude runtime state (hook markers / one-shot sentinels; never ship)
+**/.claude/.last-skill.json
+**/.claude/.token-gate-approved
 **/health*.json
 **/images/
 
