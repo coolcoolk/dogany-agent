@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-SessionStart hook: 직전 세션의 꼬리 몇 턴을 새 세션 컨텍스트로 주입한다.
-세션 간 연속성 복구용. __AGENT_LABEL__ 작업공간에서 호출.
+SessionStart hook: inject the last few turns of the previous session into the
+new session context. Restores continuity across sessions. Called from the
+__AGENT_LABEL__ workspace.
 
 stdin(JSON): {session_id, transcript_path, cwd, source, ...}
 stdout(JSON): {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": "..."}}
-출력 없음 = 주입 안 함(직전 세션 없음/대상 아님).
+No output = nothing injected (no previous session / not a target).
 """
 import sys, os, json, glob
 
-PAIRS = 4          # 직전 세션 마지막 user/assistant 쌍 개수
+PAIRS = 4          # number of trailing user/assistant pairs from the last session
 MAX_MSGS = PAIRS * 2
-CHAR_CAP = 1000    # 메시지당 길이 컷
+CHAR_CAP = 1000    # per-message length cap
 
 
 def text_of(message):
-    """user/assistant 메시지에서 순수 텍스트만. 툴/노이즈는 None."""
+    """Plain text only from a user/assistant message. Tool/noise blocks -> None."""
     c = message.get("content")
     if isinstance(c, str):
         return c.strip() or None
@@ -28,13 +29,13 @@ def text_of(message):
             continue
         if b.get("type") == "text":
             parts.append(b.get("text", ""))
-        # tool_use / tool_result / thinking 등은 스킵
+        # skip tool_use / tool_result / thinking blocks
     s = "\n".join(p for p in parts if p).strip()
     return s or None
 
 
 def turns_of(path):
-    """한 transcript 파일에서 user/assistant 텍스트 턴 목록을 시간순으로 뽑는다."""
+    """Pull the user/assistant text turns from one transcript file, in time order."""
     turns = []
     try:
         with open(path) as f:
@@ -52,13 +53,13 @@ def turns_of(path):
                 t = text_of(m)
                 if not t:
                     continue
-                # 명령/시스템 잡음 스킵
+                # skip command/system noise
                 low = t.lstrip()
                 if low.startswith("<") and ("command-name" in t or "task-notification" in t
                                             or "system-reminder" in t):
                     continue
                 if len(t) > CHAR_CAP:
-                    t = t[:CHAR_CAP] + " …(생략)"
+                    t = t[:CHAR_CAP] + " ...(truncated)"
                 turns.append((role, t))
     except Exception:
         return []
@@ -90,8 +91,8 @@ def main():
     if not files:
         return
 
-    # 직전 세션부터 mtime 역순으로 거슬러 올라가며 MAX_MSGS 만큼 채운다.
-    # 각 세션 안은 시간순. 합칠 때 오래된 세션이 위로 오도록 앞에 붙인다.
+    # Walk backwards from the most recent session (mtime desc) until MAX_MSGS is
+    # filled. Each session is in time order; prepend so older sessions come first.
     files.sort(key=os.path.getmtime, reverse=True)
     turns = []
     for path in files:
@@ -103,9 +104,10 @@ def main():
         return
     tail = turns[-MAX_MSGS:]
 
-    label = {"user": "__USER_LABEL__", "assistant": "나(직전세션)"}
-    lines = ["[세션 연속성] 직전 세션의 마지막 대화 꼬리입니다. "
-             "이어지는 작업이면 맥락으로 활용하되, __USER_LABEL__이 새 주제를 꺼내면 무시하세요.\n"]
+    label = {"user": "__USER_LABEL__", "assistant": "me (previous session)"}
+    lines = ["[session continuity] This is the tail of the previous session's "
+             "conversation. Use it as context if the work continues, but ignore "
+             "it if __USER_LABEL__ raises a new topic.\n"]
     for role, t in tail:
         lines.append(f"### {label.get(role, role)}\n{t}\n")
     ctx = "\n".join(lines)

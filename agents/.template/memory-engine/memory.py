@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-__AGENT_LABEL__ 장기기억 회상 코어 (memory.py)
+__AGENT_LABEL__ long-term memory recall core (memory.py)
 
-- 진실의 원천: ../memories/*.md (마크다운)
-- state.db: 언제든 `index`로 재생성 가능한 인덱스 (FTS5 trigram + bge-m3 임베딩 BLOB)
-- 하이브리드 검색: FTS5 키워드 순위 + 벡터 코사인 순위를 RRF로 융합
+- Source of truth: ../memories/*.md (markdown)
+- state.db: an index that can be rebuilt anytime with `index` (FTS5 trigram + bge-m3 embedding BLOB)
+- Hybrid search: fuse FTS5 keyword ranking + vector cosine ranking via RRF
 
-서브커맨드: index / search / stats
-임베딩: 로컬 Ollama bge-m3 (http://localhost:11434/api/embeddings)
-의존성: 표준 라이브러리만 사용 (numpy 없어도 순수 파이썬 코사인).
+Subcommands: index / search / stats
+Embedding: local Ollama bge-m3 (http://localhost:11434/api/embeddings)
+Dependencies: standard library only (pure-python cosine, no numpy needed).
 """
 
 import argparse
@@ -25,22 +25,23 @@ import time
 import urllib.error
 import urllib.request
 
-# ---- 경로 상수 ----
+# ---- path constants ----
 HERE = os.path.dirname(os.path.abspath(__file__))
 MEMORIES_DIR = os.path.normpath(os.path.join(HERE, "..", "memories"))
 DB_PATH = os.path.join(HERE, "state.db")
 
-# 검색 인덱싱 제외 파일. USER.md는 hot(@import로 CLAUDE.md에 상시주입)이라
-# 항상 머리에 있어 검색 인덱싱이 중복 → 제외. (2026-06-25)
+# Files excluded from search indexing. USER.md is hot (always injected into
+# CLAUDE.md via @import), so it is always in context -> indexing it is
+# redundant -> exclude. (2026-06-25)
 INDEX_EXCLUDE = {"USER.md"}
 
 OLLAMA_URL = "http://localhost:11434/api/embeddings"
 EMBED_MODEL = "bge-m3"
-EMBED_DIM = 1024  # bge-m3 출력 차원
+EMBED_DIM = 1024  # bge-m3 output dimension
 
-RRF_K = 60          # RRF 표준 상수
-MISS_THRESHOLD = 0.30  # top1 코사인이 이 값 미만이면 "미스"로 집계 (stats)
-TRANSCRIPT_FTS_TOPK = 3  # 당일 롤링 인덱스 검색에서 끼워넣을 최대 raw 대화 수
+RRF_K = 60          # standard RRF constant
+MISS_THRESHOLD = 0.30  # top1 cosine below this counts as a "miss" (stats)
+TRANSCRIPT_FTS_TOPK = 3  # max raw conversations to splice in from the same-day rolling index search
 
 
 # ======================================================================
@@ -115,24 +116,24 @@ def _marker_line(mode):
 
 
 # ======================================================================
-# 마크다운 파싱
+# markdown parsing
 # ======================================================================
 def _is_header(line):
-    """마크다운 헤더(#, ##, ###...) 여부."""
+    """Whether the line is a markdown header (#, ##, ###...)."""
     return bool(re.match(r"^#{1,6}\s+\S", line.strip()))
 
 
 def _header_text(line):
-    """헤더 라인에서 # 제거한 텍스트."""
+    """Text of a header line with the # removed."""
     return re.sub(r"^#{1,6}\s+", "", line.strip()).strip()
 
 
 def _clean(text):
-    """노트 본문 정리: 양끝 공백 제거, 빈 헤더-only 제거."""
+    """Clean note body: strip surrounding whitespace, drop empty header-only."""
     return text.strip()
 
 
-# 박스드로잉/도형 문자 (ASCII 다이어그램 노이즈). 검색 인덱싱 시점에만 제거.
+# Box-drawing / shape characters (ASCII diagram noise). Removed only at search-index time.
 _BOX_CHARS = set(
     "─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣"
     "┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋"
@@ -142,7 +143,7 @@ _BOX_CHARS = set(
 
 
 def _box_ratio(line):
-    """라인에서 (박스드로잉+공백) 문자가 차지하는 비율. 비어있으면 0."""
+    """Fraction of (box-drawing + space) characters in the line. 0 if empty."""
     stripped = line.strip()
     if not stripped:
         return 0.0
@@ -152,46 +153,46 @@ def _box_ratio(line):
 
 def denoise_for_index(text):
     """
-    인덱싱 시점 전용 노이즈 정제. 원본 .md 파일은 절대 건드리지 않는다.
-    - 코드펜스(```) 블록 통째 제거.
-    - 박스드로잉 문자 비율이 50% 넘는 라인 제거 (ASCII 박스 다이어그램).
-    텍스트 설명이 섞인 라인은 그대로 살린다 (박스만 빠짐).
-    반환: 정제된 텍스트(빈 문자열일 수 있음 → 호출부에서 스킵 판단).
+    Noise cleanup applied only at index time. Never touches the original .md file.
+    - Remove entire code-fence (```) blocks.
+    - Remove lines where box-drawing characters exceed 50% (ASCII box diagrams).
+    Lines mixed with text explanation are kept (only the box part goes).
+    Returns: cleaned text (may be empty -> caller decides to skip).
     """
     out = []
     in_fence = False
     for ln in text.splitlines():
         if ln.strip().startswith("```"):
             in_fence = not in_fence
-            continue  # 펜스 라인 자체도 버림
+            continue  # drop the fence line itself too
         if in_fence:
-            continue  # 코드펜스 내부 통째 제거
+            continue  # remove the entire inside of the code fence
         if _box_ratio(ln) > 0.5:
-            continue  # 박스 비율 50% 초과 라인 제거
+            continue  # remove lines over 50% box characters
         out.append(ln)
     return "\n".join(out).strip()
 
 
 def parse_markdown(path):
     """
-    하나의 md 파일을 노트 리스트로 파싱.
-    반환: [{"section": str, "text": str}, ...]
+    Parse one md file into a list of notes.
+    Returns: [{"section": str, "text": str}, ...]
 
-    규칙:
-    - 직전에 등장한 마크다운 헤더(아무 레벨)를 그 이후 노트들의 section 으로 사용.
-    - 파일에 '§' 구분자가 있으면: 헤더 라인을 제외한 본문을 '§' 기준으로 쪼개 각 블록을 노트로.
-    - '§'가 없으면(폴백): 헤더 사이 구간을 하나의 후보로 보되,
-      너무 길면 빈 줄 기준 문단으로 더 쪼갠다.
+    Rules:
+    - Use the most recent markdown header (any level) as the section for the notes that follow it.
+    - If the file has a '§' separator: split the body (excluding header lines) on '§', each block a note.
+    - If no '§' (fallback): treat the span between headers as one candidate, but
+      split it further into blank-line paragraphs if too long.
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
             raw = f.read()
     except OSError as e:
-        print(f"  [warn] 읽기 실패 {path}: {e}", file=sys.stderr)
+        print(f"  [warn] read failed {path}: {e}", file=sys.stderr)
         return []
 
     if not raw.strip():
-        return []  # 빈 파일 방어
+        return []  # guard against empty file
 
     lines = raw.splitlines()
     # M5: an explicit format marker wins over the § sniff. A human toggling one
@@ -208,7 +209,7 @@ def parse_markdown(path):
     current_section = ""
 
     if has_sep:
-        # § 기반 파싱: 헤더는 section 갱신, 나머지는 § 로 블록 분리
+        # §-based parsing: headers update the section, the rest is split into blocks by §
         buf = []
 
         def flush():
@@ -222,14 +223,14 @@ def parse_markdown(path):
             if s == "§":
                 flush()
             elif _is_header(ln):
-                # 헤더를 만나면 진행 중 블록 마감 후 section 갱신
+                # on a header, close the in-progress block then update the section
                 flush()
                 current_section = _header_text(ln)
             else:
                 buf.append(ln)
         flush()
     else:
-        # 폴백: 헤더 구간 → 문단 단위 분리
+        # fallback: header span -> split into paragraphs
         section_buf = []
 
         def flush_section():
@@ -237,8 +238,8 @@ def parse_markdown(path):
                 return
             lines_in = section_buf[:]
             section_buf.clear()
-            # 불릿 기반 청킹: 최상위 불릿("- ") = 청크 경계. 하위 들여쓰기/평문/빈줄은 현재 청크에 흡수.
-            # 불릿이 없으면 기존 폴백(빈 줄 문단 기준)으로 분리.
+            # Bullet-based chunking: a top-level bullet ("- ") = a chunk boundary. Nested indent / plain text / blank lines are absorbed into the current chunk.
+            # If there are no bullets, fall back to the old blank-line paragraph split.
             if any(re.match(r"^- ", ln) for ln in lines_in):
                 cur = []
 
@@ -272,12 +273,12 @@ def parse_markdown(path):
 
 
 # ======================================================================
-# 임베딩 (Ollama bge-m3)
+# embedding (Ollama bge-m3)
 # ======================================================================
 def embed(text):
     """
-    bge-m3 임베딩 1건 요청. 실패 시 예외 발생(호출부에서 처리).
-    반환: list[float] 길이 EMBED_DIM
+    Request one bge-m3 embedding. Raises on failure (handled by caller).
+    Returns: list[float] of length EMBED_DIM
     """
     body = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode("utf-8")
     req = urllib.request.Request(
@@ -287,23 +288,23 @@ def embed(text):
         data = json.loads(resp.read().decode("utf-8"))
     vec = data.get("embedding")
     if not vec or not isinstance(vec, list):
-        raise ValueError("Ollama 응답에 embedding 없음")
+        raise ValueError("Ollama response missing embedding field")
     return vec
 
 
 def vec_to_blob(vec):
-    """float 리스트 → float32 BLOB."""
+    """float list -> float32 BLOB."""
     return struct.pack(f"<{len(vec)}f", *vec)
 
 
 def blob_to_vec(blob):
-    """float32 BLOB → float 리스트."""
+    """float32 BLOB -> float list."""
     n = len(blob) // 4
     return list(struct.unpack(f"<{n}f", blob))
 
 
 def cosine(a, b):
-    """순수 파이썬 코사인 유사도. (노트 수백 개 규모라 충분)"""
+    """Pure-python cosine similarity. (Fine at the scale of a few hundred notes.)"""
     if len(a) != len(b):
         return 0.0
     dot = 0.0
@@ -319,7 +320,7 @@ def cosine(a, b):
 
 
 # ======================================================================
-# DB 스키마
+# DB schema
 # ======================================================================
 def connect():
     conn = sqlite3.connect(DB_PATH)
@@ -331,8 +332,8 @@ def init_db(conn):
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS files (
-            path        TEXT PRIMARY KEY,   -- 파일 경로(상대)
-            sha256      TEXT NOT NULL,       -- 내용 해시(증분용)
+            path        TEXT PRIMARY KEY,   -- file path (relative)
+            sha256      TEXT NOT NULL,       -- content hash (for incremental)
             indexed_at  TEXT NOT NULL
         );
 
@@ -341,12 +342,12 @@ def init_db(conn):
             source_file TEXT NOT NULL,
             section     TEXT,
             text        TEXT NOT NULL,
-            embedding   BLOB                 -- float32 BLOB (Ollama 다운 시 NULL 가능)
+            embedding   BLOB                 -- float32 BLOB (may be NULL when Ollama is down)
         );
 
         CREATE INDEX IF NOT EXISTS idx_notes_file ON notes(source_file);
 
-        -- FTS5 trigram: 한국어 부분일치에 유리
+        -- FTS5 trigram: good for Korean partial matching
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
         USING fts5(text, content='notes', content_rowid='id', tokenize='trigram');
 
@@ -358,21 +359,21 @@ def init_db(conn):
             ts         TEXT NOT NULL
         );
 
-        -- 야간 공고화(consolidate) 워터마크: 어디까지 대화를 처리했는지 기록.
-        -- key='last_ts' 에 마지막 처리 메시지의 ISO8601 타임스탬프 저장.
-        -- 주간 inbox 분류(classify-inbox) 성공 마커: key='classify_inbox_last'.
+        -- Nightly consolidate watermark: records how far conversations were processed.
+        -- key='last_ts' stores the ISO8601 timestamp of the last processed message.
+        -- Weekly inbox classification (classify-inbox) success marker: key='classify_inbox_last'.
         CREATE TABLE IF NOT EXISTS consolidation_state (
             key   TEXT PRIMARY KEY,
             value TEXT
         );
 
-        -- 당일 롤링 인덱스: 아직 공고화 안 된 오늘 raw 대화를 기계적으로 적재.
-        -- LLM 0. 새벽 증류로 정식 노트가 된 뒤 그날치는 프룬한다(consolidate 말미).
+        -- Same-day rolling index: mechanically loads today's raw conversations not yet consolidated.
+        -- Zero LLM. After the dawn distillation turns them into real notes, that day's rows are pruned (end of consolidate).
         CREATE TABLE IF NOT EXISTS transcript_notes (
             id      INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts      TEXT NOT NULL,   -- 메시지 ISO8601 타임스탬프
+            ts      TEXT NOT NULL,   -- message ISO8601 timestamp
             role    TEXT,            -- __USER_LABEL__ / __AGENT_LABEL__
-            session TEXT,            -- 출처 jsonl stem(세션 구분/디버그용)
+            session TEXT,            -- source jsonl stem (for session distinction / debug)
             text    TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_tnotes_ts ON transcript_notes(ts);
@@ -393,12 +394,12 @@ def file_sha256(path):
 
 
 # ======================================================================
-# index 커맨드
+# index command
 # ======================================================================
 def cmd_index(args):
-    # --lock: 시작 시 락 파일 잡고 atexit으로 해제(자동 재인덱싱 중복 방지).
-    #         hook 경로의 _maybe_reindex가 던지는 백그라운드 index가 이 락을 쓴다.
-    #         스킬에서 호출하는 `memory.py index`는 --lock 없어 그대로 동작.
+    # --lock: grab a lock file at start and release it via atexit (prevents duplicate auto-reindex).
+    #         The background index fired by _maybe_reindex on the hook path uses this lock.
+    #         `memory.py index` invoked from a skill has no --lock and runs as usual.
     lock_path = getattr(args, "lock", None)
     if lock_path:
         import atexit
@@ -411,7 +412,7 @@ def cmd_index(args):
         atexit.register(_release_lock)
 
     if not os.path.isdir(MEMORIES_DIR):
-        print(f"[error] memories 디렉토리 없음: {MEMORIES_DIR}", file=sys.stderr)
+        print(f"[error] memories directory not found: {MEMORIES_DIR}", file=sys.stderr)
         return 1
 
     conn = connect()
@@ -422,15 +423,16 @@ def cmd_index(args):
         if f.endswith(".md") and f not in INDEX_EXCLUDE
     )
     if not md_files:
-        print("[warn] md 파일 없음")
+        print("[warn] no .md files found")
         return 0
 
-    # 기존 해시 로드
+    # load existing hashes
     existing = {row["path"]: row["sha256"] for row in conn.execute("SELECT path, sha256 FROM files")}
 
-    # 고아 정리: 디스크에서 사라진 파일(파일분할/병합/삭제)의 노트·FTS·files 레코드 제거.
-    # 증분 인덱싱은 현존 파일만 순회하므로 이 단계 없이는 삭제된 파일의 노트가 DB에 고아로 남아
-    # 검색에 중복으로 떠버린다(파일분할·잘 때 정리의 분화/병합에 필수).
+    # Orphan cleanup: remove notes/FTS/files records for files that disappeared from disk
+    # (file splits, merges, deletions). Incremental indexing only iterates present files,
+    # so without this step deleted-file notes stay as DB orphans and show up as duplicates
+    # in search (essential for file splits and nightly cleanup merges/splits).
     disk_set = set(md_files)
     tracked = set(existing) | {
         r["source_file"] for r in conn.execute("SELECT DISTINCT source_file FROM notes")
@@ -443,8 +445,8 @@ def cmd_index(args):
             conn.execute("DELETE FROM notes_fts WHERE rowid=?", (nid,))
         conn.execute("DELETE FROM notes WHERE source_file=?", (fname,))
         conn.execute("DELETE FROM files WHERE path=?", (fname,))
-        reason = "인덱싱 제외" if fname in INDEX_EXCLUDE else "디스크에서 사라짐"
-        print(f"  - {fname}: {reason} → {len(old_ids)} 노트 정리")
+        reason = "excluded from index" if fname in INDEX_EXCLUDE else "removed from disk"
+        print(f"  - {fname}: {reason} -> {len(old_ids)} notes cleaned up")
     conn.commit()
 
     total_notes = 0
@@ -457,16 +459,16 @@ def cmd_index(args):
         sha = file_sha256(fpath)
 
         if existing.get(fname) == sha:
-            # 변경 없음 → 재임베딩/재파싱 스킵
+            # unchanged -> skip re-embedding/re-parsing
             cnt = conn.execute(
                 "SELECT COUNT(*) c FROM notes WHERE source_file=?", (fname,)
             ).fetchone()["c"]
             total_notes += cnt
             skipped_files += 1
-            print(f"  = {fname}: 변경 없음, 스킵 ({cnt} 노트)")
+            print(f"  = {fname}: unchanged, skipped ({cnt} notes)")
             continue
 
-        # 변경됨 → 해당 파일 노트 전부 삭제 후 재적재
+        # changed -> delete all notes for this file and reload
         old_ids = [r["id"] for r in conn.execute(
             "SELECT id FROM notes WHERE source_file=?", (fname,)
         )]
@@ -475,8 +477,8 @@ def cmd_index(args):
         conn.execute("DELETE FROM notes WHERE source_file=?", (fname,))
 
         notes = parse_markdown(fpath)
-        # 인덱싱 노이즈 정제(원본 보존): 코드펜스/박스 다이어그램 제거.
-        # 정제 후 본문이 비는 노트(박스만 있던 노트)는 인덱싱 스킵.
+        # Denoise for indexing (preserves original): strip code fences and box diagrams.
+        # Notes that become empty after denoising (box-only notes) are skipped.
         cleaned = []
         for note in notes:
             ctext = denoise_for_index(note["text"])
@@ -486,10 +488,10 @@ def cmd_index(args):
         dropped = len(notes) - len(cleaned)
         notes = cleaned
         if dropped:
-            print(f"    [정제] {fname}: 박스/펜스 노트 {dropped}개 스킵")
+            print(f"    [denoise] {fname}: {dropped} box/fence notes skipped")
         if not notes:
-            print(f"  ! {fname}: 노트 0개 (빈 파일/구분자 없음)")
-            # 해시는 갱신 (다음에 또 파싱 시도 안 하도록)
+            print(f"  ! {fname}: 0 notes (empty file or no separator)")
+            # update the hash so we don't re-parse this file next time
             conn.execute(
                 "INSERT OR REPLACE INTO files(path, sha256, indexed_at) VALUES(?,?,?)",
                 (fname, sha, datetime.datetime.now().isoformat(timespec="seconds")),
@@ -504,9 +506,9 @@ def cmd_index(args):
                 emb_blob = vec_to_blob(vec)
                 embed_calls += 1
             except (urllib.error.URLError, OSError, ValueError) as e:
-                # Ollama 다운 등: 임베딩 NULL 로 저장(FTS 검색은 여전히 동작)
+                # Ollama down or similar: store embedding as NULL (FTS search still works)
                 ollama_down = True
-                print(f"    [warn] 임베딩 실패(텍스트 일부 저장): {e}", file=sys.stderr)
+                print(f"    [warn] embedding failed (text saved without vector): {e}", file=sys.stderr)
 
             cur = conn.execute(
                 "INSERT INTO notes(source_file, section, text, embedding) VALUES(?,?,?,?)",
@@ -523,26 +525,26 @@ def cmd_index(args):
             (fname, sha, datetime.datetime.now().isoformat(timespec="seconds")),
         )
         conn.commit()
-        print(f"  + {fname}: {len(notes)} 노트 적재")
+        print(f"  + {fname}: {len(notes)} notes loaded")
 
     conn.commit()
     conn.close()
 
-    print(f"\n[index 완료] 총 {total_notes} 노트 / 임베딩 호출 {embed_calls}회 / 변경없어 스킵된 파일 {skipped_files}개")
+    print(f"\n[index done] total {total_notes} notes / {embed_calls} embedding calls / {skipped_files} files skipped (unchanged)")
     if ollama_down:
-        print("[주의] 일부 임베딩 실패 — Ollama 상태 확인 후 다시 index 권장 (해당 파일 다시 수정하거나 db 삭제 후 재인덱스)")
+        print("[warning] some embeddings failed -- check Ollama and re-run index (touch the file or delete the db to force re-index)")
     return 0
 
 
 # ======================================================================
-# search 커맨드
+# search command
 # ======================================================================
 def fts_search(conn, query, limit):
     """
-    FTS5 trigram 검색. bm25 오름차순(작을수록 관련)으로 정렬된 note id 리스트.
-    trigram 은 따옴표로 감싼 구문 매칭이 안전.
+    FTS5 trigram search. Returns a list of note ids sorted by bm25 ascending (lower = more relevant).
+    Wrapping in double-quotes is safe for trigram phrase matching.
     """
-    # 특수문자 escape: 큰따옴표로 감싸 phrase 로 처리
+    # escape special chars: wrap in double-quotes to handle as a phrase
     safe = '"' + query.replace('"', '""') + '"'
     try:
         rows = conn.execute(
@@ -557,13 +559,13 @@ def fts_search(conn, query, limit):
 
 def vector_search(conn, query, limit):
     """
-    쿼리 임베딩 vs 전체 노트 임베딩 코사인. (id, score) 내림차순 리스트.
-    Ollama 다운 시 빈 리스트.
+    Cosine similarity: query embedding vs all note embeddings. Returns (id, score) list descending.
+    Returns empty list when Ollama is down.
     """
     try:
         qvec = embed(query)
     except (urllib.error.URLError, OSError, ValueError) as e:
-        print(f"[warn] 쿼리 임베딩 실패 — 벡터검색 생략(FTS만 사용): {e}", file=sys.stderr)
+        print(f"[warn] query embedding failed -- vector search skipped (FTS only): {e}", file=sys.stderr)
         return []
 
     scored = []
@@ -577,8 +579,8 @@ def vector_search(conn, query, limit):
 def rrf_fuse(fts_ids, vec_scored, k=RRF_K):
     """
     Reciprocal Rank Fusion.
-    각 리스트에서 순위 r(0-base) → 점수 1/(k+r+1) 누적.
-    반환: [(note_id, rrf_score, cos_score_or_None), ...] 내림차순.
+    For each list, rank r (0-based) contributes score 1/(k+r+1), accumulated per id.
+    Returns: [(note_id, rrf_score, cos_score_or_None), ...] descending.
     """
     fused = {}
     cos_map = {nid: sc for nid, sc in vec_scored}
@@ -594,27 +596,28 @@ def rrf_fuse(fts_ids, vec_scored, k=RRF_K):
 
 
 def search_core(query, k=5, log=True):
-    """검색 코어 — 결과 리스트만 만들어 반환(stdout에 print 금지).
+    """Search core -- builds and returns the result list only (no stdout print).
 
-    cmd_search(스킬)와 cmd_hook(자동주입)이 공유한다.
-    반환: [{"id","source_file","section","text","rrf_score","cosine"}, ...]
-    log=True면 search_log에 1행 기록(스킬 동작 보존). hook 경로는 log=False.
+    Shared by cmd_search (skill) and cmd_hook (auto-inject).
+    Returns: [{"id","source_file","section","text","rrf_score","cosine"}, ...]
+    log=True records one row to search_log (preserves skill behavior). Hook path uses log=False.
     """
     conn = connect()
     init_db(conn)
 
-    # 당일 롤링 인덱스: 검색 직전 오늘 raw 대화를 증분 적재(기계적, best effort).
-    # 같은 날 다른 세션 대화가 아직 공고화 전이어도 여기서 잡혀 검색에 노출된다.
+    # Same-day rolling index: incrementally load today's raw conversations just before searching
+    # (mechanical, best effort). Conversations from other sessions the same day that are not yet
+    # consolidated are still captured here and exposed in search results.
     index_transcript_fts(conn)
 
-    # 후보를 넉넉히 모은 뒤 융합
+    # gather a generous candidate pool then fuse
     pool = max(k * 4, 20)
     fts_ids = fts_search(conn, query, pool)
     vec_scored = vector_search(conn, query, pool)
 
     fused = rrf_fuse(fts_ids, vec_scored)[:k]
 
-    # 노트 메타 로드
+    # load note metadata
     results = []
     for nid, rrf_score, cos_score in fused:
         row = conn.execute(
@@ -634,13 +637,14 @@ def search_core(query, k=5, log=True):
             }
         )
 
-    # 당일 raw 대화 매치를 별도 소스로 끼워넣는다(임베딩 없음 → FTS bm25만, cosine=None).
-    # 노트 랭킹을 흔들지 않도록 RRF에 섞지 않고 뒤에 캡으로 덧붙인다.
+    # Append today's raw conversation matches as a separate source
+    # (no embedding -> FTS bm25 only, cosine=None). Appended as a cap after note
+    # results so as not to disturb note ranking via RRF.
     for tr in transcript_fts_search(conn, query, TRANSCRIPT_FTS_TOPK):
         results.append(
             {
                 "id": f"t{tr['id']}",
-                "source_file": f"오늘대화:{tr.get('session', '')[:8]}",
+                "source_file": f"today-convo:{tr.get('session', '')[:8]}",
                 "section": f"{tr.get('role', '')} {tr.get('ts', '')[:16]}",
                 "text": tr["text"],
                 "rrf_score": None,
@@ -650,7 +654,7 @@ def search_core(query, k=5, log=True):
         )
 
     if log:
-        # 검색 로그 기록 (top1 점수는 코사인 기준; 벡터검색 미동작 시 None)
+        # log the search (top1 score is cosine-based; None when vector search did not run)
         top1 = results[0]["cosine"] if results and results[0]["cosine"] is not None else None
         conn.execute(
             "INSERT INTO search_log(query, n_results, top1_score, ts) VALUES(?,?,?,?)",
@@ -672,15 +676,15 @@ def cmd_search(args):
         return 0
 
     if not results:
-        print(f'"{query}" — 결과 없음.')
+        print(f'"{query}" -- no results.')
         return 0
 
-    print(f'🔎 "{query}" — 상위 {len(results)}개\n')
+    print(f'🔎 "{query}" -- top {len(results)}\n')
     for i, r in enumerate(results, 1):
         cos = f"{r['cosine']:.3f}" if r["cosine"] is not None else "n/a"
-        sect = r["section"] or "(섹션 없음)"
-        print(f"[{i}] {r['source_file']} › {sect}  (rrf={r['rrf_score']:.4f}, cos={cos})")
-        # 본문 들여쓰기 출력
+        sect = r["section"] or "(no section)"
+        print(f"[{i}] {r['source_file']} > {sect}  (rrf={r['rrf_score']:.4f}, cos={cos})")
+        # print body indented
         for ln in r["text"].splitlines():
             print(f"    {ln}")
         print()
@@ -688,7 +692,7 @@ def cmd_search(args):
 
 
 # ======================================================================
-# stats 커맨드
+# stats command
 # ======================================================================
 def cmd_stats(args):
     conn = connect()
@@ -699,39 +703,39 @@ def cmd_stats(args):
         "SELECT COUNT(*) c FROM notes WHERE embedding IS NOT NULL"
     ).fetchone()["c"]
 
-    print("== 메모리 인덱스 통계 ==")
-    print(f"총 노트: {total}  (임베딩 보유 {with_emb} / 누락 {total - with_emb})")
+    print("== memory index stats ==")
+    print(f"total notes: {total}  (with embedding: {with_emb} / missing: {total - with_emb})")
 
-    # M4: NULL 임베딩 비율이 높으면 의미검색이 죽었다는 신호(Ollama 부재/다운).
-    # 이 경우 자동회상은 키워드 FTS 폴백으로만 돈다 — 크게 한 줄 경고.
+    # M4: high NULL-embedding ratio signals that semantic search is dead (Ollama absent/down).
+    # In that case auto-recall runs on keyword FTS fallback only -- print a prominent warning.
     null_frac = ((total - with_emb) / total) if total else 0.0
     if total and null_frac >= NULL_EMBED_WARN_FRAC:
         print(
-            f"\n[!! 경고] 노트의 {null_frac*100:.0f}% 가 임베딩 없음 — 의미(벡터) 검색 저하. "
-            "Ollama(bge-m3) 미설치/다운 가능성. 자동회상은 키워드 검색으로만 동작 중. "
-            "Ollama 확인 후 `memory.py index` 재실행 권장."
+            f"\n[!! warning] {null_frac*100:.0f}% of notes have no embedding -- semantic (vector) search degraded. "
+            "Ollama(bge-m3) may not be installed or is down. Auto-recall running on keyword search only. "
+            "Check Ollama then re-run `memory.py index`."
         )
 
-    print("\n파일별 노트 수:")
+    print("\nnotes per file:")
     for row in conn.execute(
         "SELECT source_file, COUNT(*) c FROM notes GROUP BY source_file ORDER BY c DESC"
     ):
         print(f"  {row['source_file']:<40} {row['c']}")
 
-    # 검색 로그 요약
+    # search log summary
     log = conn.execute("SELECT COUNT(*) c FROM search_log").fetchone()["c"]
-    print(f"\n총 검색 횟수: {log}")
+    print(f"\ntotal searches: {log}")
     if log:
-        # 미스율: 결과 0 또는 top1 < 임계
+        # miss rate: 0 results or top1 below threshold
         miss = conn.execute(
             "SELECT COUNT(*) c FROM search_log "
             "WHERE n_results=0 OR top1_score IS NULL OR top1_score < ?",
             (MISS_THRESHOLD,),
         ).fetchone()["c"]
         rate = miss / log * 100
-        print(f"검색 미스율: {rate:.1f}%  (결과0 또는 top1 cos<{MISS_THRESHOLD}, {miss}/{log})")
+        print(f"search miss rate: {rate:.1f}%  (0 results or top1 cos<{MISS_THRESHOLD}, {miss}/{log})")
 
-        print("\n최근 검색 로그 (최대 10건):")
+        print("\nrecent search log (up to 10):")
         for row in conn.execute(
             "SELECT query, n_results, top1_score, ts FROM search_log ORDER BY id DESC LIMIT 10"
         ):
@@ -743,11 +747,11 @@ def cmd_stats(args):
 
 
 # ======================================================================
-# write 커맨드 (인입 압축 적재, OpenHuman 방식)
+# write command (ingest-compress-store, OpenHuman style)
 # ======================================================================
-import subprocess  # noqa: E402  (write 전용, 상단 import 군과 분리)
+import subprocess  # noqa: E402  (write-only; kept separate from top-level imports)
 
-HAIKU_MODEL = "haiku"  # claude CLI 별칭. 동작 확인됨(2026-06-24).
+HAIKU_MODEL = "haiku"  # claude CLI alias. Verified working (2026-06-24).
 
 COMPRESS_PROMPT = (
     "다음 내용에서 __USER_LABEL__(사용자)에 대해 장기 기억할 가치가 있는 영속적 사실만 골라, "
@@ -761,13 +765,13 @@ COMPRESS_PROMPT = (
 
 def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MODEL):
     """
-    헤드리스 claude로 원시 텍스트를 영속 사실 원자 항목으로 압축.
-    prompt_prefix: 압축 지시 프롬프트(기본 COMPRESS_PROMPT — __USER_LABEL__ 사실만).
-                   consolidate는 CONSOLIDATE_PROMPT 를 넘겨 생활 사실까지 포함.
-    model: claude CLI 모델 별칭(기본 haiku — write 단건용).
-           consolidate는 CONSOLIDATE_MODEL(sonnet)을 넘겨 판단력 보강.
-    반환: [한 줄 항목, ...]  (비면 기억할 것 없음)
-    실패 시 RuntimeError.
+    Compress raw text into persistent-fact atomic items using headless claude.
+    prompt_prefix: the compression instruction prompt (default COMPRESS_PROMPT -- user facts only).
+                   consolidate passes CONSOLIDATE_PROMPT to include life facts.
+    model: claude CLI model alias (default haiku -- for single write calls).
+           consolidate passes CONSOLIDATE_MODEL (sonnet) for better judgment.
+    Returns: [one-line item, ...]  (empty means nothing worth remembering)
+    Raises RuntimeError on failure.
     """
     prompt = prompt_prefix + raw_text
     try:
@@ -778,22 +782,22 @@ def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MOD
             timeout=180,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise RuntimeError(f"{model} 호출 실패: {e}")
+        raise RuntimeError(f"{model} call failed: {e}")
     if proc.returncode != 0:
-        raise RuntimeError(f"{model} 비정상 종료(rc={proc.returncode}): {proc.stderr.strip()}")
+        raise RuntimeError(f"{model} exited abnormally (rc={proc.returncode}): {proc.stderr.strip()}")
 
     items = []
     for ln in proc.stdout.splitlines():
         s = ln.strip()
         if not s:
             continue
-        # 모델이 혹시 붙인 불릿/번호 제거
+        # strip any bullet/number the model may have added
         s = re.sub(r"^[-*•]\s+", "", s)
         s = re.sub(r"^\d+[.)]\s+", "", s)
         s = s.strip()
         if not s:
             continue
-        # "기억할 것 없음" 신호 처리
+        # handle "nothing to remember" signal
         if s.upper() == "NONE":
             return []
         items.append(s)
@@ -802,10 +806,11 @@ def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MOD
 
 def append_notes_to_md(path, section, items):
     """
-    대상 md 파일에 § 구분으로 항목들을 append.
-    - section 지정 시 해당 헤더(### ...) 블록 끝에 삽입, 없으면 헤더 새로 만들어 파일 끝.
-    - section 미지정 시 파일 끝에 append.
-    원본 파일에 직접 쓴다(진실의 원천).
+    Append items to the target md file using § separators.
+    - If section is given: insert at the end of the matching header (### ...) block;
+      create the header at end-of-file if not found.
+    - If section is not given: append to end of file.
+    Writes directly to the source-of-truth file.
     """
     # F6: redact any secret in the items before they are written to disk.
     items = [redact_secrets(it) for it in items]
@@ -815,18 +820,18 @@ def append_notes_to_md(path, section, items):
 
     lines = content.splitlines()
 
-    # 적재 구분자를 대상 파일 형식에 맞춘다(청킹 깨짐 방지).
-    # M5: 명시적 format 마커가 있으면 그 모드를 신뢰(사람이 § 하나 토글해도 안 뒤집힘).
-    # 마커 없으면 기존 § 스니핑 폴백(하위호환) — 그리고 이번 쓰기에서 그 모드를
-    # 반영한 마커를 파일에 심어 다음 machine write 부터는 마커가 정본이 된다.
-    #   - § 기반 파일(__AGENT_LABEL__ 주제파일/inbox): "§\n{item}".
-    #   - 불릿 기반 파일: "- {item}".
+    # Match the write separator to the target file's format (prevents chunking breakage).
+    # M5: trust an explicit format marker over the § sniff (a human toggling one § won't flip mode).
+    # When the marker is absent, fall back to § sniffing (backward compat), then embed
+    # the detected mode as a marker in this write so future machine writes use the marker.
+    #   - § based files (topic files / inbox): "§\n{item}".
+    #   - bullet based files: "- {item}".
     marker = _format_marker(content)
     if marker is not None:
         has_sep = (marker == "section")
     else:
         has_sep = any(ln.strip() == "§" for ln in lines)
-        # 마커 부재 → 스니핑한 모드로 마커를 심는다(자가치유, 이후 안정).
+        # marker absent -> embed the sniffed mode (self-healing; stable going forward).
         mode = "section" if has_sep else "bullet"
         content = _marker_line(mode) + "\n" + content
         lines = content.splitlines()
@@ -836,53 +841,53 @@ def append_notes_to_md(path, section, items):
         block = "\n".join(f"- {it}" for it in items)
 
     if section:
-        # 해당 헤더 라인 인덱스 찾기
+        # find the header line index
         hdr_idx = None
         for i, ln in enumerate(lines):
             if _is_header(ln) and _header_text(ln) == section:
                 hdr_idx = i
                 break
         if hdr_idx is None:
-            # 섹션 없음 → 파일 끝에 새 헤더 + 블록
+            # section not found -> create new header + block at end of file
             tail = content.rstrip("\n")
             new = f"{tail}\n\n### {section}\n{block}\n"
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new)
-            return f"새 섹션 '### {section}' 생성 후 파일 끝에 적재"
-        # 다음 헤더 직전까지가 이 섹션의 범위
+            return f"created new section '### {section}' and appended to end of file"
+        # the section spans up to just before the next header
         end_idx = len(lines)
         for j in range(hdr_idx + 1, len(lines)):
             if _is_header(lines[j]):
                 end_idx = j
                 break
-        # 섹션 본문 끝(end_idx 직전)의 후행 빈 줄을 건너뛰어 삽입 위치 결정
+        # skip trailing blank lines before end_idx to find the insert position
         insert_at = end_idx
         while insert_at - 1 > hdr_idx and lines[insert_at - 1].strip() == "":
             insert_at -= 1
         new_lines = lines[:insert_at] + block.splitlines() + lines[insert_at:]
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(new_lines) + "\n")
-        return f"섹션 '### {section}' 끝에 적재"
+        return f"appended to end of section '### {section}'"
     else:
         tail = content.rstrip("\n")
         new = f"{tail}\n{block}\n"
         with open(path, "w", encoding="utf-8") as f:
             f.write(new)
-        return "파일 끝에 적재"
+        return "appended to end of file"
 
 
 def cmd_write(args):
-    # 입력: 인자 우선, 없으면 stdin
+    # input: arg takes priority; fall back to stdin
     if args.text:
         raw = args.text
     else:
         raw = sys.stdin.read()
     raw = raw.strip()
     if not raw:
-        print("[error] 입력 텍스트가 비어있다.", file=sys.stderr)
+        print("[error] input text is empty.", file=sys.stderr)
         return 1
 
-    # 1) 압축
+    # 1) compress
     try:
         items = compress_with_haiku(raw)
     except RuntimeError as e:
@@ -890,75 +895,80 @@ def cmd_write(args):
         return 1
 
     if not items:
-        print("기억할 만한 영속 사실이 없어 적재하지 않음.")
+        print("No persistent facts worth remembering; nothing stored.")
         return 0
 
-    # 2) 메타 부착: (날짜, source)
+    # 2) attach metadata: (date, source)
     today = datetime.date.today().isoformat()
-    src = args.source or "출처미상"
+    src = args.source or "unknown-source"
     tagged = [f"{it} ({today}, {src})" for it in items]
 
-    # 대상 파일 경로
+    # target file path
     target = os.path.join(MEMORIES_DIR, args.file)
 
-    # 적재 미리보기 출력
-    print(f"== 압축 결과 ({len(tagged)}개 항목) → {args.file}" +
-          (f" › ### {args.section}" if args.section else " (파일 끝)") + " ==")
+    # print preview of what will be stored
+    print(f"== compression result ({len(tagged)} items) -> {args.file}" +
+          (f" > ### {args.section}" if args.section else " (end of file)") + " ==")
     for it in tagged:
         print(f"  § {it}")
 
     if args.dry_run:
-        print("\n[dry-run] 파일 미수정. 위 항목들이 적재될 예정.")
+        print("\n[dry-run] file not modified. the items above would be stored.")
         return 0
 
     if not os.path.isfile(target):
-        print(f"[error] 대상 파일 없음: {target}", file=sys.stderr)
+        print(f"[error] target file not found: {target}", file=sys.stderr)
         return 1
 
-    # 3) 파일에 append
+    # 3) append to file
     where = append_notes_to_md(target, args.section, tagged)
-    print(f"\n[적재 완료] {where}")
+    print(f"\n[stored] {where}")
 
-    # 4) 인덱스 갱신
-    print("[index] 인덱스 갱신 중...")
+    # 4) update index
+    print("[index] updating index...")
     rc = cmd_index(argparse.Namespace())
     return rc
 
 
 # ======================================================================
-# consolidate 커맨드 (야간 공고화: 대화 트랜스크립트 → 장기기억 증류)
+# consolidate command (nightly consolidation: conversation transcripts -> long-term memory distillation)
 # ======================================================================
-# 핵심: __USER_LABEL__↔__AGENT_LABEL__ 원본 chat log(jsonl)에서 영속 사실을 증류해 inbox.md 로 내린다.
-# 워터마크(consolidation_state.last_ts)로 어디까지 처리했는지 기록 → 증분만 본다.
-# 야간은 주제 라우팅 없이 무조건 inbox.md 로만 단순 적재(주간 classify-inbox 가 분배).
+# Core: distill persistent facts from the original __USER_LABEL__ <-> __AGENT_LABEL__ chat log
+# (jsonl) and write them to inbox.md.
+# A watermark (consolidation_state.last_ts) records progress -> only processes the incremental diff.
+# Nightly: no topic routing; always stores to inbox.md only (weekly classify-inbox distributes).
 
-# 트랜스크립트 위치(Claude Code 프로젝트 로그). __AGENT_LABEL__ 작업공간 세션들.
+# Transcript location (Claude Code project logs). __AGENT_LABEL__ workspace sessions.
 TRANSCRIPT_GLOB = os.path.join(
     os.path.expanduser("~/.claude/projects"),
     os.path.normpath(os.path.join(HERE, "..")).replace("/", "-"),
     "*.jsonl",
 )
 TARGET_MEMORY_MD = os.path.join(MEMORIES_DIR, "inbox.md")
-DEDUP_THRESHOLD = 0.82     # 후보가 기존 노트와 이 코사인 이상이면 "이미 아는 것"
-# 정정/개정/번복 마커. 이걸로 시작하는 후보는 near-verbatim 재진술이라 코사인 >=DEDUP_THRESHOLD
-# 존에 떨어져 하드 스킵으로 조용히 버려진다(=stale fact 가 authoritative 로 남음, DGN-055 위반).
-# 이런 후보는 dedup 하드 스킵에서 면제(=적재)한다. 일반 재진술은 그대로 스킵.
+DEDUP_THRESHOLD = 0.82     # candidate cosine >= this against an existing note means "already known"
+# Correction/revision/retraction markers. Candidates starting with these are near-verbatim
+# restatements so their cosine >= DEDUP_THRESHOLD and they would be silently dropped by the
+# hard dedup skip (= stale fact stays authoritative, DGN-055 violation).
+# Exempt these candidates from the dedup skip so they are stored. Normal restatements still skipped.
 CORRECTION_MARKERS = ("정정:", "정정 ", "correction:", "correction ")
-DEFAULT_LOOKBACK_DAYS = 3  # 워터마크 없을 때(최초) 최근 며칠치를 볼지
-MEMORY_LINES_CAP = 600     # inbox.md 줄 수가 이 값 넘으면 "정리할까요?" 제안
+DEFAULT_LOOKBACK_DAYS = 3  # how many days to look back when there is no watermark (first run)
+MEMORY_LINES_CAP = 600     # if inbox.md line count exceeds this, suggest a cleanup
 CONSOLIDATE_REPORT_ENABLED = os.environ.get("DOGANY_MEMORY_REPORT", "0") == "1"  # product: nightly "memory saved" Telegram push OFF by default
-# 대화가 길면 입력 한도를 넘어 압축이 통째로 실패한다.
-# 줄(메시지) 경계로 이 글자수 이하 청크로 쪼개 각각 압축한 뒤 항목을 합친다.
+# Long conversations can exceed the input limit and cause the entire compression to fail.
+# Split on line (message) boundaries into chunks of at most this many characters, compress
+# each chunk individually, then merge the items.
 CONSOLIDATE_CHUNK_CHARS = 24000
-# consolidate는 Sonnet(발화 vs 사실 판단력). 야간 1회라 비용 감당. write는 Haiku 유지.
+# consolidate uses Sonnet (better judgment for utterance vs. fact). Runs once per night, cost acceptable.
+# write keeps Haiku.
 CONSOLIDATE_MODEL = "sonnet"
-# taxonomy 문서 경로(2차 KEEP/DROP 필터가 전문을 주입).
+# Path to taxonomy document (the second-stage KEEP/DROP filter injects the full text).
 TAXONOMY_PATH = os.path.join(HERE, "CONSOLIDATION_TAXONOMY.md")
-# 2차 필터 묶음 호출 시 한 번에 판정할 후보 개수 상한(프롬프트 비대 방지).
+# Maximum number of candidates to judge in a single second-stage filter batch call (prevents bloated prompts).
 FILTER_BATCH_SIZE = 40
 
-# __AGENT_LABEL__(생활비서)용 압축 프롬프트. __USER_LABEL__ 사실 + 생활 결정/습관/관계/일정/가계부도 포함.
-# 핵심: 발화 자체·진행보고를 사실로 둔갑시키지 말 것. 확정된 영속 사실/결정만.
+# Compression prompt for the __AGENT_LABEL__ assistant. Includes user facts + life decisions/habits/
+# relationships/schedules/finances.
+# Core rule: do NOT turn utterances or progress reports into facts. Only confirmed persistent facts/decisions.
 CONSOLIDATE_PROMPT = (
     "아래는 __USER_LABEL__(사용자)과 생활비서 에이전트 __AGENT_LABEL__(어시스턴트)가 주고받은 대화 기록이다. "
     "이 안에서 장기 기억할 가치가 있는 영속적 사실/결정만 골라 각각 한 줄짜리 원자적 항목으로 압축해라.\n"
@@ -995,7 +1005,7 @@ CONSOLIDATE_PROMPT = (
     "대화 기록:\n"
 )
 
-# 트랜스크립트에서 걸러낼 잡음 패턴(hook 주입/시스템 리마인더 등).
+# Noise patterns to filter from transcripts (hook injections, system reminders, etc.).
 _NOISE_MARKERS = (
     "<system-reminder>",
     "[관련 기억 — 자동검색]",
@@ -1006,7 +1016,7 @@ _NOISE_MARKERS = (
 
 
 def _ts_load_watermark(conn):
-    """consolidation_state 에서 last_ts(ISO8601) 로드. 없으면 None."""
+    """Load last_ts (ISO8601) from consolidation_state. Returns None if not set."""
     row = conn.execute(
         "SELECT value FROM consolidation_state WHERE key='last_ts'"
     ).fetchone()
@@ -1014,7 +1024,7 @@ def _ts_load_watermark(conn):
 
 
 def _ts_save_watermark(conn, ts_iso):
-    """last_ts 워터마크 저장(upsert)."""
+    """Save (upsert) the last_ts watermark."""
     conn.execute(
         "INSERT INTO consolidation_state(key, value) VALUES('last_ts', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1024,7 +1034,7 @@ def _ts_save_watermark(conn, ts_iso):
 
 
 def _is_noise(text):
-    """hook 주입/시스템 리마인더로 보이는 잡음이면 True."""
+    """Returns True if the text looks like noise (hook injection or system reminder)."""
     if not text:
         return True
     for m in _NOISE_MARKERS:
@@ -1033,9 +1043,9 @@ def _is_noise(text):
     return False
 
 
-# 셸 명령으로 보이는 라인 휴리스틱. 흔한 명령어로 시작하면 압축 입력에서 제거.
-# (denoise_for_index 가 코드펜스 ```...``` 블록을 통째로 제거하므로, 펜스 밖에
-#  맨몸으로 떨어진 명령줄만 추가로 잡으면 된다.)
+# Heuristic for shell-command-looking lines. Lines starting with common commands are stripped
+# from compression input. (denoise_for_index already removes entire code-fence ```...``` blocks,
+# so only bare command lines outside fences need to be caught here.)
 _SHELL_CMD_HEADS = (
     "sudo ", "launchctl ", "git ", "python ", "python3 ", "pip ", "pip3 ",
     "npm ", "node ", "brew ", "curl ", "wget ", "ssh ", "scp ", "rsync ",
@@ -1045,50 +1055,52 @@ _SHELL_CMD_HEADS = (
     "docker ", "systemctl ", "plutil ", "defaults ",
 )
 
-# 알맹이 없는 라벨 줄(콜론 라벨 한 토막). 이걸로 시작하고 뒤에 내용 거의 없으면 제거.
+# Empty label lines (a bare colon-label fragment). If a line starts with one of these
+# and has almost no content after the colon, it is stripped.
 _LABEL_HEADS = (
     "요구사항", "참고", "작업 순서", "다음 할 일", "다음 단계", "현재 상황",
     "현재 상태", "남은 작업", "완료된 것", "할 일", "todo", "선택지", "옵션",
     "정리", "요약", "메모", "주의", "결론", "현황", "진행 상황", "체크리스트",
 )
-# 진행보고/상태기호. 줄 맨 앞에 오면 제거.
+# Progress-report / status symbols. Stripped when they appear at the start of a line.
 _STATUS_SYMBOLS = ("✓", "✅", "⏳", "🔵", "🟢", "🟡", "⚪", "☑", "✔", "❌", "▶", "▷", "□", "■")
 
 
 def _is_junk_line(line):
-    """압축 입력/후보에서 결정론적으로 버릴 라인인가? (taxonomy DROP 규칙의 코드판)
-    - 마크다운 헤더(#), 구분선(---/===), 수평선
-    - 셸 명령줄
-    - 상태기호로 시작하는 진행보고 줄
-    - 물음표로 끝나는 질문 줄
-    - '죄송'·'__USER_LABEL__,' 으로 시작하는 사과/호명 줄
-    - 알맹이 없는 라벨 줄(요구사항:, 참고: 등 콜론 라벨 한 토막)
-    빈 줄은 junk 아님(False) — 흐름 보존용.
+    """Is this line deterministically discardable from compression input/candidates?
+    (code-level implementation of the taxonomy DROP rules)
+    - Markdown headers (#), separator lines (---/===), horizontal rules
+    - Shell command lines
+    - Progress-report lines starting with a status symbol
+    - Question lines ending with a question mark
+    - Apology/address lines starting with '__USER_LABEL__,'
+    - Empty label lines (bare colon-label fragments like 'requirements:', 'note:', etc.)
+    Blank lines are NOT junk (return False) -- preserved for flow.
     """
     s = line.strip()
     if not s:
         return False
-    # 마크다운 헤더
+    # markdown header
     if re.match(r"^#{1,6}\s+", s):
         return True
-    # 구분선/수평선 (---, ===, ___, *** 류 3자 이상)
+    # separator / horizontal rule (---, ===, ___, *** etc., 3+ chars)
     if re.match(r"^([-=_*~])\1{2,}\s*$", s):
         return True
     if re.match(r"^[-=_*]{3,}$", s):
         return True
-    # 셸 명령줄
+    # shell command line
     if s.startswith(_SHELL_CMD_HEADS):
         return True
-    # 상태기호로 시작하는 진행보고
+    # progress-report starting with a status symbol
     if s[0] in _STATUS_SYMBOLS:
         return True
-    # 질문(물음표로 끝남)
+    # question line (ends with question mark)
     if s.endswith("?") or s.endswith("？"):
         return True
-    # 사과/호명 시작
+    # apology / address opening
     if s.startswith("죄송") or s.startswith("__USER_LABEL__,") or s.startswith("__USER_LABEL__ ,"):
         return True
-    # 알맹이 없는 라벨 줄: "라벨:" 또는 "라벨: 한두글자"
+    # empty label line: "label:" or "label: one-two chars"
     m = re.match(r"^[*\-•\d.\)\s]*([^:：]{1,12})[:：]\s*(.*)$", s)
     if m:
         label = m.group(1).strip().lower()
@@ -1099,8 +1111,9 @@ def _is_junk_line(line):
 
 
 def _strip_junk_lines(text):
-    """압축 입력 전처리: _is_junk_line 에 걸리는 라인 제거(원본은 안 건드림).
-    코드펜스/박스는 denoise_for_index 가 이미 처리하므로 여기선 그 외 형식구조물·발화·명령."""
+    """Pre-process compression input: remove lines matched by _is_junk_line (original unchanged).
+    Code fences and box diagrams are already handled by denoise_for_index; this covers remaining
+    structural artifacts, utterances, and commands."""
     out = []
     for ln in text.splitlines():
         if not ln.strip():
@@ -1113,43 +1126,46 @@ def _strip_junk_lines(text):
 
 
 def _preprocess_for_compress(text):
-    """압축 LLM 입력 전용 정제(원본 트랜스크립트 불변).
-    1) denoise_for_index: 코드펜스(```) 블록·박스 다이어그램 제거.
-    2) _strip_junk_lines: 헤더·구분선·셸 명령·진행보고·질문·라벨 줄 제거.
-    반환: 정제 텍스트(빈 문자열 가능)."""
+    """Denoising for compression LLM input only (original transcript is unchanged).
+    1) denoise_for_index: remove code-fence (```) blocks and box diagrams.
+    2) _strip_junk_lines: remove headers, separators, shell commands, progress reports,
+       questions, and label lines.
+    Returns: cleaned text (may be empty)."""
     return _strip_junk_lines(denoise_for_index(text))
 
 
 def _rule_filter_candidates(items):
-    """압축 후 후처리(이중 안전망): 후보 항목 중 형식구조물/발화/명령이 그대로
-    항목이 된 것을 결정론적으로 제거. 발화 라벨 접두('__AGENT_LABEL__:', '__USER_LABEL__:')도 떼어낸다.
-    반환: (살아남은 항목 리스트, 버려진 (항목, 사유) 리스트)."""
+    """Post-processing after compression (double safety net): deterministically remove candidates
+    that are structural artifacts, utterances, or commands. Also strips utterance label prefixes
+    ('__AGENT_LABEL__:', '__USER_LABEL__:').
+    Returns: (list of surviving items, list of (item, reason) dropped)."""
     kept = []
     dropped = []
     for it in items:
         s = it.strip()
-        # 발화 라벨 접두 제거(__USER_LABEL__:, __AGENT_LABEL__:)
+        # strip utterance label prefix (__USER_LABEL__:, __AGENT_LABEL__:)
         s = re.sub(r"^(__USER_LABEL__|__AGENT_LABEL__)\s*[:：]\s*", "", s).strip()
         if not s:
-            dropped.append((it, "빈 항목"))
+            dropped.append((it, "empty item"))
             continue
         if _is_junk_line(s):
-            dropped.append((it, "룰필터(형식/발화/명령)"))
+            dropped.append((it, "rule-filter(structural/utterance/command)"))
             continue
-        # 코드펜스 잔재 단독 항목
+        # leftover code-fence or separator as standalone item
         if s.startswith("```") or s == "§":
-            dropped.append((it, "코드펜스/구분자"))
+            dropped.append((it, "code-fence/separator"))
             continue
         kept.append(s)
     return kept, dropped
 
 
 def _extract_text_from_content(content):
-    """user/assistant message.content → 사람이 쓴 텍스트만 추출.
-    - 문자열이면 그대로(잡음이면 빈 문자열).
-    - 리스트면 type=='text' 블록의 text 만(thinking/tool_use/tool_result 버림).
-    추출 후 압축 입력용 정제(코드펜스/셸 명령 제거)를 적용한다(원본 불변).
-    반환: 정제된 텍스트(빈 문자열일 수 있음)."""
+    """Extract human-written text from user/assistant message.content.
+    - If a string: use as-is (returns empty string if it is noise).
+    - If a list: keep only type=='text' blocks (discard thinking/tool_use/tool_result).
+    After extraction, apply compression-input denoising (code fences / shell commands stripped).
+    Original is unchanged.
+    Returns: cleaned text (may be empty string)."""
     if isinstance(content, str):
         raw = "" if _is_noise(content) else content.strip()
     elif isinstance(content, list):
@@ -1168,10 +1184,11 @@ def _extract_text_from_content(content):
 
 
 def _iter_transcript_rows(watermark_iso, now):
-    """워터마크 이후의 __USER_LABEL__↔__AGENT_LABEL__ 메시지를 (ts, speaker, text, session) 리스트로 수집.
-    collect_transcript(consolidate)와 index_transcript_fts(당일 인덱스)가 공유한다.
-    watermark_iso: ISO8601 문자열 또는 None(최초 → now-DEFAULT_LOOKBACK_DAYS).
-    반환: timestamp 오름차순 정렬된 리스트(빈 리스트 가능)."""
+    """Collect __USER_LABEL__ <-> __AGENT_LABEL__ messages after the watermark as
+    a (ts, speaker, text, session) list.
+    Shared by collect_transcript (consolidate) and index_transcript_fts (same-day index).
+    watermark_iso: ISO8601 string or None (first run -> now - DEFAULT_LOOKBACK_DAYS).
+    Returns: list sorted by timestamp ascending (may be empty)."""
     if watermark_iso:
         cutoff = watermark_iso
     else:
@@ -1199,7 +1216,7 @@ def _iter_transcript_rows(watermark_iso, now):
                         continue
                     ts = o.get("timestamp")
                     if not ts or ts <= cutoff:
-                        continue  # 워터마크 이하(이미 처리)는 스킵
+                        continue  # at or before watermark (already processed) -> skip
                     content = o.get("message", {}).get("content")
                     text = _extract_text_from_content(content)
                     if not text:
@@ -1209,13 +1226,14 @@ def _iter_transcript_rows(watermark_iso, now):
         except OSError:
             continue
 
-    rows.sort(key=lambda r: r[0])  # timestamp 오름차순
+    rows.sort(key=lambda r: r[0])  # ascending by timestamp
     return rows
 
 
 def collect_transcript(watermark_iso, now):
-    """워터마크 이후의 __USER_LABEL__↔__AGENT_LABEL__ 대화를 시간순으로 수집(consolidate 입력).
-    반환: (대화텍스트 str, 처리한 메시지들의 최대 timestamp str 또는 None, 메시지 건수 int).
+    """Collect __USER_LABEL__ <-> __AGENT_LABEL__ conversation after the watermark, in time order
+    (input for consolidate).
+    Returns: (conversation text str, max timestamp str of processed messages or None, message count int).
     """
     rows = _iter_transcript_rows(watermark_iso, now)
     if not rows:
@@ -1226,10 +1244,10 @@ def collect_transcript(watermark_iso, now):
 
 
 # ======================================================================
-# 당일 롤링 인덱스 — transcript_fts 증분 적재/검색/프룬
+# same-day rolling index -- transcript_fts incremental load / search / prune
 # ======================================================================
 def _tsfts_load_watermark(conn):
-    """당일 인덱스 워터마크(ts_fts_last) 로드. 없으면 None."""
+    """Load the same-day index watermark (ts_fts_last). Returns None if not set."""
     row = conn.execute(
         "SELECT value FROM consolidation_state WHERE key='ts_fts_last'"
     ).fetchone()
@@ -1237,7 +1255,7 @@ def _tsfts_load_watermark(conn):
 
 
 def _tsfts_save_watermark(conn, ts_iso):
-    """당일 인덱스 워터마크(ts_fts_last) 저장(upsert). consolidate의 last_ts와 별개 키."""
+    """Save (upsert) the same-day index watermark (ts_fts_last). Separate key from consolidate's last_ts."""
     conn.execute(
         "INSERT INTO consolidation_state(key, value) VALUES('ts_fts_last', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1246,17 +1264,18 @@ def _tsfts_save_watermark(conn, ts_iso):
 
 
 def index_transcript_fts(conn, now=None):
-    """오늘 raw 대화를 transcript_notes/transcript_fts에 증분 적재(기계적, LLM 0).
-    워터마크(ts_fts_last) 이후 메시지만 추가. 최초 실행이면 오늘 0시(로컬)부터.
-    hook/search 경로에서 매번 호출돼도 워터마크 덕에 싸다. 어떤 DB 에러도 삼켜
-    검색/턴을 막지 않는다(best effort). 반환: 새로 적재한 행 수."""
+    """Incrementally load today's raw conversation into transcript_notes/transcript_fts
+    (mechanical, zero LLM). Only messages after the watermark (ts_fts_last) are added.
+    First run starts from local midnight. Called on every hook/search turn; cheap thanks to
+    the watermark. Swallows all DB errors to never block search/turns (best effort).
+    Returns: number of newly loaded rows."""
     if now is None:
         now = datetime.datetime.now().astimezone()
     try:
         conn.execute("PRAGMA busy_timeout=3000")
         wm = _tsfts_load_watermark(conn)
         if not wm:
-            # 최초: 오늘 0시(로컬) 이후만 — 당일 롤링 인덱스 취지.
+            # first run: start from local midnight today (same-day rolling index intent).
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             wm = start.astimezone(datetime.timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -1289,8 +1308,8 @@ def index_transcript_fts(conn, now=None):
 
 
 def transcript_fts_search(conn, query, limit):
-    """당일 transcript_fts FTS5 trigram 검색(bm25 오름차순). 임베딩 없음 → FTS 전용.
-    반환: [{"id","ts","role","session","text"}, ...] 최대 limit."""
+    """FTS5 trigram search on the same-day transcript_fts (bm25 ascending). No embeddings -> FTS only.
+    Returns: [{"id","ts","role","session","text"}, ...] up to limit."""
     safe = '"' + query.replace('"', '""') + '"'
     try:
         rows = conn.execute(
@@ -1306,8 +1325,9 @@ def transcript_fts_search(conn, query, limit):
 
 
 def prune_transcript_fts(conn, cutoff_iso):
-    """cutoff_iso 이하(이미 증류돼 정식 노트가 된) 당일 raw 행 삭제. consolidate 말미 호출.
-    외부콘텐츠 FTS라 notes_fts 패턴대로 fts→notes 순으로 rowid 삭제. 반환: 삭제 행 수."""
+    """Delete same-day raw rows at or before cutoff_iso (already distilled into real notes).
+    Called at end of consolidate. External-content FTS: delete fts->notes in that order by rowid.
+    Returns: number of rows deleted."""
     try:
         ids = [
             r["id"]
@@ -1371,7 +1391,7 @@ def archive_raw_transcript(watermark_iso, now):
     try:
         os.makedirs(RAW_ARCHIVE_DIR, exist_ok=True)
     except OSError as e:
-        print(f"[warn] raw archive dir 생성 실패(스킵): {e}", file=sys.stderr)
+        print(f"[warn] raw archive dir creation failed (skipping): {e}", file=sys.stderr)
         return 0
 
     written = 0
@@ -1395,7 +1415,7 @@ def archive_raw_transcript(watermark_iso, now):
                 gz.write(line + "\n")
             written += 1
     except OSError as e:
-        print(f"[warn] raw archive 쓰기 실패(부분 저장 가능): {e}", file=sys.stderr)
+        print(f"[warn] raw archive write failed (partial save possible): {e}", file=sys.stderr)
     return written
 
 
@@ -1437,15 +1457,15 @@ def prune_raw_archive(now=None):
             try:
                 os.remove(path)
                 removed += 1
-                print(f"[consolidate] raw archive 만료 삭제: {fname}")
+                print(f"[consolidate] raw archive expired, deleted: {fname}")
             except OSError as e:
-                print(f"[warn] raw archive 삭제 실패 {fname}: {e}", file=sys.stderr)
+                print(f"[warn] raw archive delete failed {fname}: {e}", file=sys.stderr)
     return removed
 
 
 def _chunk_convo(convo, max_chars=CONSOLIDATE_CHUNK_CHARS):
-    """대화 텍스트를 줄(메시지) 경계로 max_chars 이하 청크 리스트로 분할.
-    단일 줄이 max_chars 보다 길면 그 줄은 단독 청크(어쩔 수 없이 글자수로 잘림)."""
+    """Split conversation text into chunks of at most max_chars, splitting on line (message) boundaries.
+    A single line longer than max_chars becomes its own chunk (unavoidably truncated by character count)."""
     chunks = []
     cur = []
     cur_len = 0
@@ -1463,10 +1483,10 @@ def _chunk_convo(convo, max_chars=CONSOLIDATE_CHUNK_CHARS):
 
 
 def compress_convo_chunked(convo):
-    """긴 대화를 청크로 나눠 각각 CONSOLIDATE_PROMPT(Sonnet) 로 1차 압축.
-    1차는 느슨하게 많이 뽑고(재현율 우선), 정밀도는 룰필터+2차 필터가 책임진다.
-    청크 하나가 실패하면 그 청크만 건너뛰고 계속(부분 실패 허용).
-    반환: (항목 리스트, 실패한 청크 수)."""
+    """Split a long conversation into chunks and compress each with CONSOLIDATE_PROMPT (Sonnet).
+    First pass extracts liberally (recall-first); rule-filter and second-stage filter handle precision.
+    If one chunk fails, that chunk is skipped and processing continues (partial failure allowed).
+    Returns: (item list, number of failed chunks)."""
     chunks = _chunk_convo(convo)
     all_items = []
     failed = 0
@@ -1478,31 +1498,32 @@ def compress_convo_chunked(convo):
             )
         except RuntimeError as e:
             failed += 1
-            print(f"  [warn] 청크 {i}/{len(chunks)} 압축 실패(스킵): {e}", file=sys.stderr)
+            print(f"  [warn] chunk {i}/{len(chunks)} compression failed (skipping): {e}", file=sys.stderr)
             continue
         for it in items:
             key = it.strip().lower()
             if key and key not in seen:
                 seen.add(key)
                 all_items.append(it)
-    print(f"[consolidate] 청크 {len(chunks)}개 중 {len(chunks) - failed}개 압축 성공")
+    print(f"[consolidate] {len(chunks) - failed}/{len(chunks)} chunks compressed successfully")
     return all_items, failed
 
 
 def _load_taxonomy():
-    """CONSOLIDATION_TAXONOMY.md 전문 로드. 없으면 빈 문자열(2차 필터는 그래도 동작)."""
+    """Load the full text of CONSOLIDATION_TAXONOMY.md. Returns empty string if absent
+    (second-stage filter still works without it)."""
     try:
         with open(TAXONOMY_PATH, "r", encoding="utf-8") as f:
             return f.read().strip()
     except OSError:
-        print(f"[warn] taxonomy 문서 없음: {TAXONOMY_PATH}", file=sys.stderr)
+        print(f"[warn] taxonomy document not found: {TAXONOMY_PATH}", file=sys.stderr)
         return ""
 
 
 def _parse_keepdrop(stdout, n):
-    """2차 필터 출력 파싱. 기대 형식: 줄당 '<번호> KEEP' 또는 '<번호> DROP <사유>'.
-    반환: {idx(1-base): (verdict 'KEEP'|'DROP', reason)}.
-    파싱 못한 번호는 호출부에서 보수적으로 DROP 처리(누락=DROP)."""
+    """Parse second-stage filter output. Expected format per line: '<num> KEEP' or '<num> DROP <reason>'.
+    Returns: {idx (1-based): (verdict 'KEEP'|'DROP', reason)}.
+    Unparsed indices are treated conservatively as DROP by the caller (missing = DROP)."""
     verdicts = {}
     for ln in stdout.splitlines():
         s = ln.strip()
@@ -1515,15 +1536,15 @@ def _parse_keepdrop(stdout, n):
         verdict = m.group(2).upper()
         reason = m.group(3).strip().lstrip("-—:").strip()
         if 1 <= idx <= n:
-            verdicts[idx] = (verdict, reason or ("" if verdict == "KEEP" else "사유없음"))
+            verdicts[idx] = (verdict, reason or ("" if verdict == "KEEP" else "no-reason"))
     return verdicts
 
 
 def _second_stage_filter(candidates):
-    """2차 KEEP/DROP 필터(Sonnet). taxonomy 기준으로 각 후보를 최종 판정.
-    후보를 FILTER_BATCH_SIZE 묶음으로 번호 매겨 한 번에 판정(개별 호출 X).
-    반환: (kept 리스트, dropped (항목,사유) 리스트, 필터실패여부 bool).
-    필터 호출이 실패하면 보수 폴백: 그 묶음은 전부 KEEP(놓침 방지)하고 실패 플래그."""
+    """Second-stage KEEP/DROP filter (Sonnet). Final verdict per candidate based on taxonomy.
+    Candidates are numbered and judged in batches of FILTER_BATCH_SIZE (no per-item calls).
+    Returns: (kept list, dropped (item, reason) list, filter_failed bool).
+    If the filter call fails, conservative fallback: KEEP the entire batch (avoid missing) + set flag."""
     if not candidates:
         return [], [], False
 
@@ -1557,13 +1578,13 @@ def _second_stage_filter(candidates):
                 raise RuntimeError(f"rc={proc.returncode}: {proc.stderr.strip()}")
             verdicts = _parse_keepdrop(proc.stdout, len(batch))
         except (OSError, subprocess.TimeoutExpired, RuntimeError) as e:
-            print(f"  [warn] 2차 필터 실패(이 묶음 전부 KEEP 폴백): {e}", file=sys.stderr)
+            print(f"  [warn] second-stage filter failed (KEEP all in this batch as fallback): {e}", file=sys.stderr)
             filter_failed = True
             kept.extend(batch)
             continue
 
         for i, it in enumerate(batch, 1):
-            verdict, reason = verdicts.get(i, ("DROP", "판정누락"))
+            verdict, reason = verdicts.get(i, ("DROP", "verdict-missing"))
             if verdict == "KEEP":
                 kept.append(it)
             else:
@@ -1573,12 +1594,12 @@ def _second_stage_filter(candidates):
 
 
 def _backup_md(path):
-    """대상 md 백업 <path>.bak.YYYYMMDD 생성. 경로 반환.
-    파일이 없거나(fresh install) 비어 있으면 백업할 것이 없으므로 None 반환.
+    """Create a backup of the target md at <path>.bak.YYYYMMDD. Returns the path.
+    Returns None if the file does not exist or is empty (fresh install, nothing to back up).
     """
     import shutil
 
-    # fresh install: inbox.md 미존재 or 0바이트면 백업 스킵(FileNotFoundError 방지).
+    # fresh install: skip backup if inbox.md is absent or 0 bytes (avoids FileNotFoundError).
     if not os.path.isfile(path) or os.path.getsize(path) == 0:
         return None
     stamp = datetime.date.today().strftime("%Y%m%d")
@@ -1588,45 +1609,45 @@ def _backup_md(path):
 
 
 def _build_consolidate_report(new_items, skipped, had_error, mem_lines):
-    """텔레그램 무음 리포트 텍스트 생성(유저친화·기술용어 금지·별표강조 금지).
-    new_items: 적재된 신규 항목(메타 미부착 원문 한 줄들).
-    skipped: 중복으로 넘긴 개수(리포트엔 안 쓰고 stdout 로그용으로만 받음).
-    had_error: 정리 중 에러(임베딩/압축 실패 등) 있었는지.
-    mem_lines: 현재 inbox.md 줄 수.
-    반환: 발송할 리포트 문자열, 또는 None(발송 스킵).
+    """Build the Telegram silent-report text (user-friendly, no technical jargon, no bold asterisks).
+    new_items: newly stored items (raw one-liners without metadata).
+    skipped: count skipped as duplicates (for stdout log only, not included in report).
+    had_error: whether an error occurred during consolidation (embedding/compression failure etc.).
+    mem_lines: current line count of inbox.md.
+    Returns: report string to send, or None (skip sending).
     """
     md = datetime.date.today().strftime("%-m/%-d")
     n = len(new_items)
 
-    # 신규 0건 & 에러 없음 & 크기경고 없음 → 조용히 발송 스킵(매일 노이즈 방지).
+    # 0 new items, no error, no size warning -> silently skip sending (avoid daily noise).
     over_cap = mem_lines > MEMORY_LINES_CAP
     if n == 0 and not had_error and not over_cap:
         return None
 
-    lines = [f"🌙 자는 동안 기억 정리했어요 ({md})"]
+    lines = [f"🌙 Memory sorted while you slept ({md})"]
     if n > 0:
-        lines.append(f"- 새로 기억한 것 {n}가지")
+        lines.append(f"- {n} new things remembered")
         for it in new_items:
             lines.append(f"  · {it}")
     else:
-        lines.append("- 새로 기억할 만한 건 없었어요")
+        lines.append("- Nothing new worth remembering")
 
     if over_cap:
-        lines.append("받은편지함에 많이 쌓였어요 — 주제별로 정리할까요?")
+        lines.append("Inbox is getting full -- want to sort by topic?")
     if had_error:
-        lines.append("정리하다 걸린 데가 있었어요, 봐주세요")
+        lines.append("Hit a snag during sorting, please check")
 
     return "\n".join(lines)
 
 
 def _send_silent_report(text):
-    """dogany-proactive-push 의 push.sh 로 무음 발송. 성공 True.
-    push.sh --silent --text <리포트> 호출."""
+    """Silent send via push.sh (dogany-proactive-push). Returns True on success.
+    Calls: push.sh --silent --text <report>."""
     if not CONSOLIDATE_REPORT_ENABLED:
         return False
     push_sh = os.path.normpath(os.path.join(HERE, "..", "routines", "push.sh"))
     if not os.path.isfile(push_sh):
-        print(f"[warn] push.sh 없음: {push_sh}", file=sys.stderr)
+        print(f"[warn] push.sh not found: {push_sh}", file=sys.stderr)
         return False
     try:
         proc = subprocess.run(
@@ -1636,7 +1657,7 @@ def _send_silent_report(text):
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[warn] 리포트 발송 실패: {e}", file=sys.stderr)
+        print(f"[warn] report send failed: {e}", file=sys.stderr)
         return False
     if proc.returncode != 0:
         print(f"[warn] push.sh rc={proc.returncode}: {proc.stderr.strip()}", file=sys.stderr)
@@ -1645,9 +1666,10 @@ def _send_silent_report(text):
 
 
 def _is_correction(text):
-    """후보 텍스트가 정정/개정/번복 마커로 시작하면 True.
-    이런 항목은 기존 사실을 뒤집는 near-verbatim 재진술이라 코사인이 높게 나와
-    dedup 하드 스킵에 걸리기 쉽다 → 스킵에서 면제해 반드시 적재한다(DGN-055)."""
+    """Returns True if the candidate text starts with a correction/revision/retraction marker.
+    Such items are near-verbatim restatements that reverse existing facts, so their cosine
+    score tends to be high and they would be caught by the dedup hard skip (making the stale
+    fact stay authoritative). Exempt them from the skip so they are always stored (DGN-055)."""
     if not text:
         return False
     s = text.lstrip().lower()
@@ -1660,94 +1682,95 @@ def cmd_consolidate(args):
     conn = connect()
     init_db(conn)
 
-    # 1) 워터마크 로드 (--since-days 면 무시하고 최근 N일 강제)
+    # 1) load watermark (--since-days overrides it and forces the last N days)
     if args.since_days is not None:
         watermark = (now - datetime.timedelta(days=args.since_days)).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ"
         )
-        print(f"[consolidate] --since-days {args.since_days} → 워터마크 무시, {watermark} 이후")
+        print(f"[consolidate] --since-days {args.since_days} -> ignoring watermark, using {watermark}")
     else:
         watermark = _ts_load_watermark(conn)
         if watermark:
-            print(f"[consolidate] 워터마크: {watermark} 이후")
+            print(f"[consolidate] watermark: after {watermark}")
         else:
-            print(f"[consolidate] 워터마크 없음 → 최근 {DEFAULT_LOOKBACK_DAYS}일치")
+            print(f"[consolidate] no watermark -> last {DEFAULT_LOOKBACK_DAYS} days")
 
-    # 2) 트랜스크립트 증분 수집
+    # 2) collect transcript incrementally
     convo, max_ts, n_msgs = collect_transcript(watermark, now)
     if not convo:
-        print("정리할 새 대화 없음.")
+        print("No new conversations to consolidate.")
         conn.close()
         return 0
-    print(f"[consolidate] 대화 {n_msgs}건 수집 (최대 ts={max_ts})")
+    print(f"[consolidate] {n_msgs} messages collected (max ts={max_ts})")
 
-    # 2.5) raw transcript archive (DGN-093): 워터마크 전진/프룬으로 버려지기 전에
-    # 소비한 구간을 TEXT ONLY 로 gzip 월별 아카이브에 append. collect_transcript 와
-    # 같은 소스/워터마크(_iter_transcript_rows)라 소비 구간을 넘겨 읽지 않는다.
-    # dry-run 이면 원본 상태를 안 바꾸므로 아카이브도 생략.
+    # 2.5) raw transcript archive (DGN-093): before the watermark advance/prune discards them,
+    # append the consumed span (TEXT ONLY) to a gzip monthly archive. Uses the same
+    # source/watermark (_iter_transcript_rows) as collect_transcript so it does not read
+    # beyond the consumed span. Skipped on dry-run (no state changes).
     if not args.dry_run:
         n_arch = archive_raw_transcript(watermark, now)
-        print(f"[consolidate] raw archive 적재 {n_arch}건 → {RAW_ARCHIVE_DIR}")
+        print(f"[consolidate] raw archive: {n_arch} rows stored -> {RAW_ARCHIVE_DIR}")
 
-    # 3) 1차 압축 (Sonnet, 느슨하게 많이). 길면 청크 분할.
+    # 3) first-pass compression (Sonnet, extract liberally). Split into chunks if long.
     candidates, compress_failed = compress_convo_chunked(convo)
-    print(f"[consolidate] 1차 압축 후보 {len(candidates)}개")
+    print(f"[consolidate] first-pass candidates: {len(candidates)}")
 
     if not candidates:
-        # 청크가 전부 압축 실패해 후보가 0이면 워터마크를 전진하지 않는다
-        # (다음 밤에 같은 구간을 재시도해야 함). 단순히 기억할 게 없던 거면 전진.
+        # If ALL chunks failed compression and produced 0 candidates, do NOT advance the
+        # watermark (retry the same span next night). If there was simply nothing to remember, advance.
         if compress_failed and compress_failed == len(_chunk_convo(convo)):
-            print("모든 청크 압축 실패 — 워터마크 보존(다음 실행 재시도).")
+            print("All chunks failed compression -- watermark preserved (retry next run).")
             conn.close()
             if not args.dry_run and not args.no_push:
                 rep = _build_consolidate_report([], 0, True, 0)
                 if rep:
                     _send_silent_report(rep)
             return 1
-        print("기억할 만한 영속 사실 없음.")
+        print("No persistent facts worth remembering.")
         if not args.dry_run:
             _ts_save_watermark(conn, max_ts)
             prune_transcript_fts(conn, max_ts)
         conn.close()
         return 0
 
-    # 3.5) 룰필터(후처리, 결정론적 이중 안전망): 형식구조물/발화/명령 후보 제거.
+    # 3.5) rule-filter (post-processing, deterministic double safety net): remove structural
+    # artifact / utterance / command candidates.
     candidates, rule_dropped = _rule_filter_candidates(candidates)
-    print(f"[consolidate] 룰필터 후 {len(candidates)}개 (룰로 {len(rule_dropped)}개 제거)")
+    print(f"[consolidate] after rule-filter: {len(candidates)} ({len(rule_dropped)} removed by rules)")
     for it, why in rule_dropped:
-        print(f"    [룰DROP/{why}] {it}")
+        print(f"    [ruleDROP/{why}] {it}")
 
-    # 3.6) 2차 KEEP/DROP 필터(Sonnet + taxonomy). 묶음 판정.
+    # 3.6) second-stage KEEP/DROP filter (Sonnet + taxonomy). Batch verdicts.
     candidates, sec_dropped, filter_failed = _second_stage_filter(candidates)
-    print(f"[consolidate] 2차 필터 후 {len(candidates)}개 (2차로 {len(sec_dropped)}개 DROP)")
+    print(f"[consolidate] after second-stage filter: {len(candidates)} ({len(sec_dropped)} DROPped)")
     for it, why in sec_dropped:
-        print(f"    [2차DROP/{why}] {it}")
+        print(f"    [2ndDROP/{why}] {it}")
 
     if not candidates:
-        print("필터 통과한 영속 사실 없음.")
+        print("No persistent facts passed the filter.")
         if not args.dry_run:
             _ts_save_watermark(conn, max_ts)
             prune_transcript_fts(conn, max_ts)
         conn.close()
         return 0
 
-    # 4) 중복제거: 각 후보 embed → 기존 notes 임베딩과 코사인. 최대 ≥ 임계면 스킵.
+    # 4) dedup: embed each candidate -> cosine against existing note embeddings. Skip if max >= threshold.
     existing_vecs = []
     embed_failed = False
     for row in conn.execute("SELECT embedding FROM notes WHERE embedding IS NOT NULL"):
         existing_vecs.append(blob_to_vec(row["embedding"]))
 
-    new_items = []   # 신규(적재 대상) 원문 항목
-    dup_items = []   # 중복으로 스킵한 항목
+    new_items = []   # new items (to be stored)
+    dup_items = []   # items skipped as duplicates
     for cand in candidates:
         if embed_failed:
-            # 이미 임베딩이 깨졌으면 전부 신규 취급
+            # embedding broken -> treat all remaining as new
             new_items.append(cand)
             continue
         try:
             cvec = embed(cand)
         except (urllib.error.URLError, OSError, ValueError) as e:
-            print(f"[warn] 임베딩 실패 — 중복제거 생략, 전부 신규 취급: {e}", file=sys.stderr)
+            print(f"[warn] embedding failed -- skipping dedup, treating all as new: {e}", file=sys.stderr)
             embed_failed = True
             new_items.append(cand)
             continue
@@ -1756,43 +1779,44 @@ def cmd_consolidate(args):
             s = cosine(cvec, ev)
             if s > max_sim:
                 max_sim = s
-        # 정정 면제(M3/DGN-055): 정정 항목은 기존 사실을 뒤집는 near-verbatim 재진술이라
-        # 코사인이 DEDUP_THRESHOLD 를 넘어 하드 스킵에 걸린다. 그대로 두면 stale fact 가
-        # authoritative 로 남는다("confidently wrong"). 정정 마커 후보는 스킵에서 면제해 적재.
-        # 2차 필터를 이미 통과(KEEP)한 항목만 여기 오므로 필터-KEPT 조건은 이미 성립.
+        # Correction exemption (M3/DGN-055): correction items reverse existing facts so their
+        # cosine exceeds DEDUP_THRESHOLD and they'd be hard-skipped, leaving the stale fact
+        # authoritative ("confidently wrong"). Exempt correction-marker candidates from the skip.
+        # Only items that already passed the second-stage filter (KEEP) reach here.
         if max_sim >= DEDUP_THRESHOLD and not _is_correction(cand):
             dup_items.append(cand)
         else:
             new_items.append(cand)
-            existing_vecs.append(cvec)  # 후보 간 중복도 잡도록 풀에 추가
+            existing_vecs.append(cvec)  # add to pool to catch inter-candidate duplicates too
 
-    print(f"[consolidate] 신규 {len(new_items)}개 / 중복 스킵 {len(dup_items)}개"
-          + (" / 임베딩 실패(중복제거 생략)" if embed_failed else ""))
+    print(f"[consolidate] new: {len(new_items)} / dup skipped: {len(dup_items)}"
+          + (" / embedding failed (dedup skipped)" if embed_failed else ""))
 
-    # 5) 메타 부착
+    # 5) attach metadata
     today = datetime.date.today().isoformat()
-    tagged = [f"{it} ({today}, 야간공고화)" for it in new_items]
+    tagged = [f"{it} ({today}, nightly-consolidate)" for it in new_items]
 
-    # 미리보기 출력(항상)
-    print(f"\n== 적재 예정 ({len(tagged)}개) → inbox.md ==")
+    # print preview (always)
+    print(f"\n== to be stored ({len(tagged)}) -> inbox.md ==")
     for it in tagged:
         print(f"  § {it}")
     if dup_items:
-        print(f"\n-- 이미 아는 것(스킵) {len(dup_items)}개 --")
+        print(f"\n-- already known (skipped): {len(dup_items)} --")
         for it in dup_items:
             print(f"  ~ {it}")
 
-    # dry-run: 파일/DB/워터마크/푸시 전부 건드리지 않음
+    # dry-run: do not touch file / DB / watermark / push
     if args.dry_run:
-        print("\n[dry-run] 파일·워터마크·재인덱스·푸시 모두 생략. 위가 미리보기.")
+        print("\n[dry-run] file / watermark / re-index / push all skipped. above is preview.")
         conn.close()
         return 0
 
-    # 5b) 적재 (신규 있을 때만 백업+append+재인덱스). inbox.md 는 § 기반 → has_sep 자동판정.
+    # 5b) store (only when there are new items: backup + append + re-index).
+    # inbox.md is § based -> has_sep auto-detected.
     if tagged:
-        # fresh install 방어: memories/ 디렉토리 + inbox.md 가 없으면 먼저 만든다.
-        # (.gitignore 는 MEMORY.md 만 배포 → 최초 consolidate 시 inbox.md 부재로
-        #  _backup_md/append_notes_to_md 가 FileNotFoundError 로 죽던 FATAL 방어.)
+        # fresh-install guard: create memories/ dir + inbox.md if missing.
+        # (.gitignore ships MEMORY.md only -> inbox.md absent on first consolidate run ->
+        #  _backup_md/append_notes_to_md would die with FileNotFoundError. Guard against that.)
         os.makedirs(MEMORIES_DIR, exist_ok=True)
         if not os.path.isfile(TARGET_MEMORY_MD):
             # M5: seed the section-format marker so append doesn't sniff an empty
@@ -1801,36 +1825,36 @@ def cmd_consolidate(args):
                 _f.write(_marker_line("section") + "\n")
         bak = _backup_md(TARGET_MEMORY_MD)
         if bak:
-            print(f"[consolidate] 백업 생성: {os.path.basename(bak)}")
+            print(f"[consolidate] backup created: {os.path.basename(bak)}")
         where = append_notes_to_md(TARGET_MEMORY_MD, None, tagged)
         print(f"[consolidate] {where}")
 
-    # 6) 워터마크 전진 + 당일 롤링 인덱스 프룬(증류 끝난 ts<=max_ts raw 삭제)
+    # 6) advance watermark + prune same-day rolling index (delete raw rows with ts<=max_ts)
     _ts_save_watermark(conn, max_ts)
     pruned = prune_transcript_fts(conn, max_ts)
-    print(f"[consolidate] 워터마크 전진 → {max_ts} (당일 raw {pruned}행 프룬)")
+    print(f"[consolidate] watermark advanced -> {max_ts} ({pruned} same-day raw rows pruned)")
     conn.close()
 
-    # 6b) raw archive 보존기간 프룬(DGN-093): ~365일 지난 월별 아카이브 삭제.
+    # 6b) prune raw archive retention (DGN-093): delete monthly archives older than ~365 days.
     n_rawpruned = prune_raw_archive(now)
     if n_rawpruned:
-        print(f"[consolidate] raw archive 만료 {n_rawpruned}개 삭제")
+        print(f"[consolidate] {n_rawpruned} raw archive files expired and deleted")
 
-    # 7) 재인덱싱 (신규 적재 있었을 때만 의미 있음)
+    # 7) re-index (only meaningful when new items were stored)
     if tagged:
-        print("[consolidate] 재인덱싱...")
+        print("[consolidate] re-indexing...")
         cmd_index(argparse.Namespace(lock=None))
 
-    # 7b) M4: NULL 임베딩 비율 점검 — 높으면 의미검색 저하(Ollama 부재/다운) 크게 경고.
+    # 7b) M4: check NULL embedding ratio -- high ratio means semantic search degraded (Ollama absent/down).
     frac, nulls, ntot = null_embedding_fraction()
     if ntot and frac >= NULL_EMBED_WARN_FRAC:
         print(
-            f"[!! 경고] 노트 {nulls}/{ntot} ({frac*100:.0f}%) 임베딩 없음 — "
-            "의미(벡터) 검색 저하. Ollama(bge-m3) 확인 후 index 재실행 권장. "
-            "지금 자동회상은 키워드 검색으로만 동작."
+            f"[!! warning] {nulls}/{ntot} notes ({frac*100:.0f}%) have no embedding -- "
+            "semantic (vector) search degraded. Check Ollama(bge-m3) then re-run index. "
+            "Auto-recall currently running on keyword search only."
         )
 
-    # 8) 리포트 생성 + 무음 발송
+    # 8) build report + silent send
     try:
         mem_lines = sum(1 for _ in open(TARGET_MEMORY_MD, "r", encoding="utf-8"))
     except OSError:
@@ -1839,47 +1863,49 @@ def cmd_consolidate(args):
     report = _build_consolidate_report(new_items, len(dup_items), had_error, mem_lines)
 
     if report is None:
-        print("[consolidate] 리포트 발송 스킵(신규 0·에러 없음·여유 충분).")
+        print("[consolidate] report send skipped (0 new items, no error, within capacity).")
         return 0
 
-    print("\n-- 리포트 --\n" + report)
+    print("\n-- report --\n" + report)
     if args.no_push:
-        print("\n[--no-push] 텔레그램 발송 생략.")
+        print("\n[--no-push] Telegram send skipped.")
         return 0
     if _send_silent_report(report):
-        print("[consolidate] 리포트 무음 발송 완료.")
+        print("[consolidate] report sent silently.")
     return 0
 
 
 # ======================================================================
-# classify-inbox 커맨드 (주간 inbox 분류: inbox.md → 주제파일 배분 + 새 주제 제안)
+# classify-inbox command (weekly inbox classification: inbox.md -> distribute to topic files + suggest new topics)
 # ======================================================================
-# 핵심: 야간 공고화가 inbox.md 에 단순 적재한 항목을, 주 1회 Opus 로 판정해
-# 현존 주제파일(memories/*.md, USER·inbox 제외)로 배분한다.
-# - 배분: 해당 주제파일에 append(파일 형식 has_sep 따라), inbox.md 에서 제거.
-# - 새 주제: 생성하지 않고 리포트로만 제안(같은 새 주제 3개 이상일 때).
-# - 버림: 가치 없는 항목은 로그만 남기고 inbox 에서 제거.
-# 안전 최우선: 실패(Opus 한도/에러)하면 inbox.md 를 절대 손대지 않고 rc!=0 으로 종료.
+# Core: once a week, use Opus to judge items that nightly consolidation stored in inbox.md
+# and distribute them to existing topic files (memories/*.md, excluding USER and inbox).
+# - Distribute: append to the topic file (respecting its has_sep format), remove from inbox.md.
+# - New topic: do NOT create a new file; suggest it in the report (when 3+ items share a new label).
+# - Drop: log and remove from inbox (no topic match and no lasting value).
+# Safety first: on failure (Opus limit / error) never touch inbox.md; exit rc!=0.
 CLASSIFY_MODEL = "opus"
-# 분류 후보(주제) 파일에서 항상 제외할 것. inbox 는 소스, USER 는 hot.
+# Always exclude these from distribution target (topic) candidates. inbox is the source; USER is hot.
 CLASSIFY_EXCLUDE = {"USER.md", "inbox.md"}
-# 같은 '새 주제군' 라벨이 이 개수 이상 모이면 "새 파일 만들까요?" 제안.
+# Suggest creating a new file when this many items accumulate under the same new-topic label.
 NEW_TOPIC_SUGGEST_MIN = 3
 
-# classify-inbox 종료 코드(체크 래퍼와 계약).
-#   0 = 실제 분류 성공(마커 찍어도 됨) / 2 = 분류할 항목 없음(마커 찍지 마라) /
-#   1 = 실패(Opus 한도·에러, inbox 보존, 다음 실행 재시도).
-# 핵심: 빈 inbox(헤더·주석시드·빈 § 만)를 "항목 있음"으로 오판해 rc=0 마커를 찍으면,
-# 나중에 진짜 항목이 쌓여도 7일 스킵으로 영영 분류가 안 돈다 → 항목없음은 반드시 rc=2.
+# Exit codes for classify-inbox (contract with the check wrapper).
+#   0 = actual classification success (ok to stamp marker) /
+#   2 = no items to classify (do NOT stamp marker) /
+#   1 = failure (Opus limit / error, inbox preserved, retry next run).
+# Key: if an empty inbox (header / comment seed / blank § only) is mistakenly judged as
+# "has items" and rc=0 marker is stamped, real items that accumulate later will be skipped
+# forever by the 7-day skip -> must always return rc=2 for empty inbox.
 CLASSIFY_RC_OK = 0
 CLASSIFY_RC_EMPTY = 2
 CLASSIFY_RC_FAIL = 1
 
 
 def inbox_has_items(path=None):
-    """inbox.md 에 실제 분류 대상 항목이 하나라도 있는가?
-    체크 래퍼와 cmd_classify_inbox 가 '빔' 판정을 공유하기 위한 단일 기준.
-    헤더·주석시드·빈 구분자 등 비실항목은 _inbox_items 가 이미 걸러낸다."""
+    """Is there at least one actual classification-target item in inbox.md?
+    Single source of truth for the 'empty' check shared by the check wrapper and cmd_classify_inbox.
+    Non-items (headers, comment seeds, blank separators) are already filtered by _inbox_items."""
     if path is None:
         path = os.path.join(MEMORIES_DIR, "inbox.md")
     if not os.path.isfile(path):
@@ -1888,16 +1914,17 @@ def inbox_has_items(path=None):
 
 
 def _inbox_items(path):
-    """inbox.md 에서 실제 분류 대상 항목만 추출.
-    § 기반 파일이므로 parse_markdown 으로 노트를 뽑되, 주석(HTML <!-- -->)·
-    빈 시드는 제외. 반환: [(note_text, ...)] 형태가 아니라 순수 텍스트 리스트."""
+    """Extract only real classification-target items from inbox.md.
+    Because inbox.md is § based, parse with parse_markdown and exclude
+    HTML comment (<!-- -->) seeds and empty blocks.
+    Returns: plain text list (not a list of note dicts)."""
     notes = parse_markdown(path)
     items = []
     for nt in notes:
         t = (nt.get("text") or "").strip()
         if not t:
             continue
-        # HTML 주석 시드(<!-- ... -->)만으로 이뤄진 블록 제외
+        # exclude blocks that consist solely of HTML comment seeds (<!-- ... -->)
         stripped = re.sub(r"<!--.*?-->", "", t, flags=re.DOTALL).strip()
         if not stripped:
             continue
@@ -1906,9 +1933,9 @@ def _inbox_items(path):
 
 
 def _classify_topics(memories_dir):
-    """현재 주제파일 목록을 동적 수집(하드코딩 금지).
-    memories/*.md 중 CLASSIFY_EXCLUDE 제외. 각 파일의 첫 헤더(섹션명)도 같이.
-    반환: [(filename, section_hint), ...]. 친구가 옵시디언으로 파일 추가해도 따라감."""
+    """Dynamically collect the current topic file list (no hard-coding).
+    memories/*.md excluding CLASSIFY_EXCLUDE. Also reads the first header (section name) of each file.
+    Returns: [(filename, section_hint), ...]. Automatically picks up new files added via Obsidian etc."""
     topics = []
     for fname in sorted(os.listdir(memories_dir)):
         if not fname.endswith(".md") or fname in CLASSIFY_EXCLUDE:
@@ -1927,10 +1954,11 @@ def _classify_topics(memories_dir):
 
 
 def _parse_classify_output(stdout, n_items, valid_files):
-    """분류기 출력 파싱. 기대 형식: 줄당 '<번호> <판정>'.
-    판정 = 주제파일명(예: about-user.md) | NEW:<라벨> | DROP.
-    반환: {idx(1-base): ('FILE', fname) | ('NEW', label) | ('DROP', '')}.
-    파싱 못하거나 알 수 없는 파일명이면 호출부에서 보수적으로 무시(inbox 잔류)."""
+    """Parse classifier output. Expected format per line: '<num> <verdict>'.
+    verdict = topic filename (e.g. about-user.md) | NEW:<label> | DROP.
+    Returns: {idx (1-based): ('FILE', fname) | ('NEW', label) | ('DROP', '')}.
+    Lines that cannot be parsed or reference an unknown filename are conservatively
+    ignored by the caller (item stays in inbox)."""
     verdicts = {}
     for ln in stdout.splitlines():
         s = ln.strip()
@@ -1948,9 +1976,9 @@ def _parse_classify_output(stdout, n_items, valid_files):
             verdicts[idx] = ("DROP", "")
         elif up.startswith("NEW:") or up.startswith("NEW "):
             label = verdict[4:].strip().lstrip(":").strip()
-            verdicts[idx] = ("NEW", label or "미상")
+            verdicts[idx] = ("NEW", label or "unknown")
         else:
-            # 파일명 판정. 확장자 보정.
+            # filename verdict; normalize extension
             cand = verdict.split()[0].strip()
             if not cand.endswith(".md"):
                 cand_md = cand + ".md"
@@ -1958,15 +1986,15 @@ def _parse_classify_output(stdout, n_items, valid_files):
                 cand_md = cand
             if cand_md in valid_files:
                 verdicts[idx] = ("FILE", cand_md)
-            # 알 수 없는 파일명 → 무시(inbox 잔류, 안전)
+            # unknown filename -> ignore (item stays in inbox, safe)
     return verdicts
 
 
 def _run_classifier(items, topics):
-    """Opus 분류기 1회 호출. 각 inbox 항목을 주제파일/새주제/버림으로 판정.
-    반환: (verdicts dict, ok bool). ok=False면 호출 실패(inbox 보존해야 함)."""
+    """Single Opus classifier call. Judges each inbox item as topic file / new topic / drop.
+    Returns: (verdicts dict, ok bool). ok=False means call failed (inbox must be preserved)."""
     topic_lines = "\n".join(
-        f"- {fn}" + (f" (섹션: {sec})" if sec else "") for fn, sec in topics
+        f"- {fn}" + (f" (section: {sec})" if sec else "") for fn, sec in topics
     )
     numbered = "\n".join(f"{i}. {it}" for i, it in enumerate(items, 1))
     prompt = (
@@ -1990,10 +2018,10 @@ def _run_classifier(items, topics):
             capture_output=True, text=True, timeout=300,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[error] 분류기 호출 실패: {e}", file=sys.stderr)
+        print(f"[error] classifier call failed: {e}", file=sys.stderr)
         return {}, False
     if proc.returncode != 0:
-        print(f"[error] 분류기 비정상 종료(rc={proc.returncode}): {proc.stderr.strip()}",
+        print(f"[error] classifier exited abnormally (rc={proc.returncode}): {proc.stderr.strip()}",
               file=sys.stderr)
         return {}, False
 
@@ -2003,20 +2031,20 @@ def _run_classifier(items, topics):
 
 
 def _rewrite_inbox(path, keep_items):
-    """inbox.md 를 keep_items 만 남기고 재작성(원자교체).
-    헤더(### 미분류 (inbox))와 주석 시드는 보존하고, § 블록 본문만 교체.
-    keep_items 가 비면 시드 주석만 남는 빈 inbox 로 복원."""
-    # 원본에서 헤더 라인과 주석 시드를 추출(첫 헤더 + HTML 주석 블록).
+    """Rewrite inbox.md keeping only keep_items (atomic replacement).
+    Preserve the header (### unclassified (inbox)) and comment seed; replace only the § block body.
+    If keep_items is empty, restore the inbox to just the seed comment."""
+    # extract the header line and comment seed from the original (first header + HTML comment block).
     with open(path, "r", encoding="utf-8") as f:
         orig = f.read()
 
-    header_line = "### 미분류 (inbox)"
+    header_line = "### unclassified (inbox)"
     for ln in orig.splitlines():
         if _is_header(ln):
             header_line = ln.rstrip()
             break
 
-    # 주석 시드(<!-- ... -->) 보존: 원본에서 그대로 떼어온다.
+    # preserve comment seed (<!-- ... -->): take it verbatim from the original.
     seed_comment = ""
     mcomment = re.search(r"<!--.*?-->", orig, flags=re.DOTALL)
     if mcomment:
@@ -2031,7 +2059,7 @@ def _rewrite_inbox(path, keep_items):
     for it in keep_items:
         parts.append(it)
         parts.append("§")
-    # 끝의 잉여 § 정리: 마지막이 § 면 그대로 둬도 parse 안전(빈 블록 무시).
+    # trailing stray § cleanup: a trailing § is parse-safe (empty blocks are ignored).
     new_content = "\n".join(parts) + "\n"
 
     tmp = path + ".tmp"
@@ -2041,40 +2069,41 @@ def _rewrite_inbox(path, keep_items):
 
 
 def cmd_classify_inbox(args):
-    """주간 inbox 분류. 종료코드 계약: 성공=0 / 항목없음=2 / 실패=1.
-    실패하면 inbox.md 를 절대 손대지 않고 rc=1(다음 실행 재시도).
-    '항목없음'은 rc=2 — 체크 래퍼가 마커를 안 찍게 해 진짜 항목이 올 때까지 매일 본다."""
+    """Weekly inbox classification. Exit-code contract: success=0 / no-items=2 / failure=1.
+    On failure, inbox.md is never touched and rc=1 (retry on next run).
+    'no-items' is rc=2 — the check wrapper skips writing the marker so the job re-runs
+    daily until real items arrive."""
     inbox_path = os.path.join(MEMORIES_DIR, "inbox.md")
     if not os.path.isfile(inbox_path):
-        print("[classify-inbox] inbox.md 없음 — 할 일 없음(rc=2).")
+        print("[classify-inbox] inbox.md not found — nothing to do (rc=2).")
         return CLASSIFY_RC_EMPTY
 
     items = _inbox_items(inbox_path)
     if not items:
-        print("[classify-inbox] inbox 비어 있음(헤더·주석·빈§만) — 종료(작업 없음, rc=2).")
+        print("[classify-inbox] inbox empty (headers/comments/blank sections only) — done (no items, rc=2).")
         return CLASSIFY_RC_EMPTY
-    print(f"[classify-inbox] inbox 항목 {len(items)}개")
+    print(f"[classify-inbox] inbox items: {len(items)}")
 
     topics = _classify_topics(MEMORIES_DIR)
     if not topics:
-        print("[error] 배분할 주제파일이 하나도 없음 — inbox 보존, 비정상 종료(rc=1).",
+        print("[error] no topic files to assign to — inbox preserved, abnormal exit (rc=1).",
               file=sys.stderr)
         return CLASSIFY_RC_FAIL
-    print(f"[classify-inbox] 주제 후보 {len(topics)}개: " +
+    print(f"[classify-inbox] topic candidates: {len(topics)}: " +
           ", ".join(fn for fn, _ in topics))
 
-    # Opus 분류 1회
+    # single Opus classification pass
     verdicts, ok = _run_classifier(items, topics)
     if not ok:
-        # 호출 실패: inbox 절대 손대지 않고 비정상 종료(다음 실행 재시도).
-        print("[error] 분류기 실패 — inbox.md 보존, 비정상 종료(rc=1).", file=sys.stderr)
+        # classifier call failed: leave inbox untouched, abnormal exit (retry next run).
+        print("[error] classifier failed — inbox.md preserved, abnormal exit (rc=1).", file=sys.stderr)
         return CLASSIFY_RC_FAIL
 
-    # 판정 집계
+    # tally verdicts
     assign = {}     # fname -> [item, ...]
     new_groups = {} # label -> [item, ...]
     dropped = []    # [item, ...]
-    keep_in_inbox = []  # 판정 누락/알수없음 → inbox 잔류(안전)
+    keep_in_inbox = []  # missing verdict / unknown -> stay in inbox (safe)
     for i, it in enumerate(items, 1):
         v = verdicts.get(i)
         if not v:
@@ -2085,79 +2114,79 @@ def cmd_classify_inbox(args):
             assign.setdefault(payload, []).append(it)
         elif kind == "NEW":
             new_groups.setdefault(payload, []).append(it)
-            keep_in_inbox.append(it)  # 새 주제는 파일 안 만드니 inbox 에 남김
+            keep_in_inbox.append(it)  # new topic: no file created, so item stays in inbox
         elif kind == "DROP":
             dropped.append(it)
 
-    # 미리보기 출력
-    print("\n== 분류 결과 ==")
+    # preview output
+    print("\n== classification result ==")
     for fn, lst in assign.items():
-        print(f"  [→ {fn}] {len(lst)}개")
+        print(f"  [-> {fn}] {len(lst)} items")
         for it in lst:
-            print(f"      · {it}")
+            print(f"      . {it}")
     if new_groups:
-        print("  [새 주제 후보]")
+        print("  [new topic candidates]")
         for label, lst in new_groups.items():
-            mark = " ★제안" if len(lst) >= NEW_TOPIC_SUGGEST_MIN else ""
-            print(f"    NEW:{label} ({len(lst)}개){mark}")
+            mark = " *suggest" if len(lst) >= NEW_TOPIC_SUGGEST_MIN else ""
+            print(f"    NEW:{label} ({len(lst)} items){mark}")
             for it in lst:
-                print(f"      · {it}")
+                print(f"      . {it}")
     if dropped:
-        print(f"  [버림] {len(dropped)}개")
+        print(f"  [dropped] {len(dropped)} items")
         for it in dropped:
-            print(f"      · {it}")
+            print(f"      . {it}")
     if keep_in_inbox:
-        print(f"  [inbox 잔류] {len(keep_in_inbox)}개 (새주제/판정누락)")
+        print(f"  [inbox retain] {len(keep_in_inbox)} items (new-topic/verdict-missing)")
 
     if args.dry_run:
-        print("\n[dry-run] 파일·inbox·재인덱스 모두 미실행. 위가 미리보기.")
+        print("\n[dry-run] no file/inbox/reindex writes. above is preview only.")
         return CLASSIFY_RC_OK
 
-    # 실제 적재: 주제파일에 append(파일 형식 has_sep 자동판정).
+    # actual write: append to topic files (has_sep format auto-detected).
     today = datetime.date.today().isoformat()
     if assign:
         bak = _backup_md(inbox_path)
         if bak:
-            print(f"[classify-inbox] inbox 백업: {os.path.basename(bak)}")
+            print(f"[classify-inbox] inbox backup: {os.path.basename(bak)}")
         for fn, lst in assign.items():
             target = os.path.join(MEMORIES_DIR, fn)
             if not os.path.isfile(target):
-                # 분류 중 파일이 사라졌으면(레이스) inbox 에 되돌림(안전).
+                # file disappeared during classification (race) -> fall back to inbox (safe).
                 keep_in_inbox.extend(lst)
-                print(f"  [warn] 대상 파일 사라짐 {fn} — inbox 잔류로 되돌림")
+                print(f"  [warn] target file gone {fn} — reverting to inbox retain")
                 continue
-            tagged = [f"{it} ({today}, inbox분류)" for it in lst]
+            tagged = [f"{it} ({today}, inbox-classified)" for it in lst]
             where = append_notes_to_md(target, None, tagged)
-            print(f"  [적재] {fn}: {len(lst)}개 — {where}")
+            print(f"  [write] {fn}: {len(lst)} items — {where}")
 
-    # inbox 재작성: 잔류 항목만 남김(배분·버림 제거).
+    # rewrite inbox: keep only retained items (assigned and dropped removed).
     _rewrite_inbox(inbox_path, keep_in_inbox)
-    print(f"[classify-inbox] inbox 재작성: 잔류 {len(keep_in_inbox)}개")
+    print(f"[classify-inbox] inbox rewritten: {len(keep_in_inbox)} items retained")
 
-    # 새 주제 제안(3개 이상 모인 라벨만)
+    # new topic suggestions (only labels with 3+ items)
     suggestions = [label for label, lst in new_groups.items()
                    if len(lst) >= NEW_TOPIC_SUGGEST_MIN]
 
-    # 재인덱싱(배분으로 파일들 바뀜)
-    print("[classify-inbox] 재인덱싱...")
+    # reindex (topic files changed by assignments)
+    print("[classify-inbox] reindexing...")
     cmd_index(argparse.Namespace(lock=None))
 
-    # 리포트(있을 때만 무음 발송)
+    # report (silent push only if there is something to report)
     report = _build_classify_report(assign, suggestions, dropped, today)
     if report:
-        print("\n-- 리포트 --\n" + report)
+        print("\n-- report --\n" + report)
         if not args.no_push:
             if _send_silent_report(report):
-                print("[classify-inbox] 리포트 무음 발송 완료.")
+                print("[classify-inbox] report sent silently.")
 
     return CLASSIFY_RC_OK
 
 
 def cmd_inbox_count(args):
-    """inbox.md 의 실제 분류 대상 항목 수를 출력(체크 래퍼와 '빔' 판정 공유).
-    stdout 에 정수 한 줄. 종료코드: 항목 있으면 0, 없으면 2(빈 inbox).
-    체크 래퍼는 이 rc 만 보고 classify-inbox 호출 여부를 정한다 — 양쪽이
-    동일한 _inbox_items 기준을 쓰므로 '실항목 있다 판정 → classify 는 빔' 불일치가 사라진다."""
+    """Print the actual count of classifiable items in inbox.md (shared 'empty' logic with the check wrapper).
+    Outputs a single integer to stdout. Exit code: 0 if items exist, 2 if inbox is empty.
+    The check wrapper uses only this rc to decide whether to call classify-inbox — since both
+    sides use the same _inbox_items logic, 'has items' vs 'classify sees empty' mismatches are eliminated."""
     inbox_path = os.path.join(MEMORIES_DIR, "inbox.md")
     n = len(_inbox_items(inbox_path)) if os.path.isfile(inbox_path) else 0
     print(n)
@@ -2165,46 +2194,46 @@ def cmd_inbox_count(args):
 
 
 def _build_classify_report(assign, suggestions, dropped, today):
-    """주간 분류 리포트(유저친화·별표강조 금지). 변화 없으면 None."""
+    """Weekly classification report (user-friendly, no bold/asterisk emphasis). Returns None if nothing changed."""
     n_assigned = sum(len(v) for v in assign.values())
     if n_assigned == 0 and not suggestions:
         return None
     md = datetime.date.today().strftime("%-m/%-d")
-    lines = [f"🗂️ 받은편지함 정리했어요 ({md})"]
+    lines = [f"Inbox sorted ({md})"]
     if n_assigned:
-        lines.append(f"- 주제별로 {n_assigned}가지 분류")
+        lines.append(f"- {n_assigned} items filed by topic")
         for fn, lst in assign.items():
-            lines.append(f"  · {fn.replace('.md','')}: {len(lst)}개")
+            lines.append(f"  . {fn.replace('.md','')}: {len(lst)}")
     if dropped:
-        lines.append(f"- 안 쓸 것 {len(dropped)}가지 정리")
+        lines.append(f"- {len(dropped)} items dropped")
     if suggestions:
-        lines.append("- 새 주제가 모였어요, 새 파일 만들까요? → " + ", ".join(suggestions))
+        lines.append("- New topics accumulated, create new files? -> " + ", ".join(suggestions))
     return "\n".join(lines)
 
 
 # ======================================================================
-# hook 커맨드 (UserPromptSubmit 자동주입) — inject_hook.py 로직 이식
+# hook command (UserPromptSubmit auto-injection) — ported from inject_hook.py
 # ======================================================================
-# 설계 원칙(절대 깨지 말 것):
-#   1. 에이전트 턴을 절대 막지 않는다. 어떤 에러도 조용히 exit 0 + 빈 출력.
-#   2. 빠르다. 매 메시지마다 도니까 임베딩에 짧은 타임아웃을 걸고,
-#      전체 검색을 스레드 타임아웃으로 한 번 더 감싼다.
-#   3. 약한 매칭은 억지로 주입하지 않는다. top1 cosine < 컷오프면 빈손.
-# 출력 규약: JSON {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
-#   "additionalContext": ...}} — system reminder로 감싸져 채팅에 노출 안 됨.
-HOOK_TOPK = 4              # 검색 상위 N
-HOOK_VEC_CUTOFF = 0.50    # top1 cosine이 이 미만이면 주입 생략(보수적)
-HOOK_EMBED_TIMEOUT = 6    # Ollama 임베딩 urlopen 타임아웃(초)
-HOOK_SEARCH_TIMEOUT = 9   # 검색 전체 스레드 타임아웃(초)
-HOOK_SNIPPET_MAX = 400    # 결과 본문 발췌 길이 상한
-HOOK_STALE_LOCK_SEC = 600  # 이보다 오래된 락은 죽은 프로세스 잔재로 보고 무시
-HOOK_KW_TOPK = 4          # 키워드 FTS 폴백에서 주입할 최대 노트 수
-HOOK_KW_MAX_TERMS = 6     # 프롬프트에서 뽑아 OR 로 묶을 키워드 상한
-HOOK_KW_MIN_LEN = 3       # 이 길이 미만 토큰은 버림(잡음/조사)
-# NULL 임베딩 비율이 이 값을 넘으면 "의미검색 저하" 경고를 크게 한 줄 낸다(Ollama 부재 감지).
+# Design principles (never break):
+#   1. Never block the agent turn. Any error exits silently with exit 0 + empty output.
+#   2. Fast. Runs on every message, so embedding gets a short timeout and
+#      the whole search is wrapped in a thread timeout as well.
+#   3. Weak matches are not injected. If top1 cosine < cutoff, return empty.
+# Output contract: JSON {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+#   "additionalContext": ...}} — wrapped in a system reminder so it is not exposed in chat.
+HOOK_TOPK = 4              # top-N results to retrieve
+HOOK_VEC_CUTOFF = 0.50    # skip injection if top1 cosine is below this (conservative)
+HOOK_EMBED_TIMEOUT = 6    # Ollama embedding urlopen timeout (seconds)
+HOOK_SEARCH_TIMEOUT = 9   # whole-search thread timeout (seconds)
+HOOK_SNIPPET_MAX = 400    # max result body excerpt length
+HOOK_STALE_LOCK_SEC = 600  # locks older than this are assumed dead-process remnants and ignored
+HOOK_KW_TOPK = 4          # max notes to inject from keyword FTS fallback
+HOOK_KW_MAX_TERMS = 6     # max keywords extracted from prompt and OR-combined
+HOOK_KW_MIN_LEN = 3       # tokens shorter than this are discarded (noise/particles)
+# If the NULL embedding fraction exceeds this value, emit a loud "semantic search degraded" warning (Ollama absent).
 NULL_EMBED_WARN_FRAC = 0.5
-# 키워드 폴백에서 버릴 흔한 불용어(한/영). 프롬프트 통째 phrase 매칭 실패를 대신할
-# OR 키워드 쿼리를 만들 때 노이즈 토큰을 제거한다.
+# Common stopwords (Korean/English) to discard in keyword fallback. These are stripped
+# when building the OR keyword query that replaces whole-prompt phrase matching.
 HOOK_STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "you", "your", "are", "was",
     "were", "has", "have", "had", "not", "but", "can", "will", "please", "about",
@@ -2216,11 +2245,13 @@ HOOK_STOPWORDS = {
 
 
 def _now_local_line():
-    """현재 시각 한 줄(사용자 맥의 OS 로컬 시간대 기준). 매 메시지 자동주입 맨 앞에 박아
-    에이전트 '시간맹'을 막는다. Dogany는 글로벌 배포 → KST 하드코딩 금지, OS TZ를 따라간다.
-    표준 라이브러리만 사용(의존성 추가 금지).
-    now().astimezone()으로 OS 로컬 TZ aware datetime, tzname()으로 약어 자동(KST/PST/EST 등).
-    형식: [현재 시각] 2026-06-26 (금) 09:36 KST (약어는 시스템 TZ에 따라 치환)."""
+    """Single-line current time (based on the OS local timezone of the user's machine). Prepended to
+    every auto-injection to prevent the agent's 'time blindness'. Dogany is globally deployed —
+    never hard-code KST; always follow the OS TZ.
+    Uses stdlib only (no added dependencies).
+    now().astimezone() gives an OS-local TZ-aware datetime; tzname() provides the abbreviation
+    automatically (KST/PST/EST, etc.).
+    Format: [현재 시각] 2026-06-26 (금) 09:36 KST  (abbreviation substituted by system TZ)."""
     now = datetime.datetime.now().astimezone()
     weekday = "월화수목금토일"[now.weekday()]
     tz = now.tzname() or ""
@@ -2229,16 +2260,17 @@ def _now_local_line():
 
 
 def _hook_body_state_line():
-    """현재 신체/목표 상태 한 줄(v2 결정론적 주입). lifekit 있으면 값, 없으면 None.
+    """Single-line current body/goal state (v2 deterministic injection). Returns a value if lifekit is present, else None.
 
-    핵심: 이 주입은 검색/주제분류/에이전트 판단에 의존하지 않는다. lifekit(config 테이블)이
-    붙어 있으면 매 턴 무조건 body-state 한 줄을 넣어, "묻기 전에 읽는" 규칙을 코드로 못 박는다.
-    metal/template 처럼 lifekit 이 없으면(import 실패 또는 body-state 미구성) None → no-op.
-    싼 SQLite read 1회. 어떤 예외도 삼켜 턴을 막지 않는다(best effort)."""
+    Key: this injection does not depend on search / topic-classification / agent judgment. If lifekit
+    (config table) is attached, a body-state line is unconditionally inserted every turn, enforcing
+    the 'read before asking' rule in code.
+    For a base template with no lifekit (import failure or body-state not configured) -> None -> no-op.
+    Single cheap SQLite read. Swallows all exceptions to never block the turn (best effort)."""
     try:
-        # lifekit 는 레포 루트의 database/ 에 있다(path-independent).
-        # 우선순위: 1) LIFEKIT_DIR 환경변수, 2) PROJECT_ROOT/database, 3) HERE/../database.
-        # 어느 쪽도 없으면(lifekit 미탑재 또는 body-state 미구성) 조용히 no-op.
+        # lifekit lives in database/ at the repo root (path-independent).
+        # Priority: 1) LIFEKIT_DIR env var, 2) PROJECT_ROOT/database, 3) HERE/../database.
+        # If none found (lifekit not installed or body-state not configured) -> silent no-op.
         env_dir = os.environ.get("LIFEKIT_DIR")
         proj_root = os.environ.get("PROJECT_ROOT")
         candidates = []
@@ -2249,14 +2281,14 @@ def _hook_body_state_line():
         candidates.append(os.path.normpath(os.path.join(HERE, "..", "database")))
         db_dir = None
         for cand in candidates:
-            # lifekit.py 뿐 아니라 실제 데이터(lifekit.db)까지 있어야 body-state 를 읽는다.
-            # 코드만 있고 db 가 없으면(신규 클론) 조용히 no-op — stderr 잡음도 없다.
+            # Both lifekit.py and the actual data (lifekit.db) must be present to read body-state.
+            # If code exists but db does not (fresh clone) -> silent no-op, no stderr noise.
             if os.path.isfile(os.path.join(cand, "lifekit.py")) and \
                os.path.isfile(os.path.join(cand, "lifekit.db")):
                 db_dir = cand
                 break
         if db_dir is None:
-            return None  # lifekit 없음/미구성 → 조용히 no-op
+            return None  # lifekit absent / not configured -> silent no-op
         if db_dir not in sys.path:
             sys.path.insert(0, db_dir)
         import lifekit as _lk
@@ -2280,7 +2312,7 @@ def _hook_body_state_line():
         g = _lk.compute_macro_goals(t["eff_goal"], stats)
         gm = stats.get("goal_mode", "")
         wt = stats.get("weight_kg", "")
-        # 숫자 float 잔재(84.0)를 사람이 읽기 좋게 정수로(정수값이면). 값 계산엔 영향 없음.
+        # Format float residuals (e.g. 84.0) as integer when exact, for readability. Does not affect computed values.
         def _n(x):
             try:
                 fx = float(x)
@@ -2294,12 +2326,12 @@ def _hook_body_state_line():
             "(lifekit canonical; 사용자께 다시 묻지 말 것)"
         )
     except BaseException:
-        return None  # lifekit 미구성/에러 → no-op(턴 방해 금지)
+        return None  # lifekit not configured / error -> no-op (must not block the turn)
 
 
 def _hook_compose(recall_ctx=None):
-    """주입할 additionalContext 문자열을 조립(항상 시각 + 있으면 body-state + 있으면 recall).
-    body-state 는 v2 결정론적 주입(매 턴). recall 은 약한매칭 컷을 통과한 것만."""
+    """Assemble the additionalContext string to inject (always time + body-state if present + recall if present).
+    body-state is v2 deterministic injection (every turn). recall is only included if it passed the weak-match cutoff."""
     parts = [_now_local_line()]
     bs = _hook_body_state_line()
     if bs:
@@ -2310,8 +2342,8 @@ def _hook_compose(recall_ctx=None):
 
 
 def _emit_empty():
-    """매칭 없어도 현재 시각 한 줄 + (있으면) body-state 를 무조건 주입 + 성공.
-    body-state 는 v2: lifekit 있으면 검색 결과와 무관하게 매 턴 결정론적 주입."""
+    """Even with no match, unconditionally inject the current time line + body-state (if present), then exit 0.
+    body-state is v2: if lifekit is present, it is injected deterministically every turn regardless of search results."""
     try:
         out = {
             "hookSpecificOutput": {
@@ -2321,13 +2353,13 @@ def _emit_empty():
         }
         print(json.dumps(out, ensure_ascii=False), flush=True)
     except Exception:
-        pass  # 시각 주입 실패해도 턴을 막지 않는다(빈손 폴백).
+        pass  # even if time injection fails, do not block the turn (empty fallback).
     sys.exit(0)
 
 
 def _short_embed(text):
-    """embed()와 동일 로직이되 urlopen 타임아웃만 짧게(hook 경로 전용).
-    모듈 전역 embed를 이 함수로 monkeypatch 해 hook에서만 짧은 타임아웃 강제."""
+    """Same logic as embed() but with a shorter urlopen timeout (hook path only).
+    Monkeypatches the module-global embed with this function to enforce the short timeout only in hook context."""
     body = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode("utf-8")
     req = urllib.request.Request(
         OLLAMA_URL, data=body, headers={"Content-Type": "application/json"}
@@ -2336,13 +2368,13 @@ def _short_embed(text):
         data = json.loads(resp.read().decode("utf-8"))
     vec = data.get("embedding")
     if not vec or not isinstance(vec, list):
-        raise ValueError("Ollama 응답에 embedding 없음")
+        raise ValueError("Ollama response missing embedding field")
     return vec
 
 
 def _hook_is_stale():
-    """소스(memories/*.md) 최신 mtime > state.db mtime 이면 stale.
-    db가 없으면 stale(최초 빌드). 소스가 하나도 없으면 not stale."""
+    """Returns True if the latest source mtime (memories/*.md) > state.db mtime.
+    If db does not exist -> stale (initial build). If no sources found -> not stale."""
     if not os.path.isdir(MEMORIES_DIR):
         return False
     src_mtime = 0.0
@@ -2360,13 +2392,13 @@ def _hook_is_stale():
     try:
         db_mtime = os.path.getmtime(DB_PATH)
     except OSError:
-        return True  # db 없음 → 빌드 필요
+        return True  # db absent -> build needed
     return src_mtime > db_mtime
 
 
 def _hook_acquire_lock(lock_path):
-    """원자적 락 획득(O_CREAT|O_EXCL). 성공 True, 이미 있으면 False.
-    단 stale(HOOK_STALE_LOCK_SEC 초과) 락이면 제거 후 재시도."""
+    """Atomically acquire a lock (O_CREAT|O_EXCL). Returns True on success, False if already held.
+    Exception: if the lock is stale (older than HOOK_STALE_LOCK_SEC), remove it and retry."""
     try:
         fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         os.write(fd, str(os.getpid()).encode())
@@ -2393,14 +2425,14 @@ def _hook_acquire_lock(lock_path):
 
 
 def _hook_maybe_reindex():
-    """소스가 state.db보다 최신이면 백그라운드 detach로 재인덱싱을 던진다.
-    이번 턴 검색은 기존(낡은) 인덱스로 그대로 진행(절대 기다리지 않음).
-    실패해도 조용히 넘어간다(best effort)."""
+    """If sources are newer than state.db, fire a background detached reindex.
+    This turn's search proceeds with the existing (stale) index — never waits.
+    Failures are silently ignored (best effort)."""
     if not _hook_is_stale():
         return
     lock_path = os.path.join(HERE, ".reindex.lock")
     if not _hook_acquire_lock(lock_path):
-        return  # 이미 재인덱싱 진행 중
+        return  # reindex already in progress
 
     cmd = [sys.executable, os.path.abspath(__file__), "index", "--lock", lock_path]
     try:
@@ -2414,7 +2446,7 @@ def _hook_maybe_reindex():
             cwd=HERE,
         )
     except Exception:
-        # Popen 실패 시 우리가 잡은 락은 풀어준다(영구 차단 방지)
+        # Popen failed: release the lock we acquired (prevent permanent blocking)
         try:
             os.remove(lock_path)
         except OSError:
@@ -2422,8 +2454,8 @@ def _hook_maybe_reindex():
 
 
 def _hook_search_with_timeout(query):
-    """검색 전체를 데몬 스레드로 돌려 HOOK_SEARCH_TIMEOUT 초 내 결과만 받는다.
-    타임아웃/에러 시 None."""
+    """Run the full search on a daemon thread and return results only within HOOK_SEARCH_TIMEOUT seconds.
+    Returns None on timeout or error."""
     import threading
 
     box = {}
@@ -2431,20 +2463,20 @@ def _hook_search_with_timeout(query):
     def worker():
         try:
             box["result"] = search_core(query, k=HOOK_TOPK, log=False)
-        except BaseException as e:  # SystemExit 포함 전부 흡수
+        except BaseException as e:  # absorb everything including SystemExit
             box["error"] = e
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     t.join(HOOK_SEARCH_TIMEOUT)
     if t.is_alive():
-        return None  # 타임아웃 → 포기
+        return None  # timed out -> give up
     return box.get("result")
 
 
 def _hook_build_context(results):
-    """주입할 additionalContext 문자열. 약한 매칭이면 None.
-    컷: cosine 키 < HOOK_VEC_CUTOFF 제외. cosine None(FTS만 매치)도 보수적 제외."""
+    """Build the additionalContext string to inject. Returns None for weak matches.
+    Cut: exclude results where cosine < HOOK_VEC_CUTOFF. cosine=None (FTS-only match) is also excluded (conservative)."""
     if not results:
         return None
     top = results[0].get("cosine")
@@ -2461,28 +2493,28 @@ def _hook_build_context(results):
         if len(text) > HOOK_SNIPPET_MAX:
             text = text[:HOOK_SNIPPET_MAX] + "…"
         lines.append(f"- [{section}] {text}")
-    if len(lines) == 1:  # 헤더만 남음 → 실제 항목 없음
+    if len(lines) == 1:  # only header remains -> no actual items
         return None
     return "\n".join(lines)
 
 
 def _has_vector_hit(results):
-    """벡터 레인이 실제로 뭔가 돌려줬나? cosine 값이 하나라도 있으면 True.
-    Ollama 다운/미설치면 vector_search 가 [] → 모든 결과 cosine=None → False."""
+    """Did the vector lane return anything? True if at least one result has a cosine value.
+    If Ollama is down/not installed, vector_search returns [] -> all cosine=None -> False."""
     if not results:
         return False
     return any(r.get("cosine") is not None for r in results)
 
 
 def _tokenize_for_fts(prompt):
-    """프롬프트를 키워드 FTS 폴백용 토큰으로 쪼갠다.
-    - 영문/숫자/한글 단어만 남기고 구두점 제거.
-    - HOOK_KW_MIN_LEN 미만·불용어 제거.
-    - 등장 순서 보존, 중복 제거, 상위 HOOK_KW_MAX_TERMS 개만.
-    반환: [term, ...] (비어 있을 수 있음)."""
+    """Tokenize a prompt into terms for keyword FTS fallback.
+    - Keep only ASCII/digit/Korean words; strip punctuation.
+    - Drop tokens shorter than HOOK_KW_MIN_LEN and stopwords.
+    - Preserve insertion order, deduplicate, return at most HOOK_KW_MAX_TERMS terms.
+    Returns: [term, ...] (may be empty)."""
     if not prompt:
         return []
-    # 한글/영문/숫자 런만 토큰으로. (trigram FTS 라 부분일치도 잡힌다)
+    # Tokenize runs of Korean/ASCII/digit only. (trigram FTS catches partial matches too)
     raw = re.findall(r"[0-9A-Za-z가-힣]+", prompt)
     seen = set()
     terms = []
@@ -2502,8 +2534,8 @@ def _tokenize_for_fts(prompt):
 
 
 def _fts_or_match(conn, terms, limit):
-    """키워드 term 들을 OR 로 묶어 notes_fts 를 MATCH. bm25 오름차순 note id 리스트.
-    trigram 이라 각 term 을 phrase 로 감싸 안전하게 OR 결합한다."""
+    """OR-combine keyword terms and MATCH against notes_fts. Returns note id list ordered by bm25 ascending.
+    Each term is wrapped as a phrase for safe OR combination (trigram tokenizer)."""
     if not terms:
         return []
     expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
@@ -2519,9 +2551,9 @@ def _fts_or_match(conn, terms, limit):
 
 
 def _hook_keyword_fallback(prompt):
-    """M4 폴백: 벡터 레인이 빈손일 때(임베딩 실패/전부 None) 키워드 FTS 로 회상.
-    프롬프트를 토큰화해 OR MATCH 하고, cosine 컷 없이 상위 히트 본문을 그대로 주입.
-    반환: additionalContext 문자열 또는 None(히트 없음)."""
+    """M4 fallback: when the vector lane returns nothing (embedding failure / all None), recall via keyword FTS.
+    Tokenize the prompt, OR-MATCH, and inject the top hit bodies without a cosine cutoff.
+    Returns: additionalContext string or None (no hits)."""
     terms = _tokenize_for_fts(prompt)
     if not terms:
         return None
@@ -2557,8 +2589,8 @@ def _hook_keyword_fallback(prompt):
 
 
 def null_embedding_fraction():
-    """전체 노트 중 embedding IS NULL 비율(0.0~1.0)과 (null, total) 반환.
-    노트가 0개면 (0.0, 0, 0). stats/consolidate 에서 '의미검색 저하' 경고에 쓴다."""
+    """Return the fraction of notes where embedding IS NULL (0.0-1.0) along with (null_count, total).
+    Returns (0.0, 0, 0) if there are no notes. Used by stats/consolidate to emit 'semantic search degraded' warnings."""
     try:
         conn = connect()
         init_db(conn)
@@ -2581,10 +2613,10 @@ def null_embedding_fraction():
 
 
 def cmd_hook(args):
-    """UserPromptSubmit hook. 내부에서 직접 exit(0) 처리(main rc에 의존 안 함).
-    어떤 에러든 stdout에 아무것도 안 쓰고 exit 0(빈손폴백)."""
+    """UserPromptSubmit hook. Calls exit(0) directly (does not depend on main's rc).
+    Any error exits 0 without writing anything to stdout (empty fallback)."""
     try:
-        # 1) stdin JSON 파싱 → prompt 추출
+        # 1) parse stdin JSON -> extract prompt
         try:
             raw = sys.stdin.read()
             data = json.loads(raw)
@@ -2596,26 +2628,26 @@ def cmd_hook(args):
             _emit_empty()
             return
 
-        # 1.5) 자동 재인덱싱 트리거(best effort, fire-and-forget).
+        # 1.5) trigger auto-reindex (best effort, fire-and-forget).
         try:
             _hook_maybe_reindex()
         except Exception:
             pass
 
-        # 2) hook 경로 전용 짧은 타임아웃 임베딩으로 전역 embed 재바인딩.
+        # 2) rebind global embed to the short-timeout embedding function for hook path.
         global embed
         embed = _short_embed
 
-        # 3) 검색(스레드 타임아웃 보호)
+        # 3) search (thread timeout guard)
         results = _hook_search_with_timeout(prompt.strip())
 
-        # 4) 컨텍스트 구성 + 약한매칭 컷.
+        # 4) build context + weak-match cutoff.
         ctx = _hook_build_context(results) if results else None
 
-        # 4b) M4 폴백: 벡터 레인이 빈손이면(Ollama 다운/미설치 → cosine 전부 None,
-        #     프롬프트 통째 phrase 매칭도 거의 안 맞음) 키워드 FTS 로 회상해 주입한다.
-        #     제품 기본배포엔 Ollama 가 없어 이 경로가 없으면 자동회상이 시각줄만 넣는
-        #     사실상 no-op 가 된다. cosine 컷 없이 키워드 히트를 넣는다.
+        # 4b) M4 fallback: if the vector lane is empty (Ollama down/absent -> all cosine=None,
+        #     whole-prompt phrase matching also mostly fails), fall back to keyword FTS recall.
+        #     In the default product deployment without Ollama, skipping this path would make
+        #     auto-recall effectively a no-op (time line only). Inject keyword hits without cosine cutoff.
         if not ctx and not _has_vector_hit(results):
             ctx = _hook_keyword_fallback(prompt.strip())
 
@@ -2623,7 +2655,7 @@ def cmd_hook(args):
             _emit_empty()
             return
 
-        # 5) JSON으로 주입(stdout에 1회만). 시각 + body-state(있으면) + recall 순.
+        # 5) emit JSON injection (stdout, once). Order: time + body-state (if present) + recall.
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
@@ -2635,7 +2667,7 @@ def cmd_hook(args):
     except SystemExit:
         raise
     except BaseException:
-        # 최후의 그물: 무슨 일이 있어도 턴을 막지 않는다.
+        # last-resort catch-all: never block the turn no matter what.
         try:
             sys.exit(0)
         except SystemExit:
@@ -2646,49 +2678,49 @@ def cmd_hook(args):
 # CLI
 # ======================================================================
 def main():
-    p = argparse.ArgumentParser(description="__AGENT_LABEL__ 장기기억 회상 코어")
+    p = argparse.ArgumentParser(description="__AGENT_LABEL__ long-term memory recall core")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    ip = sub.add_parser("index", help="memories/*.md → state.db 적재 (증분)")
+    ip = sub.add_parser("index", help="memories/*.md -> state.db incremental load")
     ip.add_argument("--lock", default=None,
-                    help="락 파일 경로(자동 재인덱싱용). 끝나면 atexit으로 해제.")
+                    help="lock file path (for auto-reindex). Released via atexit when done.")
 
-    sub.add_parser("hook", help="UserPromptSubmit hook(stdin JSON → 관련기억 자동주입)")
+    sub.add_parser("hook", help="UserPromptSubmit hook (stdin JSON -> auto-inject related memories)")
 
-    sp = sub.add_parser("search", help="하이브리드 검색 (FTS5 + 벡터 RRF)")
+    sp = sub.add_parser("search", help="hybrid search (FTS5 + vector RRF)")
     sp.add_argument("query")
-    sp.add_argument("--k", type=int, default=5, help="결과 개수 (기본 5)")
-    sp.add_argument("--json", action="store_true", help="JSON 출력")
+    sp.add_argument("--k", type=int, default=5, help="number of results (default 5)")
+    sp.add_argument("--json", action="store_true", help="JSON output")
 
-    sub.add_parser("stats", help="인덱스/검색 통계")
+    sub.add_parser("stats", help="index/search statistics")
 
-    wp = sub.add_parser("write", help="원시 텍스트 → Haiku 압축 → md 적재 → 재인덱스")
-    wp.add_argument("text", nargs="?", default=None, help="원시 텍스트 (생략 시 stdin)")
-    wp.add_argument("--source", default=None, help='출처 라벨 (예: "텔레그램 대화")')
-    wp.add_argument("--file", default="inbox.md", help="적재 대상 md (기본 inbox.md — 주제 명확하면 identity/work-rules/routines/infra/about-user.md 지정)")
-    wp.add_argument("--section", default=None, help="적재할 섹션 헤더 (없으면 생성/파일끝)")
-    wp.add_argument("--dry-run", action="store_true", help="압축 결과만 보고 파일 미수정")
+    wp = sub.add_parser("write", help="raw text -> Haiku compress -> md write -> reindex")
+    wp.add_argument("text", nargs="?", default=None, help="raw text (omit to read from stdin)")
+    wp.add_argument("--source", default=None, help='source label (e.g. "telegram conversation")')
+    wp.add_argument("--file", default="inbox.md", help="target md file (default inbox.md — specify identity/work-rules/routines/infra/about-user.md when topic is clear)")
+    wp.add_argument("--section", default=None, help="target section header (created or appended to end if absent)")
+    wp.add_argument("--dry-run", action="store_true", help="show compression result only, do not modify file")
 
-    cp = sub.add_parser("consolidate", help="야간 공고화: 대화 트랜스크립트 → inbox.md 증류")
+    cp = sub.add_parser("consolidate", help="nightly consolidation: conversation transcript -> inbox.md distillation")
     cp.add_argument("--dry-run", action="store_true",
-                    help="압축·중복제거까지만, 파일/워터마크/재인덱스/푸시 미실행(미리보기)")
-    cp.add_argument("--no-push", action="store_true", help="적재는 하되 텔레그램 발송 안 함")
+                    help="run compress+dedup only; no file/watermark/reindex/push writes (preview)")
+    cp.add_argument("--no-push", action="store_true", help="write files but skip Telegram push")
     cp.add_argument("--since-days", type=int, default=None,
-                    help="워터마크 무시하고 최근 N일 강제(테스트용)")
+                    help="ignore watermark and force last N days (for testing)")
 
     xp = sub.add_parser("classify-inbox",
-                        help="주간 inbox 분류: inbox.md 항목을 주제파일로 배분 + 새주제 제안")
+                        help="weekly inbox classification: distribute inbox.md items to topic files + suggest new topics")
     xp.add_argument("--dry-run", action="store_true",
-                    help="분류 판정만 미리보기, inbox/주제파일/재인덱스 미실행")
-    xp.add_argument("--no-push", action="store_true", help="분류는 하되 텔레그램 발송 안 함")
+                    help="preview classification verdicts only; no inbox/topic-file/reindex writes")
+    xp.add_argument("--no-push", action="store_true", help="classify but skip Telegram push")
 
     sub.add_parser("inbox-count",
-                   help="inbox.md 실항목 수 출력(체크 래퍼와 빔 판정 공유). rc: 있음0/없음2")
+                   help="print actual item count in inbox.md (shared empty logic with check wrapper). rc: 0=items/2=empty")
 
     args = p.parse_args()
 
     if args.cmd == "hook":
-        # cmd_hook은 내부에서 직접 exit(0). main rc에 의존하지 않는다.
+        # cmd_hook calls exit(0) internally; does not depend on main's rc.
         cmd_hook(args)
         return 0
     if args.cmd == "index":

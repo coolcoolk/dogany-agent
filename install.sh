@@ -686,6 +686,23 @@ render_env() {
   printf '# SMTP_PORT=587              # optional, default 587 (STARTTLS)\n'
 }
 
+# Set AGENT_LANG in a minted instance's config/agent.conf to the collected
+# install language. Rewrites an existing AGENT_LANG= line (mint always scaffolds
+# one, default en) or appends it if somehow absent. Atomic: temp -> mv.
+write_agent_lang() {
+  local root="$1" lang="${2:-en}"
+  local conf="$root/config/agent.conf"
+  [ -f "$conf" ] || return 0
+  local tmp
+  tmp="$(mktemp "${conf}.tmp.XXXXXX")" || return 0
+  if grep -q '^AGENT_LANG=' "$conf"; then
+    sed "s#^AGENT_LANG=.*#AGENT_LANG=${lang}#" "$conf" > "$tmp" && mv -f "$tmp" "$conf"
+  else
+    { cat "$conf"; printf 'AGENT_LANG=%s\n' "$lang"; } > "$tmp" && mv -f "$tmp" "$conf"
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+}
+
 step_mint_and_env() {
   hr
   msg "[7-8/10] 에이전트 생성 및 설정 파일 작성" "[7-8/10] Mint the agent and write config"
@@ -700,8 +717,8 @@ step_mint_and_env() {
     mkdir -p "$(dirname "$env_file")"
     msg "설치 위치(모의): $target" "Install location (mock): $target"
     msg "mint.sh 는 호출하지 않습니다 (dry-run)." "mint.sh is NOT called (dry-run)."
-    msg "다음 인자로 호출될 예정: mint.sh --root '$target' --name '$AGENT_NAME' --token <token> $(mint_dep_flag)" \
-        "Would call: mint.sh --root '$target' --name '$AGENT_NAME' --token <token> $(mint_dep_flag)"
+    msg "다음 인자로 호출될 예정: mint.sh --root '$target' --name '$AGENT_NAME' --lang '$DOGANY_LANG' --token <token> $(mint_dep_flag)" \
+        "Would call: mint.sh --root '$target' --name '$AGENT_NAME' --lang '$DOGANY_LANG' --token <token> $(mint_dep_flag)"
     msg "작성될 .env: $env_file" "Would write .env: $env_file"
     msg "--- .env 미리보기 ---" "--- .env preview ---"
     # Mask the app password in the preview: the REAL value must never reach
@@ -739,7 +756,13 @@ step_mint_and_env() {
   # 6/7a) mint the instance (reuses scripts/mint.sh; passes the real token).
   msg "에이전트를 생성합니다... (수 분 소요 가능)" "Minting the agent... (may take a few minutes)"
   bash "$MINT_SH" --root "$target" --name "$AGENT_NAME" --force \
-    --token "$BOT_TOKEN" $(mint_dep_flag)
+    --lang "$DOGANY_LANG" --token "$BOT_TOKEN" $(mint_dep_flag)
+
+  # 7a2) record the collected install language in config/agent.conf so the
+  #      locale-aware hooks (onboarding first-contact ctx, lifekit i18n) speak
+  #      the user's language. mint scaffolds agent.conf write-if-absent (default
+  #      AGENT_LANG=en); overwrite that line here with the chosen language.
+  write_agent_lang "$target" "$DOGANY_LANG"
 
   # 7b) augment the .env mint wrote with the keys mint does not manage
   #     (ALLOWED_USER_IDS / LOCALE / TZ / EXTRA_ALLOWED_ROOTS). Atomic: temp->mv.
@@ -1126,8 +1149,8 @@ step_final() {
       "It will greet you and walk you through a short setup (name, emoji, tone)."
   msg "정체성 온보딩은 앱 설치가 아니라 채팅 안에서 이뤄집니다." \
       "Identity onboarding happens in-chat, not during install."
-  msg "온보딩이 끝나면 봇이 생활관리(라이프킷) 묶음을 한 번 제안합니다. 언제든 '생활관리 켜줘'라고 말해도 됩니다." \
-      "After onboarding, the bot offers the lifekit (life-management) bundle once. You can also say 'set up life management' anytime."
+  msg "생활관리(라이프킷) 묶음은 CRAFT 티어와 함께 제공될 예정입니다. 이번 릴리즈(HAND)는 범용 에이전트로 시작합니다." \
+      "The lifekit (life-management) bundle arrives with the CRAFT tier. This release (HAND) starts as a general-purpose agent."
   msg "에이전트와 모든 데이터(기억, 파일, 데이터)는 이 폴더 안에 있습니다: $INSTALL_ROOT" \
       "Your agent and all its data (memory, files, database) live inside this folder: $INSTALL_ROOT"
   msg "백업하려면 이 폴더를 통째로 복사하세요." \
