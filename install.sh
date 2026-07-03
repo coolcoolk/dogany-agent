@@ -492,16 +492,39 @@ step_language() {
 # ---------------------------------------------------------------------------
 # Step 2: timezone
 # ---------------------------------------------------------------------------
+# Validate an IANA timezone name. Prefers python3 zoneinfo; falls back to
+# the tzdata files on disk; unknown environment -> accept (fail-open).
+tz_valid() {
+  local tz="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$tz" <<'PYEOF' >/dev/null 2>&1
+import sys, zoneinfo
+zoneinfo.ZoneInfo(sys.argv[1])
+PYEOF
+    return $?
+  fi
+  [ -f "/usr/share/zoneinfo/$tz" ] && return 0
+  return 0  # no validator available -> accept
+}
+
 step_timezone() {
   hr
   msg "[2/10] 타임존" "[2/10] Timezone"
   hr
   msg "감지된 타임존: $DOGANY_TZ" "Detected timezone: $DOGANY_TZ"
   if ! confirm "이 타임존이 맞나요?" "Is this timezone correct?" "y"; then
-    local tz_in=""
-    ask tz_in "IANA 타임존을 입력하세요 (예: Asia/Seoul): " \
-              "Enter an IANA timezone (e.g. Asia/Seoul): "
-    [ -n "$tz_in" ] && DOGANY_TZ="$tz_in"
+    local tz_in="" tries=0
+    while [ "$tries" -lt 3 ]; do
+      ask tz_in "IANA 타임존을 입력하세요 (예: Asia/Seoul, UTC): " \
+                "Enter an IANA timezone (e.g. Asia/Seoul, UTC): "
+      [ -z "$tz_in" ] && break  # keep detected
+      if tz_valid "$tz_in"; then
+        DOGANY_TZ="$tz_in"; break
+      fi
+      tries=$((tries + 1))
+      msg "유효한 IANA 타임존이 아닙니다: $tz_in (예: Asia/Seoul, America/New_York, UTC)" \
+          "Not a valid IANA timezone: $tz_in (e.g. Asia/Seoul, America/New_York, UTC)"
+    done
   fi
   msg "타임존: $DOGANY_TZ" "Timezone: $DOGANY_TZ"
 }
