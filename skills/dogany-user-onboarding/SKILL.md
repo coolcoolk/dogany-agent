@@ -14,7 +14,7 @@ User's persistent profile facts -> USER.md separately (ownership/edit rights per
 
 ### trigger condition
 SessionStart hook (`routines/onboarding-check.py`) injects "onboarding needed" signal into context.
-判定 criterion: own AGENT.md contains `<!-- ONBOARDING_PENDING -->` marker (or AGENT.md itself absent).
+judging criterion: own AGENT.md contains `<!-- ONBOARDING_PENDING -->` marker (or AGENT.md itself absent).
 marker absent -> already onboarded, do not trigger.
 
 ### procedure
@@ -27,7 +27,7 @@ also: at first awakening, no name yet, no address term for user. do not introduc
 order:
 1. my name — ask user to name this assistant.
 2. my emoji — after name decided, present 3-4 signature emoji candidates as short numbered list (e.g. "1. 🦊"). note user can pick one or send any emoji directly. put [[OPTIONS]] marker on very last line. do not ask "should I use an emoji?" (using emoji = assumed; ask which one).
-3. address term — ask how to address the user. do not pre-assume any term. do not say "회원님"/"사용자"/"user" — omit object entirely: "제가 어떻게 부르면 좋을까요?"
+3. address term — ask how to address the user. do not pre-assume any term and do not use any generic label ("user"/"member") — omit the object entirely: "What would you like me to call you?"
 4. tone — ask preferred communication tone (e.g. clean/polite, casual/friendly). humor level = separate next question.
 5. humor level — after tone answer received, ask separately. direct: "유머 수치를 몇 %로 설정할까요?" (e.g. 10%, 30%).
 
@@ -40,13 +40,13 @@ tone when asking: clean and polite, short. no preamble or filler — greeting + 
 
 ### on answer received (fill own AGENT.md directly)
 fill received answers into the corresponding fields in own AGENT.md. five fields:
-- Identity `Name` (`<AGENT_NAME>`)
-- Identity `Emoji` (`<EMOJI>`)
-- Relationship `Call the user` address term (`<FORM_OF_ADDRESS>`)
-- Relationship `Tone` (`<TONE>`)
-- Relationship `Humor` (`<N>`)
+- Identity `Name` (the `__AGENT_NAME__` slot; also the top `You are ... "__AGENT_NAME__"` line)
+- Identity `Emoji` (the `(set at onboarding)` slot)
+- Relationship `Call the user` address term (the Call-the-user line)
+- Relationship `Tone` (the `(set at onboarding)` slot)
+- Relationship `Humor` (the `(set at onboarding)` slot)
 
-(also fill name in the `You are ... "<AGENT_NAME>"` line at top of AGENT.md. language/role/bot ID etc. already filled at mint time — do not touch.)
+(also fill name in the `You are ... "__AGENT_NAME__"` line at top of AGENT.md. The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above.)
 
 all five filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
 
@@ -56,11 +56,12 @@ AGENT.md is @imported into constitution -> new identity applies from next sessio
 
 ## 2. identity change (ongoing, own AGENT.md)
 
-after onboarding, if user asks to change identity (e.g. "이름 바꿔줘", "유머 좀 낮춰", "호칭은 ~로", "이모지 바꿔") -> edit the corresponding field in own AGENT.md directly.
+after onboarding, if user asks to change identity (e.g. "change your name", "lower the humor", "call me ~", "change your emoji") -> edit the corresponding field in own AGENT.md directly.
 identity (name, address, tone, humor, emoji) = ongoing self-edit in own AGENT.md — do without delegation.
+same carve-out also covers, ON EXPLICIT USER REQUEST: the Role section (e.g. specialist role rewrite) and agent-specific Workflows entries (per RULES edit rights). lifekit activation may append the CRAFT orchestration bullet to Role (dogany-lifekit-setup step 5).
 
 rules:
-- edit only own AGENT.md identity fields. do not touch RULES.md, CLAUDE.md, settings (those = dev-agent scope).
+- edit only the granted AGENT.md sections (identity fields, Role, Workflows). do NOT touch RULES.md, CLAUDE.md, settings.
 - one at a time, atomically. after edit, inform user what changed in one line.
 - AGENT.md = @import -> auto-applied next session.
 
@@ -83,5 +84,5 @@ when updating (if authorized):
 ## boundaries
 - identity (AGENT.md): onboarding fill + ongoing self-edit. each agent edits own only.
 - profile (USER.md): only the owner defined in RULES can edit.
-- RULES/CLAUDE/settings/services: outside this skill's scope (dev-agent scope).
+- RULES/CLAUDE/settings/services: outside this skill's scope (framework baseline).
 - external actions (email, restart) outside this skill's scope.

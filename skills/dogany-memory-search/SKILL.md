@@ -31,19 +31,14 @@ user says something worth remembering permanently -> use compressed write. markd
 pass raw text (user utterance etc.) -> cheap model (Haiku) extracts only persistent facts, compresses to single-line atomic items, auto-attaches `(YYYY-MM-DD, source)` meta, writes to file, updates index.
 ```bash
 cd memory-engine
-echo "user utterance / context" | /usr/bin/python3 memory.py write --source "텔레그램 대화"
+echo "user utterance / context" | /usr/bin/python3 memory.py write --source "chat"
 ```
-- default target: `inbox.md` (unsorted temp). if topic clear -> `--file`: identity->identity.md / work-rules->work-rules.md / routines->routines.md / infra->infra.md / user profile+health->about-user.md. section within file: `--section "header"`. (ambiguous -> inbox.md; nightly cleanup distributes to topic files)
+- target is ALWAYS `inbox.md` (staging). the engine routes it later: weekly
+  classify-inbox moves items into topic files under `memories/`. do NOT write
+  topic files directly (RULES: memories/ is engine-owned) -- durable knowledge
+  with a clear home goes to USER.md / AGENT.md / the relevant SKILL.md instead.
 - add `--dry-run` first to preview what gets compressed/written without touching files. ambiguous -> dry-run, show user, then write.
 - casual/transient content -> model discards. nothing worth keeping -> no write.
-
-### manual — direct edit
-need exact wording -> add `§` atomic item directly to `memories/*.md`. each item must have `(YYYY-MM-DD, source/context)` meta. then update index:
-```bash
-cd memory-engine
-/usr/bin/python3 memory.py index
-```
-- only changed files re-embedded (incremental). low overhead.
 
 ## operational notes
 - index (`state.db`) = cache, regenerable anytime from markdown via `index`. do not store data only in db.

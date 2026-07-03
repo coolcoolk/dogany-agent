@@ -1,9 +1,11 @@
 # USER
 
-Nothing recorded yet. Build this file up over time: when you learn a persistent fact about
-the user (name, how they are addressed, timezone, job, habits, preferences), append it here
--- one fact per line, atomic, with (date, source). See the dogany-user-onboarding skill (section 2,
-ongoing profile updates).
-
-Note: this assistant's own identity/tone is set during first-contact onboarding in AGENT.md,
-not here.
+<!--
+Scaffold guide (agent-facing; safe to leave, invisible when rendered):
+- Record persistent user facts below this comment: one fact per line, atomic,
+  with (date, source). Examples: name, preferred form of address, timezone,
+  job, habits, preferences.
+- The agent's own identity/tone lives in AGENT.md (first-contact onboarding),
+  not here. See the dogany-user-onboarding skill, section 3 (ongoing profile
+  updates).
+-->

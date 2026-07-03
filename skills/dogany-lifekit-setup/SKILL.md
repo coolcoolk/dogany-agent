@@ -59,7 +59,12 @@ comes from the `lifekit.offer` key in the same file.
 4. record each choice in lifekit.conf (`BUNDLE_<ID>=on|off`, `-` -> `_`,
    uppercase). when at least one item is on -> `LIFEKIT=on`; user declined
    everything -> `LIFEKIT=off`.
-5. finish with a one-screen summary: item -> state (+ schedule for routines).
+5. on FIRST activation (LIFEKIT transitions to `on`): extend the Role section
+   of AGENT.md with the CRAFT role -- append one bullet adding domain-agent
+   orchestration (coordinating specialist agents / domain lanes) on top of
+   the general role. Idempotent: skip if already present. On deactivation do
+   NOT auto-remove it; trim only when the user asks.
+6. finish with a one-screen summary: item -> state (+ schedule for routines).
 
 ## procedure: deactivate ("turn lifekit off")
 1. confirm once (one line). 2. remove all bundle skill symlinks, routine-ctl
