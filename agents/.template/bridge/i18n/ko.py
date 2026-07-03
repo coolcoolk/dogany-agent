@@ -90,17 +90,17 @@ STRINGS = {
     "usage_command": "사용법: /command <name> [args]",
     # --- Inbound photo / document prompts (sent to Claude) ---
     "photo_prompt_single": (
-        "사용자이 사진을 보냈습니다. 아래 경로의 이미지 파일을 Read 도구로 열어서 "
+        "사용자가 사진을 보냈습니다. 아래 경로의 이미지 파일을 Read 도구로 열어서 "
         "내용을 확인하고 응답하세요."
     ),
     "photo_prompt_path": "이미지 경로: {path}",
     "photo_prompt_album": (
-        "사용자이 사진 {count}장을 한 번에(앨범) 보냈습니다. 아래 경로의 이미지 파일들을 "
+        "사용자가 사진 {count}장을 한 번에(앨범) 보냈습니다. 아래 경로의 이미지 파일들을 "
         "모두 Read 도구로 열어 함께 보고 하나의 응답으로 답하세요."
     ),
     "photo_prompt_album_path": "이미지 {index} 경로: {path}",
     "doc_prompt": (
-        "사용자이 파일을 보냈습니다. 아래 경로의 파일을 Read 도구로 열어서 "
+        "사용자가 파일을 보냈습니다. 아래 경로의 파일을 Read 도구로 열어서 "
         "내용을 확인하고 응답하세요."
     ),
     "doc_prompt_path": "파일 경로: {path}",
