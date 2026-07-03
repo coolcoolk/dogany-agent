@@ -209,6 +209,11 @@ FW_VERSION="unknown"
 # First-mint date: preserved across re-mints (the instance's birthday, UTC).
 MINTED_AT="$(grep -E '^DOGANY_MINTED_AT=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
 MINTED_AT="${MINTED_AT:-$(date -u +%Y-%m-%d)}"
+# Tier: preserved across re-mints (keep-if-present, same contract as MINTED_AT).
+# Fresh mint -> lite (the free tier). Readers treat a missing field as lite too
+# (fail-closed). Enum stays lite/basic/pro; marketing names = HAND/CRAFT/MASTER.
+TIER="$(grep -E '^DOGANY_TIER=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+TIER="${TIER:-lite}"
 cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
 # .instance.conf -- non-secret instance manifest written by mint.sh.
 # Consumed by update.sh to re-substitute placeholders on framework refresh.
@@ -219,6 +224,7 @@ DOGANY_USER_LABEL=${USER_LABEL}
 DOGANY_FW_VERSION=${FW_VERSION}
 DOGANY_REPO_ROOT=${REPO_ROOT}
 DOGANY_MINTED_AT=${MINTED_AT}
+DOGANY_TIER=${TIER}
 MANIFEST
 echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
 

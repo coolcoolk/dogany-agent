@@ -63,6 +63,29 @@ def lifekit_pending(path):
     return False
 
 
+def resolve_instance_conf(data):
+    env_path = os.environ.get("INSTANCE_CONF_FILE")
+    if env_path:
+        return os.path.expanduser(env_path)
+    cwd = (data.get("cwd") if isinstance(data, dict) else None) or os.getcwd()
+    return os.path.join(cwd, ".instance.conf")
+
+
+def instance_tier(path):
+    """Tier from .instance.conf DOGANY_TIER. Missing file/field -> 'lite'
+    (fail-closed to the free tier). Gates NEW activation offers only; it never
+    touches an already-active lifekit."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("DOGANY_TIER="):
+                    return line.split("=", 1)[1].strip().lower() or "lite"
+    except Exception:
+        return "lite"
+    return "lite"
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -87,6 +110,11 @@ def main():
         # Onboarding done -> check the one-shot lifekit offer signal.
         try:
             if not lifekit_pending(resolve_lifekit_conf(data)):
+                return
+            # Tier gate: the lifekit bundle lives in the basic (CRAFT) tier
+            # and up. On lite (HAND) never inject the offer. Activation-time
+            # gate only -- an instance with LIFEKIT already on is untouched.
+            if instance_tier(resolve_instance_conf(data)) == "lite":
                 return
         except Exception:
             return

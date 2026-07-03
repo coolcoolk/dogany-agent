@@ -26,6 +26,13 @@ comes from the `lifekit.offer` key in the same file.
 - user hand-edited lifekit.conf -> "apply lifekit settings" -> reconcile.
 
 ## hard rules
+- TIER GATE (check FIRST, before any offer or activation): read `DOGANY_TIER`
+  from `<agent-root>/.instance.conf` (missing file or field = lite). If lite:
+  do NOT offer or activate anything. Reply with ONE short line -- the lifekit
+  bundle (tracking skills + scheduled routines) lives in the CRAFT (basic)
+  tier -- then move on. Never repeat this upsell unprompted. The gate applies
+  to NEW activation only: items already active (`LIFEKIT=on`) are never
+  deactivated by tier; deactivation happens only when the user asks.
 - FIRST ACTION when offering (pending state): set `LIFEKIT=offered` in
   lifekit.conf BEFORE presenting the offer. One-shot: never auto-offer again;
   user can start anytime by asking. If user says "not now" -> leave `offered`.

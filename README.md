@@ -6,6 +6,24 @@ you have a persistent assistant with long-term memory, scheduled routines, and a
 skill system -- resolving relative to the instance, with zero personal data
 baked in.
 
+## Tiers
+
+One core, three build flavors -- a tier is a flag in `.instance.conf`
+(`DOGANY_TIER=lite|basic|pro`), not a separate repo. A missing field means
+lite. The field survives re-mints and updates (write-if-present contract).
+
+- **HAND** (`lite`, this release) -- the free base framework: bridge, memory,
+  a single agent. Also a clean base to build YOUR OWN agent on (QA agent,
+  content agent, ...): fork-friendly by design. The lifekit bundle ships
+  dormant and stays gated off.
+- **CRAFT** (`basic`) -- the full life-management layer: lifekit bundle
+  (tracking skills + scheduled routines), knowledge layer, multi-agent.
+- **MASTER** (`pro`) -- CRAFT plus payments integration and managed hosting
+  (long-term).
+
+Upgrading is an entitlement flip plus additive activation -- memories and
+identity are preserved, never re-minted.
+
 ## Repo layout
 
 The repo mirrors the proven multi-agent tree: shared code is hoisted to the
