@@ -1178,6 +1178,8 @@ step_final() {
       "Your agent and all its data (memory, files, database) live inside this folder: $INSTALL_ROOT"
   msg "백업하려면 이 폴더를 통째로 복사하세요." \
       "To back it up, copy that whole folder."
+  msg "시맨틱 메모리 검색은 Ollama + bge-m3 모델을 설치하면 활성화됩니다(선택 사항). 없으면 키워드 검색으로 동작합니다." \
+      "Semantic memory search activates if Ollama + bge-m3 are installed (optional); without them the agent falls back to keyword recall."
   if [ "$SERVICE_CHOICE" = "manual" ]; then
     msg "봇을 시작하려면 위의 수동 실행 명령을 사용하세요." \
         "Start the bot with the manual run command shown above."

@@ -3,8 +3,8 @@
 [한국어 안내 -> README-ko.md](README-ko.md)
 
 Your own Claude Code agent, reachable over Telegram. It lives on your own
-machine (Mac/Linux; Windows coming soon), stays up 24/7, and comes with
-long-term memory, scheduled routines, and a skill system. Run `install.sh`,
+machine (Mac/Linux; Windows coming soon), always running while your machine is on,
+and comes with long-term memory, scheduled routines, and a skill system. Run `install.sh`,
 drop in a bot token, and you have a persistent personal agent -- fully
 self-contained per instance, with zero personal data baked in.
 
@@ -69,7 +69,9 @@ Two layers of access:
   your profile and the agent's identity are never cold.
 - Cold recall: everything else lives in `memories/` topic files. The
   `UserPromptSubmit` hook runs a hybrid search (keyword + semantic) and splices
-  in the top matches before the model sees your message.
+  in the top matches before the model sees your message. Semantic recall requires
+  Ollama with the bge-m3 model running locally (optional); without it, the engine
+  automatically falls back to keyword-only (FTS) recall.
 
 Two scheduled write passes keep memory accurate:
 
