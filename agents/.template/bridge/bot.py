@@ -17,6 +17,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 import telegram.error
 from telegram import (
     BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Update,
@@ -392,6 +395,20 @@ class TelegramBot:
             BotCommand("help", messages.CMD_DESC_HELP),
         ]
         try:
+            # Self-heal: clear stale scoped menus (e.g. left by a previous
+            # bot setup). Scoped entries override the default scope and
+            # would shadow the menu registered below.
+            for scope in (
+                BotCommandScopeAllPrivateChats(),
+                BotCommandScopeAllGroupChats(),
+                BotCommandScopeAllChatAdministrators(),
+            ):
+                try:
+                    await self.application.bot.delete_my_commands(scope=scope)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clear scoped commands (%s): %s", scope.type, e
+                    )
             await self.application.bot.set_my_commands(commands)
         except Exception as e:
             logger.warning("Failed to set bot commands: %s", e)
