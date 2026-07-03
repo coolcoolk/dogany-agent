@@ -120,6 +120,8 @@ msg "[update] 프레임워크 버전 = $REPO_VERSION" "[update] framework versio
 #    Prefer the manifest written by mint.sh; fall back to plist-derived name.
 # ---------------------------------------------------------------------------
 AGENT_NAME=""; AGENT_LABEL=""; USER_LABEL=""
+AGENT_LANG="$(grep -E "^AGENT_LANG=" "$INSTANCE/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2)"
+AGENT_LANG="${AGENT_LANG:-en}"
 if [ -f "$INSTANCE/.instance.conf" ]; then
   # shellcheck disable=SC1090
   . "$INSTANCE/.instance.conf"
@@ -341,7 +343,8 @@ subst_one() {
     sed_inplace "$f" \
       -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
       -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
-      -e "s#__USER_LABEL__#${USER_LABEL}#g"
+      -e "s#__USER_LABEL__#${USER_LABEL}#g" \
+      -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
   fi
 }
 

@@ -13,12 +13,13 @@
 # symlinks (-L), and additionally bundles rules/, database/schema.sql, and
 # service/ into the instance.
 #
-# Placeholders substituted (the ONLY five the framework uses):
+# Placeholders substituted (the ONLY six the framework uses):
 #   __PROJECT_ROOT__   absolute instance root  = the target dir itself
 #   __AGENT_NAME__     launchd Label slug + filenames
 #   __AGENT_LABEL__    assistant speaker label
 #   __USER_LABEL__     user honorific
 #   __HOME__           OS user home (for PATH / HOME / ~/.claude)
+#   __AGENT_LANG__     working language (en default; from install --lang)
 #
 # This script GENERATES files + builds the bridge venv only. It does NOT load
 # launchd plists and does NOT start the bridge (live ops requiring approval).
@@ -40,6 +41,7 @@ mint.sh -- instantiate a standalone dogany-agent
     --name  <text>    agent name / launchd slug        (default: basename of --root)
     --label <text>    assistant speaker label          (default: <name>)
     --user  <text>    user honorific label             (default: you)
+    --lang  <en|ko>   working language                 (default: en)
     --token <token>   Telegram bot token for .env      (default: placeholder)
     --no-venv         skip building the bridge venv
     --core-only       build venv with core deps only (skip faster-whisper/voice)
@@ -55,6 +57,7 @@ TARGET=""
 AGENT_NAME=""
 AGENT_LABEL=""
 USER_LABEL="you"
+AGENT_LANG="en"
 BOT_TOKEN="your_bot_token_here"
 BUILD_VENV=1
 CORE_ONLY=0
@@ -66,6 +69,7 @@ while [ $# -gt 0 ]; do
     --name)  AGENT_NAME="$2"; shift 2 ;;
     --label) AGENT_LABEL="$2"; shift 2 ;;
     --user)  USER_LABEL="$2"; shift 2 ;;
+    --lang)  AGENT_LANG="$2"; shift 2 ;;
     --token) BOT_TOKEN="$2"; shift 2 ;;
     --no-venv) BUILD_VENV=0; shift ;;
     --core-only) CORE_ONLY=1; shift ;;
@@ -82,6 +86,7 @@ mkdir -p "$TARGET"
 PROJECT_ROOT="$(cd "$TARGET" && pwd)"
 [ -n "$AGENT_NAME" ]  || AGENT_NAME="$(basename "$PROJECT_ROOT")"
 [ -n "$AGENT_LABEL" ] || AGENT_LABEL="$AGENT_NAME"
+[ -n "$AGENT_LANG" ]  || AGENT_LANG="en"
 HOME_DIR="$HOME"
 
 # Guard: refuse to mint into a non-empty dir unless --force.
@@ -98,7 +103,7 @@ fi
 echo "[mint] repo       = $REPO_ROOT"
 echo "[mint] agent      = $AGENT_NAME"
 echo "[mint] root       = $PROJECT_ROOT"
-echo "[mint] label      = $AGENT_LABEL   user = $USER_LABEL"
+echo "[mint] label      = $AGENT_LABEL   user = $USER_LABEL   lang = $AGENT_LANG"
 echo "[mint] home       = $HOME_DIR"
 echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 
@@ -120,6 +125,8 @@ echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 #    this rsync has no --delete and the template has no such paths.
 rsync -aL \
   --exclude '.git' \
+  --exclude '/AGENT.md' \
+  --exclude '/USER.md' \
   --exclude 'bridge/venv' \
   --exclude 'venv' \
   --exclude '__pycache__' \
@@ -132,19 +139,36 @@ rsync -aL \
   --exclude 'config/agent.conf' \
   "$TEMPLATE/" "$PROJECT_ROOT/"
 
-# 1a) per-instance conf state: scaffold only if absent (idempotent re-mint).
+# 1a) identity markdown: keep-if-present (re-mint must NEVER reset an agent's
+#     identity -- Role, name, accreted Workflows live in AGENT.md; user facts
+#     in USER.md). Excluded from the rsync above; copied only when absent.
+for idmd in AGENT.md USER.md; do
+  if [ ! -f "$PROJECT_ROOT/$idmd" ] && [ -f "$TEMPLATE/$idmd" ]; then
+    cp -p "$TEMPLATE/$idmd" "$PROJECT_ROOT/$idmd"
+    echo "[mint] wrote $idmd (scaffold)"
+  elif [ -f "$PROJECT_ROOT/$idmd" ]; then
+    echo "[mint] $idmd exists -> keep (identity preserved)"
+  fi
+done
+
+# 1b) per-instance conf state: scaffold only if absent (idempotent re-mint).
 for conf in lifekit.conf agent.conf; do
   if [ ! -f "$PROJECT_ROOT/config/$conf" ] && [ -f "$TEMPLATE/config/$conf" ]; then
     mkdir -p "$PROJECT_ROOT/config"
     cp -p "$TEMPLATE/config/$conf" "$PROJECT_ROOT/config/$conf"
+    if [ "$conf" = "agent.conf" ]; then
+      # keep conf in lockstep with --lang (template default is literal 'en')
+      sed -i.tmp "s/^AGENT_LANG=.*/AGENT_LANG=${AGENT_LANG}/" "$PROJECT_ROOT/config/$conf" \
+        && rm -f "$PROJECT_ROOT/config/$conf.tmp"
+    fi
     echo "[mint] wrote config/$conf (scaffold)"
   elif [ -f "$PROJECT_ROOT/config/$conf" ]; then
     echo "[mint] config/$conf exists -> keep (idempotent)"
   fi
 done
 
-# 1b) bundle the hoisted shared roots the instance needs to be self-contained:
-#     - rules/USER.md scaffold (RULES.md already dereferenced from the template),
+# 1c) bundle the hoisted shared roots the instance needs to be self-contained:
+#     - (USER.md scaffold ships inside the template; RULES.md already dereferenced),
 #     - database/ (schema only; *.db excluded -- lifekit.db is initialized below),
 #     - service/ SDK facade (resolves ../../database/lifekit.py at the instance root).
 mkdir -p "$PROJECT_ROOT/database"
@@ -173,7 +197,7 @@ sed_inplace() {
   fi
 }
 
-# 2) substitute the five placeholders across text files.
+# 2) substitute the six placeholders across text files.
 #    '#' delimiter since values (paths) contain '/'. Tokens are distinct and the
 #    substituted values never reintroduce another token, so order is irrelevant.
 substitute() {
@@ -183,7 +207,8 @@ substitute() {
     -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
     -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
     -e "s#__USER_LABEL__#${USER_LABEL}#g" \
-    -e "s#__HOME__#${HOME_DIR}#g"
+    -e "s#__HOME__#${HOME_DIR}#g" \
+    -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
 }
 
 while IFS= read -r -d '' f; do
@@ -306,12 +331,26 @@ if [ "$BUILD_VENV" = "1" ]; then
   echo "[mint] venv ready"
 fi
 
-# 7) sanity: no placeholder survivors in active code files.
-LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME)__' \
-          --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
+# 7) sanity: no placeholder survivors.
+#    (a) __X__ framework tokens across code + markdown (any survivor = a real
+#        substitution miss).
+LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME|AGENT_LANG)__' \
+          --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' --include='*.md' \
           "$PROJECT_ROOT" 2>/dev/null || true)"
 if [ -n "$LEFT" ]; then
-  echo "[mint][WARN] placeholder survivors in:" >&2; echo "$LEFT" >&2
+  echo "[mint][WARN] placeholder survivors (__X__ tokens) in:" >&2; echo "$LEFT" >&2
+fi
+#    (b) angle-bracket aspirational placeholders <UPPER_SNAKE> in the baseline
+#        identity/rules markdown (AGENT.md / RULES.md / USER.md / CLAUDE.md).
+#        These were never wired to a token; a mint would leave them raw. Scoped
+#        to these files on purpose: skill docs legitimately use <TAB>/<name>
+#        notation, which is not a placeholder. HTML comments (<!-- ... -->) start
+#        with '!' so they never match <[A-Z_]+>.
+ANGLE="$(grep -rlE '<[A-Z][A-Z_]+>' \
+          --include='AGENT.md' --include='RULES.md' --include='USER.md' --include='CLAUDE.md' \
+          "$PROJECT_ROOT" 2>/dev/null || true)"
+if [ -n "$ANGLE" ]; then
+  echo "[mint][WARN] angle-bracket placeholder survivors in:" >&2; echo "$ANGLE" >&2
 fi
 
 cat <<DONE
