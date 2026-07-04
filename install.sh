@@ -244,6 +244,149 @@ drain_buffered_lines() {
   done
 }
 
+# ---------------------------------------------------------------------------
+# 3b. Arrow-key selector (DGN-136)
+# ---------------------------------------------------------------------------
+# select_menu selects among a list of options with up/down + Enter, in the
+# OpenClaw/Hermes installer style. Pure bash 3.2 (macOS), zero external deps.
+# Returns the 0-based index of the chosen option in the global SELECT_RESULT.
+#
+# Usage:
+#   select_menu "Title line (already localized)" DEFAULT_INDEX opt0 opt1 ...
+#   -> echoes the menu, lets the user move with arrows / k / j, confirm with
+#      Enter, then sets SELECT_RESULT to the chosen 0-based index.
+#
+# Interaction model:
+#   - Up / [A / k       : move selection up
+#   - Down / [B / j     : move selection down
+#   - Enter             : confirm current selection
+#   - A digit 1..N      : shortcut -- jump to and immediately confirm that row
+#   - The cursor is hidden during selection and restored on exit AND on Ctrl-C.
+#
+# This function assumes an interactive TTY; each caller gates it behind
+# select_ui_available and provides the non-TTY typed fallback. It must NOT be
+# called in dry-run or with a non-TTY stdin.
+SELECT_RESULT=0
+select_menu() {
+  local title="$1" def="$2"; shift 2
+  local opts=("$@")
+  local n="${#opts[@]}"
+  local cur="$def"
+  [ "$cur" -lt 0 ] && cur=0
+  [ "$cur" -ge "$n" ] && cur=$((n - 1))
+
+  # tput helpers with graceful degradation when tput/terminfo is missing.
+  local has_tput=0
+  command -v tput >/dev/null 2>&1 && tput cnorm >/dev/null 2>&1 && has_tput=1
+  local rev="" norm=""
+  if [ "$has_tput" = "1" ]; then
+    rev="$(tput smso 2>/dev/null || true)"   # standout / reverse video
+    norm="$(tput rmso 2>/dev/null || true)"
+  fi
+  # ANSI fallback for reverse video if tput gave nothing.
+  [ -z "$rev" ] && rev="$(printf '\033[7m')"
+  [ -z "$norm" ] && norm="$(printf '\033[0m')"
+
+  # Hide the cursor and guarantee it is restored on ANY exit path, including
+  # Ctrl-C. Both the INT trap and the explicit 0x03-byte handler call cnorm
+  # (show cursor) before exiting nonzero, so the terminal is never left with a
+  # hidden cursor.
+  _select_show_cursor() {
+    if [ "$has_tput" = "1" ]; then tput cnorm 2>/dev/null || true
+    else printf '\033[?25h'; fi
+  }
+  # On Ctrl-C: restore the cursor first, then exit nonzero (130 = the
+  # conventional SIGINT code). Exiting directly is deterministic and avoids a
+  # re-raise race where the interrupted `read` leaves the shell alive.
+  _select_on_int() {
+    _select_show_cursor
+    printf '\n' >&2
+    trap - INT
+    exit 130
+  }
+  trap '_select_on_int' INT
+  if [ "$has_tput" = "1" ]; then tput civis 2>/dev/null || true
+  else printf '\033[?25l'; fi
+
+  # Pre-drain any pending buffered input (paste protection, DGN-142 parity) so a
+  # stray paste cannot pre-answer the menu via the raw byte reader below.
+  local __junk
+  while IFS= read -r -t 1 __junk 2>/dev/null; do :; done
+
+  printf '%s\n' "$title"
+
+  local first=1 key rest
+  while :; do
+    # Redraw: on the first pass just print; afterwards move the cursor up N lines
+    # to overwrite the previous render in place.
+    if [ "$first" = "1" ]; then
+      first=0
+    else
+      printf '\033[%dA' "$n"
+    fi
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+      printf '\033[2K'   # clear the whole line before redrawing
+      if [ "$i" = "$cur" ]; then
+        printf '  %s> %s%s\n' "$rev" "${opts[$i]}" "$norm"
+      else
+        printf '    %s\n' "${opts[$i]}"
+      fi
+      i=$((i + 1))
+    done
+
+    # Read one raw byte. EOF (read fails) -> restore + abort like other prompts.
+    IFS= read -rsn1 key || { _select_show_cursor; trap - INT; abort_on_eof; }
+    case "$key" in
+      $'\003')
+        # Ctrl-C. `read -sn1` disables ISIG for the duration of the read, so an
+        # interactive Ctrl-C arrives here as a literal 0x03 byte rather than a
+        # SIGINT signal. Handle it explicitly: restore the cursor and exit
+        # nonzero (130) -- deterministic regardless of the trap firing.
+        _select_show_cursor; trap - INT
+        printf '\n' >&2
+        exit 130
+        ;;
+      $'\033')
+        # Escape sequence: read the two following bytes ([A / [B / [C / [D).
+        # -t 1 so a lone ESC does not hang forever.
+        IFS= read -rsn2 -t 1 rest 2>/dev/null || rest=""
+        case "$rest" in
+          '[A'|'OA') cur=$(( (cur - 1 + n) % n )) ;;   # up
+          '[B'|'OB') cur=$(( (cur + 1) % n )) ;;       # down
+          *) : ;;
+        esac
+        ;;
+      k|K) cur=$(( (cur - 1 + n) % n )) ;;
+      j|J) cur=$(( (cur + 1) % n )) ;;
+      ''|$'\n'|$'\r')
+        # Enter -> confirm current selection.
+        _select_show_cursor; trap - INT
+        SELECT_RESULT="$cur"
+        return 0
+        ;;
+      [1-9])
+        # Digit shortcut: jump to row N (1-based) and confirm immediately.
+        if [ "$key" -ge 1 ] && [ "$key" -le "$n" ]; then
+          _select_show_cursor; trap - INT
+          SELECT_RESULT=$((key - 1))
+          return 0
+        fi
+        ;;
+      *) : ;;
+    esac
+  done
+}
+
+# Whether the arrow selector can run: needs an interactive TTY and a sane TERM,
+# and never in dry-run (dry-run must stay fully scripted/non-interactive).
+select_ui_available() {
+  [ "$DRY_RUN" = "1" ] && return 1
+  [ -t 0 ] || return 1
+  [ "${TERM:-}" = "dumb" ] && return 1
+  return 0
+}
+
 # ask VAR "ko prompt" "en prompt" [default]  -- reads a line into VAR.
 # In dry-run, if VAR is already set (from env/args), keep it and echo the mock.
 # After the first read, drains any further tty-buffered lines into the value so a
@@ -299,12 +442,31 @@ ask_secret() {
 }
 
 # confirm "ko question" "en question" [default_yes]  -> returns 0 for yes.
+# DGN-136: when an interactive TTY is available, render as a 2-option arrow-key
+# selector ("Yes"/"No", localized ko/en) with the default preselected. In
+# dry-run or any non-TTY context it falls back to the original typed y/n prompt
+# below, so piped installs / CI / the scripted test battery keep working
+# unchanged.
 confirm() {
   local ko="$1" en="$2" def="${3:-y}" reply
   local hint="[Y/n]"; [ "$def" = "n" ] && hint="[y/N]"
   if [ "$DRY_RUN" = "1" ]; then
     msgn "$ko " "$en "; printf '%s [dry-run: %s]\n' "$hint" "$def"
     [ "$def" = "y" ]; return
+  fi
+  # Interactive TTY -> arrow-key selector. select_menu pre-drains buffered input
+  # itself (paste protection parity with the typed path below).
+  if select_ui_available; then
+    local yes_lbl no_lbl title def_idx
+    if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+      yes_lbl="예"; no_lbl="아니오"; title="$ko"
+    else
+      yes_lbl="Yes"; no_lbl="No"; title="$en"
+    fi
+    def_idx=0; [ "$def" = "n" ] && def_idx=1
+    select_menu "$title" "$def_idx" "$yes_lbl" "$no_lbl"
+    [ "$SELECT_RESULT" = "0" ] && return 0
+    return 1
   fi
   # DGN-142: drain any leftover tty-buffered paste lines (e.g. the tail of a
   # BotFather message) BEFORE printing the prompt, so none is silently consumed
@@ -704,30 +866,57 @@ step_timezone() {
       local cands=""
       cands="$(tz_fuzzy_candidates "$tz_in")"
       if [ -n "$cands" ]; then
-        msg "정확히 일치하지 않습니다. '$tz_in' 후보:" \
-            "No exact match. Candidates for '$tz_in':"
         local i=0 line pick=""
-        # Build a numbered menu; capture choices into positional-safe vars.
+        # Collect candidates into an array (also mirrored into positional-safe
+        # c1..c8 for the typed-fallback path).
         local c1="" c2="" c3="" c4="" c5="" c6="" c7="" c8=""
+        local cand_arr=()
         while IFS= read -r line; do
           [ -n "$line" ] || continue
           i=$((i + 1))
           eval "c$i=\$line"
-          printf '  %d) %s\n' "$i" "$line"
+          cand_arr+=("$line")
         done <<EOF
 $cands
 EOF
-        ask pick "번호를 선택하세요 (건너뛰려면 빈 줄): " \
-                 "Pick a number (blank to skip): "
-        case "$pick" in
-          ''|*[!0-9]*) : ;;  # non-numeric / blank -> reprompt
-          *)
-            if [ "$pick" -ge 1 ] && [ "$pick" -le "$i" ]; then
-              eval "tz_in=\$c$pick"
-              if tz_valid "$tz_in"; then DOGANY_TZ="$tz_in"; break; fi
-            fi
-            ;;
-        esac
+        # DGN-136: arrow-key selector with a trailing "type again" option on a
+        # TTY; the original numbered typed menu otherwise.
+        if select_ui_available; then
+          local tz_title again_lbl
+          if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+            tz_title="정확히 일치하지 않습니다. '$tz_in' 후보 (선택하거나 다시 입력):"
+            again_lbl="(다시 입력)"
+          else
+            tz_title="No exact match. Candidates for '$tz_in' (pick one or type again):"
+            again_lbl="(type again)"
+          fi
+          select_menu "$tz_title" 0 "${cand_arr[@]}" "$again_lbl"
+          # Last option == "type again" -> leave tz_in as-is and reprompt.
+          if [ "$SELECT_RESULT" -lt "$i" ]; then
+            tz_in="${cand_arr[$SELECT_RESULT]}"
+            if tz_valid "$tz_in"; then DOGANY_TZ="$tz_in"; break; fi
+          fi
+        else
+          msg "정확히 일치하지 않습니다. '$tz_in' 후보:" \
+              "No exact match. Candidates for '$tz_in':"
+          local j=1
+          while [ "$j" -le "$i" ]; do
+            eval "line=\$c$j"
+            printf '  %d) %s\n' "$j" "$line"
+            j=$((j + 1))
+          done
+          ask pick "번호를 선택하세요 (건너뛰려면 빈 줄): " \
+                   "Pick a number (blank to skip): "
+          case "$pick" in
+            ''|*[!0-9]*) : ;;  # non-numeric / blank -> reprompt
+            *)
+              if [ "$pick" -ge 1 ] && [ "$pick" -le "$i" ]; then
+                eval "tz_in=\$c$pick"
+                if tz_valid "$tz_in"; then DOGANY_TZ="$tz_in"; break; fi
+              fi
+              ;;
+          esac
+        fi
       fi
       tries=$((tries + 1))
       msg "유효한 타임존을 찾지 못했습니다 (예: Asia/Seoul, America/New_York)." \
@@ -967,14 +1156,30 @@ step_model() {
     # Detection failed (no python3 / no file / parse error) -> ask plainly.
     msg "구독 등급을 확인하지 못했습니다. 사용할 모델을 선택하세요:" \
         "Could not detect your subscription tier. Choose a model:"
-    msg "  1) sonnet (기본, 빠르고 경제적)" "  1) sonnet (default, fast and economical)"
-    msg "  2) opus   (더 강력한 추론, 더 느림/비쌈)" "  2) opus   (stronger reasoning, slower/costlier)"
-    local choice=""
-    ask choice "번호 선택 [1]: " "Pick a number [1]: " "1"
-    case "$choice" in
-      2|opus) DOGANY_MODEL="opus" ;;
-      *)      DOGANY_MODEL="sonnet" ;;
-    esac
+    # DGN-136: arrow-key selector on a TTY; typed numbered prompt otherwise.
+    if select_ui_available; then
+      local m_opt1 m_opt2 m_title
+      if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+        m_title="사용할 모델을 선택하세요:"
+        m_opt1="sonnet (기본, 빠르고 경제적)"
+        m_opt2="opus   (더 강력한 추론, 더 느림/비쌈)"
+      else
+        m_title="Choose a model:"
+        m_opt1="sonnet (default, fast and economical)"
+        m_opt2="opus   (stronger reasoning, slower/costlier)"
+      fi
+      select_menu "$m_title" 0 "$m_opt1" "$m_opt2"
+      [ "$SELECT_RESULT" = "1" ] && DOGANY_MODEL="opus" || DOGANY_MODEL="sonnet"
+    else
+      msg "  1) sonnet (기본, 빠르고 경제적)" "  1) sonnet (default, fast and economical)"
+      msg "  2) opus   (더 강력한 추론, 더 느림/비쌈)" "  2) opus   (stronger reasoning, slower/costlier)"
+      local choice=""
+      ask choice "번호 선택 [1]: " "Pick a number [1]: " "1"
+      case "$choice" in
+        2|opus) DOGANY_MODEL="opus" ;;
+        *)      DOGANY_MODEL="sonnet" ;;
+      esac
+    fi
     msg "모델: $DOGANY_MODEL" "Model: $DOGANY_MODEL"
     return 0
   fi
