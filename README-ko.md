@@ -139,9 +139,7 @@
 
 1. 레포를 받아 설치 마법사를 실행합니다.
 
-       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
-       cd ~/dogany-agent
-       bash install.sh
+       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent && cd ~/dogany-agent && bash install.sh
 
    위처럼 홈 폴더 바로 아래에 받으세요. macOS에서 문서/데스크탑/
    다운로드 폴더에 받으면 백그라운드 서비스가 읽지 못해 설치기가
