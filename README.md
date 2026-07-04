@@ -159,9 +159,13 @@ Nothing assumes a fixed parent tree.
 
 1. Clone the repo and run the wizard:
 
-       git clone https://github.com/coolcoolk/dogany-agent
-       cd dogany-agent
+       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
+       cd ~/dogany-agent
        bash install.sh
+
+   Clone under your home folder as shown. On macOS, do NOT clone into
+   Documents/Desktop/Downloads -- background services cannot read those
+   folders (the installer refuses such paths).
 
 2. The wizard walks you through language, timezone, bot token (from
    BotFather) + owner id, then mints a single self-contained agent (default
