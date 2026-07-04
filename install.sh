@@ -42,6 +42,10 @@ EMAIL_ADDRESS="${EMAIL_ADDRESS:-}"
 EMAIL_APP_PASSWORD="${EMAIL_APP_PASSWORD:-}"
 EMAIL_CC="${EMAIL_CC:-}"
 ENABLE_VOICE="${DOGANY_VOICE:-0}"     # 0 core-only (default), 1 full
+# faster-whisper model that lands in the instance .env as LOCAL_WHISPER_MODEL
+# when voice is enabled. Chosen at the voice step (spec-aware reco preselected).
+# Empty = voice disabled (ENABLE_VOICE=0); config.py default "small" still applies.
+LOCAL_WHISPER_MODEL="${DOGANY_WHISPER_MODEL:-}"   # small | medium | large-v3
 INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$SCRIPT_PATH/agents/main}"
 # Default 1 installed agent. A non-1 value (env or config) bypasses the single-agent refusal.
 DOGANY_MAX_AGENTS="${DOGANY_MAX_AGENTS:-1}"
@@ -935,28 +939,117 @@ step_dependencies() {
   hr
   msg "기본은 핵심 의존성만 설치합니다 (빠르고 가벼움)." \
       "Default installs core dependencies only (fast and light)."
-  # ENABLE_VOICE may already be preset via env for dry-run.
-  if [ "$ENABLE_VOICE" != "1" ]; then
-    # DGN-144: state the real download size and the device disk state so the
-    # user can judge before opting in.
-    msg "음성 입력은 faster-whisper small 모델(~0.5GB)을 내려받습니다." \
-        "Voice input downloads faster-whisper small (~0.5GB)."
-    disk_free_line
-    if confirm "음성 입력을 활성화할까요?" \
-               "Enable voice input?" "n"; then
-      ENABLE_VOICE=1
-    else
-      ENABLE_VOICE=0
-    fi
-  fi
+  # DGN-146: voice is now a MODEL choice, not a yes/no. Pick the faster-whisper
+  # model (or skip); the choice lands in the instance .env as LOCAL_WHISPER_MODEL.
+  step_voice_model
+
   if [ "$ENABLE_VOICE" = "1" ]; then
-    msg "  -> 전체 설치 (음성 포함)" "  -> full install (voice included)"
+    msg "  -> 전체 설치 (음성 포함, 모델: ${LOCAL_WHISPER_MODEL})" \
+        "  -> full install (voice included, model: ${LOCAL_WHISPER_MODEL})"
   else
     msg "  -> 핵심 전용 설치 (--core-only)" "  -> core-only install (--core-only)"
   fi
 
   # Optional semantic-memory embedding backend (Ollama + bge-m3).
   step_embedding
+}
+
+# DGN-146: voice model picker. Shows the device spec header (disk free/total +
+# RAM) and a menu where every option carries the model's on-disk size, so BOTH
+# numbers -- each model's size AND the device's capacity -- are visible side by
+# side (형님's acceptance rule). The spec-computed recommendation (whisper_reco)
+# is preselected. Rides the DGN-136 arrow selector when a TTY is available and
+# falls back to a typed numbered prompt otherwise (non-TTY/dry-run stay scripted).
+#
+# faster-whisper (CTranslate2) approx on-disk sizes, stated conservatively (~):
+#   small ~0.5GB, medium ~1.5GB, large-v3 ~3GB (tiny/base omitted -- too weak).
+# Sets ENABLE_VOICE (0/1) and, when enabled, LOCAL_WHISPER_MODEL to the choice.
+step_voice_model() {
+  # Preset via env (dry-run / scripted): honor an explicit choice, don't prompt.
+  # DOGANY_WHISPER_MODEL set -> that model; ENABLE_VOICE=1 without a model ->
+  # fall through to the picker default (reco); ENABLE_VOICE unset/0 -> menu.
+  if [ -n "$LOCAL_WHISPER_MODEL" ]; then
+    ENABLE_VOICE=1
+    return 0
+  fi
+
+  # Spec header: model sizes are shown per-option below; here we show the device
+  # capacity (disk + RAM) so the user weighs size against free space.
+  msg "음성 입력(선택): 로컬 faster-whisper 모델을 내려받아 음성 메시지를 받아씁니다." \
+      "Voice input (optional): downloads a local faster-whisper model to transcribe voice messages."
+  disk_free_line
+  ram_line
+
+  local reco; reco="$(whisper_reco || true)"
+  [ -n "$reco" ] || reco="small"
+
+  # Menu rows (index-aligned with the model ids below). Row 0 = skip.
+  local opt_skip opt_small opt_medium opt_large
+  if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+    opt_skip="음성 입력 건너뛰기"
+    opt_small="small (~0.5GB)"
+    opt_medium="medium (~1.5GB, 한국어 이름 인식이 더 정확)"
+    opt_large="large-v3 (~3GB, 최고 품질)"
+  else
+    opt_skip="skip voice input"
+    opt_small="small (~0.5GB)"
+    opt_medium="medium (~1.5GB, better for Korean names)"
+    opt_large="large-v3 (~3GB, best quality)"
+  fi
+  # models[i] is the model id for menu row i (row 0 = skip -> empty).
+  local models=("" "small" "medium" "large-v3")
+
+  # Default (preselected) row = the recommended model's row.
+  local def_idx=1
+  case "$reco" in
+    medium)   def_idx=2 ;;
+    large-v3) def_idx=3 ;;
+    *)        def_idx=1 ;;
+  esac
+  msg "  권장(선택된 항목): ${reco}" "  Recommended (preselected): ${reco}"
+
+  local title choice_idx
+  if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+    title="음성 입력 모델을 선택하세요:"
+  else
+    title="Choose the voice input model:"
+  fi
+
+  if select_ui_available; then
+    select_menu "$title" "$def_idx" "$opt_skip" "$opt_small" "$opt_medium" "$opt_large"
+    choice_idx="$SELECT_RESULT"
+  else
+    # Typed numbered fallback (non-TTY / no selector). 1-based prompt; blank
+    # accepts the recommended default. Drain buffered paste lines first.
+    drain_buffered_lines >/dev/null 2>&1 || true
+    msg "$title" "$title"
+    printf '  1) %s\n' "$opt_skip"
+    printf '  2) %s\n' "$opt_small"
+    printf '  3) %s\n' "$opt_medium"
+    printf '  4) %s\n' "$opt_large"
+    local pick=""
+    ask pick "번호 선택 (빈 줄 = 권장 ${reco}): " "Pick a number (blank = recommended ${reco}): "
+    case "$pick" in
+      1) choice_idx=0 ;;
+      2) choice_idx=1 ;;
+      3) choice_idx=2 ;;
+      4) choice_idx=3 ;;
+      ''|*[!0-9]*) choice_idx="$def_idx" ;;   # blank / junk -> recommended
+      *) choice_idx="$def_idx" ;;
+    esac
+  fi
+
+  if [ "$choice_idx" = "0" ]; then
+    ENABLE_VOICE=0
+    LOCAL_WHISPER_MODEL=""
+    msg "음성 입력을 건너뜁니다 (나중에 추가 가능)." \
+        "Skipping voice input (you can add it later)."
+    return 0
+  fi
+  ENABLE_VOICE=1
+  LOCAL_WHISPER_MODEL="${models[$choice_idx]}"
+  [ -n "$LOCAL_WHISPER_MODEL" ] || LOCAL_WHISPER_MODEL="$reco"
+  msg "선택된 음성 모델: ${LOCAL_WHISPER_MODEL}" "Selected voice model: ${LOCAL_WHISPER_MODEL}"
 }
 
 # DGN-144: disk free/total for the $HOME volume, as a bilingual one-liner
@@ -995,13 +1088,66 @@ system_ram_kb() {
   return 0
 }
 
+# System RAM in whole GB (floor), or empty when undetectable. Thin wrapper over
+# system_ram_kb so the tier logic and the display line share one source of truth.
+# Overridable for tests via DOGANY_TEST_RAM_GB (an integer GB), which lets the
+# self-test battery stub a machine spec without real hardware.
+system_ram_gb() {
+  if [ -n "${DOGANY_TEST_RAM_GB:-}" ]; then printf '%s' "$DOGANY_TEST_RAM_GB"; return 0; fi
+  local kb; kb="$(system_ram_kb || true)"
+  [ -n "$kb" ] && printf '%s' "$((kb / 1024 / 1024))"
+  return 0
+}
+
+# Free space in GB on the $HOME volume (floor), or empty when undetectable.
+# Same df -k parse as disk_free_line, exposed as a number for the tier logic.
+# Overridable for tests via DOGANY_TEST_DISK_GB.
+disk_free_gb() {
+  if [ -n "${DOGANY_TEST_DISK_GB:-}" ]; then printf '%s' "$DOGANY_TEST_DISK_GB"; return 0; fi
+  local avail_kb
+  avail_kb="$(df -k "$HOME" 2>/dev/null | awk 'NR>1 && $2 ~ /^[0-9]+$/ {print $4; exit}')"
+  case "$avail_kb" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s' "$((avail_kb / 1024 / 1024))"
+  return 0
+}
+
+# DGN-146: bilingual RAM line, mirrors disk_free_line so every local-model step
+# can show BOTH numbers (model size + device capacity) side by side. Fail-open:
+# prints nothing if RAM is undetectable. Always returns 0.
+ram_line() {
+  local gb; gb="$(system_ram_gb || true)"
+  case "$gb" in ''|*[!0-9]*) return 0 ;; esac
+  msg "  메모리(RAM): ${gb}GB" "  RAM: ${gb} GB"
+  return 0
+}
+
+# DGN-146: spec-aware faster-whisper recommendation. Prints the recommended model
+# name (small | medium | large-v3) for the detected RAM + free disk. Tiers (per
+# 형님's rule + faster-whisper/CTranslate2 size knowledge, sizes conservative ~):
+#   RAM <8GB           -> small     (~0.5GB; runs anywhere)
+#   RAM 8-16GB         -> small     (medium listed but not preselected)
+#   RAM >=16GB, disk>8 -> medium    (~1.5GB; markedly better for Korean names)
+#   RAM >=32GB, disk>12-> large-v3  (~3GB; best, only on roomy machines)
+# Unknown RAM (empty) is treated conservatively as the smallest tier -> small.
+# Pure integer comparisons; stub RAM/disk via the DOGANY_TEST_* overrides above.
+whisper_reco() {
+  local ram; ram="$(system_ram_gb || true)"
+  local disk; disk="$(disk_free_gb || true)"
+  case "$ram" in ''|*[!0-9]*) printf 'small'; return 0 ;; esac
+  case "$disk" in ''|*[!0-9]*) disk=0 ;; esac
+  if [ "$ram" -ge 32 ] && [ "$disk" -gt 12 ]; then printf 'large-v3'; return 0; fi
+  if [ "$ram" -ge 16 ] && [ "$disk" -gt 8 ];  then printf 'medium';   return 0; fi
+  printf 'small'
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Step 4b: optional embedding backend (semantic memory)
 # ---------------------------------------------------------------------------
 # Semantic (cross-lingual) memory recall needs a local embedding model: Ollama
-# running bge-m3 (~1.2GB). Fully optional -- without it the agent falls back to
-# keyword recall. ALL failures fail-open (warn + continue install). Dry-run only
-# prints decisions.
+# running bge-m3 (~1.2GB pull, verified via ollama registry). Fully optional --
+# without it the agent falls back to keyword recall. ALL failures fail-open (warn
+# + continue install). Dry-run only prints decisions.
 step_embedding() {
   hr
   msg "  [4b] 시맨틱 메모리 임베딩 (선택: Ollama + bge-m3, ~1.2GB)" \
@@ -1018,24 +1164,32 @@ step_embedding() {
     return 0
   fi
 
-  # Recommend by RAM: 16GB-class or more -> default YES, else default NO.
-  # Threshold in kB (15,000,000 kB): real 16GB Linux reports ~16.2M kB minus
-  # kernel-reserved memory, so a GB floor would misclassify it as 15GB.
-  local ram_kb; ram_kb="$(system_ram_kb || true)"
+  # DGN-146: state BOTH numbers side by side -- the model's download size and the
+  # device's capacity (RAM + free disk) -- so the choice is informed. bge-m3 pull
+  # is ~1.2GB (verified figure; earlier ~1.5GB copy was a leftover error).
+  msg "  bge-m3 다운로드 크기: ~1.2GB (임베딩 추론 시 RAM 약 1.5-2GB)." \
+      "  bge-m3 download size: ~1.2GB (inference RAM roughly 1.5-2GB)."
+  # DGN-144: show the device disk state next to the RAM check.
+  disk_free_line
+  ram_line
+
+  # DGN-146 recommendation boundary: RAM >=8GB -> recommend bge-m3 (default YES);
+  # <8GB (or unknown) -> recommend SKIP (keyword search works without it).
+  # bge-m3 needs ~1.5-2GB RAM at inference; on an 8GB box that leaves room, below
+  # it competes with everything else -> keyword-only is the safer default.
+  local ram_gb; ram_gb="$(system_ram_gb || true)"
   local ram_disp="?"
-  [ -n "$ram_kb" ] && ram_disp="$((ram_kb / 1024 / 1024))"
+  [ -n "$ram_gb" ] && ram_disp="$ram_gb"
   local def="n"
-  if [ -n "$ram_kb" ] && [ "$ram_kb" -ge 15000000 ]; then
+  if [ -n "$ram_gb" ] && [ "$ram_gb" -ge 8 ]; then
     def="y"
-    msg "  감지된 RAM: ${ram_disp}GB급 (16GB 이상) -> 임베딩 설치 권장." \
-        "  Detected RAM: ${ram_disp}GB class (16GB+) -> installing embeddings is recommended."
+    msg "  감지된 RAM: ${ram_disp}GB (8GB 이상) -> bge-m3 임베딩 설치 권장." \
+        "  Detected RAM: ${ram_disp}GB (8GB+) -> installing bge-m3 embeddings is recommended."
   else
     def="n"
-    msg "  감지된 RAM: ${ram_disp}GB (16GB 미만/불명) -> 키워드 검색만으로도 동작합니다. 나중에 언제든 추가 가능." \
-        "  Detected RAM: ${ram_disp}GB (<16GB or unknown) -> keyword-only recall works; add later anytime."
+    msg "  감지된 RAM: ${ram_disp}GB (8GB 미만/불명) -> 건너뛰기 권장 (임베딩 없이도 키워드 검색이 동작합니다)." \
+        "  Detected RAM: ${ram_disp}GB (<8GB or unknown) -> skip recommended (keyword search works without it)."
   fi
-  # DGN-144: show the device disk state next to the RAM check (bge-m3 ~1.5GB).
-  disk_free_line
 
   if ! confirm "지금 Ollama + bge-m3 를 설치할까요?" "Install Ollama + bge-m3 now?" "$def"; then
     msg "  임베딩을 건너뜁니다. 키워드 검색으로 동작하며, 나중에 언제든 추가할 수 있습니다." \
@@ -1259,6 +1413,9 @@ step_bot_token() {
       "  3) Copy the token line from BotFather's reply and paste it here (shape: 1234567890:***)."
 
   # --- token (capped retries: give up after 5 failed attempts) ---
+  # DGN-147: after the shape confirm, verify LIVENESS via getMe (token_liveness).
+  # A revoked/invalid token (401/403) counts against the SAME 5-try cap and
+  # reprompts, so a dead bot no longer sails through the shape-only check.
   local token_tries=0
   while :; do
     local blob=""
@@ -1268,7 +1425,21 @@ step_bot_token() {
     if [ -n "$BOT_TOKEN" ]; then
       msg "추출된 토큰: $(mask_token "$BOT_TOKEN")" \
           "Extracted token: $(mask_token "$BOT_TOKEN")"
-      if confirm "이 토큰이 맞나요?" "Is this token correct?" "y"; then break; fi
+      if confirm "이 토큰이 맞나요?" "Is this token correct?" "y"; then
+        # Shape confirmed -> liveness gate. 0 = live (proceed), 2 = network
+        # unknown (warn + proceed, offline path), 1 = revoked (fall through to
+        # the retry counter and reprompt). `|| __live=$?` keeps a nonzero return
+        # from tripping `set -e` (the return code is a classification, not an error).
+        local __live=0
+        token_liveness || __live=$?
+        if [ "$__live" != "1" ]; then break; fi
+      else
+        # User rejected the extracted token -> reprompt without a liveness call.
+        token_tries=$((token_tries + 1))
+        [ "$token_tries" -ge 5 ] && { msg "[에러] 5회 시도 후에도 유효한 토큰을 받지 못했습니다. 설치를 중단합니다." \
+              "[ERROR] No valid token after 5 attempts. Aborting install." >&2; exit 1; }
+        continue
+      fi
     else
       msg "토큰을 찾지 못했습니다. 다시 붙여넣어 주세요." \
           "No token found. Please paste again."
@@ -1281,9 +1452,6 @@ step_bot_token() {
       exit 1
     fi
   done
-
-  # Best-effort bot username lookup via getMe (optional, non-fatal).
-  lookup_bot_name
 
   # --- owner id ---
   msg "" ""
@@ -1316,16 +1484,69 @@ step_bot_token() {
   fi
 }
 
-# getMe: resolve the bot @username so the final message can name it.
-lookup_bot_name() {
+# DGN-147: token liveness gate. Calls Telegram getMe with the token (5s timeout)
+# and classifies the result. Also resolves the bot @username on success (subsumes
+# the old lookup_bot_name -- best-effort name for the final message).
+#   return 0  -> LIVE: HTTP 200, sets BOT_NAME to the @username, prints it as
+#               positive feedback. Caller proceeds.
+#   return 1  -> REVOKED/INVALID: HTTP 401/403. Prints a bilingual error. Caller
+#               reprompts (counts against the retry cap).
+#   return 2  -> UNKNOWN: timeout / network failure / curl missing / other code.
+#               Prints a bilingual warning; caller proceeds (offline path).
+# The token is NEVER printed: the getMe URL (which embeds it) is not echoed and
+# curl is silent; only the response BODY (username / error text) is parsed.
+# DRY_RUN mock-accepts without any network call.
+token_liveness() {
   BOT_NAME=""
-  [ -z "$BOT_TOKEN" ] && return 0
-  if [ "$DRY_RUN" = "1" ]; then BOT_NAME="mock_bot"; return 0; fi
-  command -v curl >/dev/null 2>&1 || return 0
-  local resp uname
-  resp="$(curl -fsS --max-time 8 "https://api.telegram.org/bot${BOT_TOKEN}/getMe" 2>/dev/null || true)"
-  uname="$(printf '%s' "$resp" | grep -oE '"username":"[^"]+"' | head -n1 | sed -E 's/.*:"([^"]+)"/\1/' || true)"
-  [ -n "$uname" ] && BOT_NAME="$uname"
+  [ -z "$BOT_TOKEN" ] && return 2
+  if [ "$DRY_RUN" = "1" ]; then
+    BOT_NAME="mock_bot"
+    msg "  [dry-run] getMe 라이브니스 검사는 건너뜁니다 (모의 수락)." \
+        "  [dry-run] Skipping getMe liveness check (mock accept)."
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    msg "  [주의] curl 이 없어 토큰 라이브니스를 확인할 수 없습니다. 계속 진행합니다." \
+        "  [NOTE] curl not found; cannot verify token liveness. Proceeding." >&2
+    return 2
+  fi
+
+  # Capture body to a temp file and the HTTP status separately. -s silent, no -f
+  # so a 401 still yields a body + code (not an early curl error). The token-bearing
+  # URL is never printed; on any failure we surface only the classification.
+  local body_file code
+  body_file="$(mktemp "${TMPDIR:-/tmp}/dogany-getme.XXXXXX")"
+  code="$(curl -s -o "$body_file" -w '%{http_code}' --max-time 5 \
+          "https://api.telegram.org/bot${BOT_TOKEN}/getMe" 2>/dev/null || true)"
+
+  case "$code" in
+    200)
+      local uname
+      uname="$(grep -oE '"username":"[^"]+"' "$body_file" 2>/dev/null | head -n1 | sed -E 's/.*:"([^"]+)"/\1/' || true)"
+      rm -f "$body_file"
+      if [ -n "$uname" ]; then
+        BOT_NAME="$uname"
+        msg "  [OK] 토큰 유효 확인: @${uname} 봇이 응답했습니다." \
+            "  [OK] Token verified live: @${uname} responded."
+      else
+        # 200 but no username parsed -> still live; proceed without a name.
+        msg "  [OK] 토큰이 유효합니다 (getMe 200)." "  [OK] Token is live (getMe 200)."
+      fi
+      return 0
+      ;;
+    401|403)
+      rm -f "$body_file"
+      msg "  [에러] 토큰이 폐기되었거나 유효하지 않습니다 (getMe ${code}). 새 토큰을 발급받아 붙여넣으세요." \
+          "  [ERROR] Token is revoked/invalid (getMe ${code}). Paste a fresh one." >&2
+      return 1
+      ;;
+    *)
+      rm -f "$body_file"
+      msg "  [주의] 토큰 라이브니스 확인 실패 (네트워크/타임아웃, 코드: ${code:-none}). 오프라인일 수 있어 계속 진행합니다." \
+          "  [NOTE] Could not verify token liveness (network/timeout, code: ${code:-none}). Proceeding (may be offline)." >&2
+      return 2
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -1385,6 +1606,7 @@ env_path_for_root() { printf '%s/.telegram_bot/.env' "$1"; }
 render_env() {
   local token="$1" ids="$2" locale="$3" tz="$4"
   local email_addr="${5:-}" email_pw="${6:-}" email_cc="${7:-}"
+  local whisper="${8:-}"
   printf '# Dogany bridge configuration -- generated by install.sh\n'
   printf '# Do NOT commit this file (contains your bot token).\n\n'
   printf 'TELEGRAM_BOT_TOKEN=%s\n' "$token"
@@ -1394,6 +1616,12 @@ render_env() {
   printf 'TZ=%s\n' "$tz"
   printf '# Extra path-guard roots (os.pathsep-separated). Empty for the product.\n'
   printf 'EXTRA_ALLOWED_ROOTS=\n'
+  # DGN-146: voice model chosen at the deps step. Only emitted when voice is
+  # enabled; skip leaves it out so config.py's "small" default applies.
+  if [ -n "$whisper" ]; then
+    printf '# --- Voice input (faster-whisper). Model chosen during install.\n'
+    printf 'LOCAL_WHISPER_MODEL=%s\n' "$whisper"
+  fi
   printf '# --- Email (dogany-mailer; optional, connect-time). Blank = not connected.\n'
   printf '# Gmail: use an App Password (not your login password). Never commit real values.\n'
   printf 'EMAIL_ADDRESS=%s\n' "$email_addr"
@@ -1442,11 +1670,11 @@ step_mint_and_env() {
     # stdout. Show *** when set, blank when unset (mirrors token masking).
     local pw_mask=""; [ -n "$EMAIL_APP_PASSWORD" ] && pw_mask="***"
     render_env "$(mask_token "$BOT_TOKEN")" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
-               "$EMAIL_ADDRESS" "$pw_mask" "$EMAIL_CC"
+               "$EMAIL_ADDRESS" "$pw_mask" "$EMAIL_CC" "$LOCAL_WHISPER_MODEL"
     msg "--- 끝 ---" "--- end ---"
     # Actually write the mock .env into the temp dir so the flow is testable.
     render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
-               "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" > "$env_file"
+               "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" "$LOCAL_WHISPER_MODEL" > "$env_file"
     chmod 600 "$env_file" 2>/dev/null || true
     # Show the model write that a real run would perform into settings.json.
     write_instance_model "$target" "$DOGANY_MODEL"
@@ -1492,7 +1720,7 @@ step_mint_and_env() {
   local tmp_env
   tmp_env="$(mktemp "${env_file}.tmp.XXXXXX")"
   render_env "$BOT_TOKEN" "$OWNER_ID" "$DOGANY_LANG" "$DOGANY_TZ" \
-             "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" > "$tmp_env"
+             "$EMAIL_ADDRESS" "$EMAIL_APP_PASSWORD" "$EMAIL_CC" "$LOCAL_WHISPER_MODEL" > "$tmp_env"
   chmod 600 "$tmp_env"
   mv -f "$tmp_env" "$env_file"
   msg "설정 파일 작성 완료: $env_file" "Wrote config: $env_file"
@@ -2048,6 +2276,9 @@ install.sh -- Dogany product first-run installer
     DOGANY_MOCK_TOKEN_BLOB   pasted BotFather blob
     DOGANY_MOCK_ID_BLOB      pasted userinfobot blob
     DOGANY_VOICE=1           opt into voice (full deps)
+    DOGANY_WHISPER_MODEL=M   preselect the faster-whisper model (small|medium|large-v3)
+    DOGANY_TEST_RAM_GB=N     stub detected RAM in GB (spec-reco testing)
+    DOGANY_TEST_DISK_GB=N    stub free disk in GB (spec-reco testing)
 USAGE
 }
 
