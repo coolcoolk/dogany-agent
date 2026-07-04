@@ -30,6 +30,10 @@ order:
 3. address term — ask how to address the user. do not pre-assume any term and do not use any generic label ("user"/"member") — omit the object entirely: "What would you like me to call you?"
 4. tone — ask preferred communication tone (e.g. clean/polite, casual/friendly). humor level = separate next question.
 5. humor level — after tone answer received, ask separately. direct: "유머 수치를 몇 %로 설정할까요?" (e.g. 10%, 30%).
+6. role (LAST) — ask what role this agent is taking on ("제가 맡을 역할이 뭘까요?" style, in the working language), as a short numbered list with [[OPTIONS]] marker on the very last line (same UI pattern as the emoji question):
+   1. life assistant (schedule, appointments, career, general life management)
+   2. an agent for a specific role
+   pick 1 -> fill the "Primary focus" slot in own AGENT.md Role section with a life-assistant prose line. pick 2 -> ask ONE follow-up ("어떤 역할일까요?" style) and fill the slot with the answer as ONE prose line. (no "general agent" option — the Role section's front-door bullet already makes every agent general; Primary focus just names the main hat.) HARD RULE: prose only — never install/link skills, routines, or crons from this answer (deeper role shaping belongs to CRAFT crafting; at HAND this is just a text seed the crafting can later rewrite).
 
 do not ask:
 - communication preference (answer format) — already defined in RULES.md Output/notation.
@@ -46,9 +50,11 @@ fill received answers into the corresponding fields in own AGENT.md. five fields
 - Relationship `Tone` (the `(set at onboarding)` slot)
 - Relationship `Humor` (the `(set at onboarding)` slot)
 
-(The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above.)
+plus the sixth: Role `Primary focus` slot — fill with the chosen role (life assistant, or the specific role from the follow-up) as one prose line.
 
-all five filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
+(The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above plus the Primary-focus slot.)
+
+all five filled AND the Primary-focus slot filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
 
 after saving, brief confirm to user: saved settings, will interact this way from now. 1-2 lines.
 
