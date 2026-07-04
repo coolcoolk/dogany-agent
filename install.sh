@@ -1752,6 +1752,40 @@ TMR
 }
 
 # ---------------------------------------------------------------------------
+# Step 9c: dogany launcher (symlink scripts/dogany into ~/.local/bin)
+# ---------------------------------------------------------------------------
+# A thin `dogany` command (DGN-137): chat / status / logs / update / start /
+# stop. No sudo -- a user-local symlink into ~/.local/bin. Honors DRY_RUN.
+step_launcher() {
+  local src="$REPO_ROOT/scripts/dogany"
+  local bin_dir="$HOME/.local/bin"
+  local dest="$bin_dir/dogany"
+
+  [ -f "$src" ] || return 0   # nothing to install if the script is missing.
+
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "dogany 런처 설치(모의): ln -sf '$src' '$dest'" \
+        "Would install dogany launcher: ln -sf '$src' '$dest'"
+    return 0
+  fi
+
+  mkdir -p "$bin_dir"
+  ln -sf "$src" "$dest"
+  chmod +x "$src" 2>/dev/null || true
+  msg "dogany 런처 설치됨: $dest" "Installed dogany launcher: $dest"
+
+  # PATH hint: only if ~/.local/bin is not already on PATH.
+  case ":$PATH:" in
+    *":$bin_dir:"*) : ;;
+    *)
+      msg "참고: $bin_dir 가 PATH 에 없습니다. 셸 설정에 다음을 추가하세요:" \
+          "Note: $bin_dir is not on your PATH. Add this to your shell profile:"
+      printf '  export PATH="%s:$PATH"\n' "$bin_dir"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Step 10: final message
 # ---------------------------------------------------------------------------
 step_final() {
@@ -1779,6 +1813,8 @@ step_final() {
     msg "봇을 시작하려면 위의 수동 실행 명령을 사용하세요." \
         "Start the bot with the manual run command shown above."
   fi
+  msg "로컬 명령: 'dogany' 로 에이전트를 열고, 'dogany status' 로 상태를, 'dogany logs -f' 로 로그를 봅니다." \
+      "Local command: run 'dogany' to open your agent, 'dogany status' for health, 'dogany logs -f' for logs."
   if [ "$DRY_RUN" = "1" ]; then
     hr
     msg "[dry-run] 실제 변경 없음. 임시 디렉토리: $DRY_TMP" \
@@ -1853,6 +1889,7 @@ main() {
   step_mint_and_env
   step_service
   step_routines
+  step_launcher
   step_final
 }
 

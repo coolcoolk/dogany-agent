@@ -1,0 +1,348 @@
+#!/bin/bash
+# dogany -- thin local launcher for a Dogany agent instance (DGN-137).
+#
+# A DUMB DISPATCHER. No business logic lives here: every subcommand shells out
+# to the real door (claude / the service manager / the repo's update.sh / the
+# bot log). Keep it that way -- logic belongs in the instance, not the launcher.
+#
+# install.sh symlinks this file into ~/.local/bin/dogany. Because it is a
+# symlink into the repo checkout, `git pull` (via update.sh) refreshes it in
+# place; the symlink itself never needs re-pointing.
+#
+# Instance resolution order:
+#   1. ~/.dogany/lite_instance  (marker written at mint time)
+#   2. <repo-root>/agents/main  (repo root derived from this script's real path)
+# Fails clearly if neither resolves to a dir containing AGENT.md.
+#
+# Future (CRAFT multi-agent): a `-n <name>` selector will pick among instances.
+# OUT of scope here -- do not scaffold beyond this comment.
+#
+# bash 3.2 compatible (macOS ships bash 3.2). English/ASCII only.
+
+set -u
+
+PROG="dogany"
+
+# --------------------------------------------------------------------------
+# Path helpers (bash 3.2: no realpath / readlink -f guaranteed).
+# --------------------------------------------------------------------------
+
+# Resolve a possible symlink chain to the final physical file path.
+resolve_link() {
+  local src="$1" dir base
+  while [ -h "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    base="$(readlink "$src")"
+    case "$base" in
+      /*) src="$base" ;;
+      *)  src="$dir/$base" ;;
+    esac
+  done
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  base="$(basename "$src")"
+  printf '%s/%s' "$dir" "$base"
+}
+
+# Repo root = parent of the scripts/ dir that holds the resolved launcher.
+repo_root() {
+  local self scripts_dir
+  self="$(resolve_link "$0")"
+  scripts_dir="$(cd -P "$(dirname "$self")" && pwd)"   # .../scripts
+  (cd -P "$scripts_dir/.." && pwd)                      # repo root
+}
+
+# --------------------------------------------------------------------------
+# Instance resolution.
+# --------------------------------------------------------------------------
+LITE_MARKER="$HOME/.dogany/lite_instance"
+
+resolve_instance() {
+  local recorded="" fallback
+
+  if [ -f "$LITE_MARKER" ]; then
+    recorded="$(cat "$LITE_MARKER" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$recorded" ] && [ -d "$recorded" ] && [ -f "$recorded/AGENT.md" ]; then
+      (cd "$recorded" && pwd -P)
+      return 0
+    fi
+  fi
+
+  fallback="$(repo_root)/agents/main"
+  if [ -d "$fallback" ] && [ -f "$fallback/AGENT.md" ]; then
+    (cd "$fallback" && pwd -P)
+    return 0
+  fi
+
+  echo "$PROG: could not resolve an agent instance." >&2
+  echo "  Looked for marker: $LITE_MARKER" >&2
+  echo "  Fallback:          $fallback" >&2
+  echo "  Neither points at a directory containing AGENT.md." >&2
+  echo "  Run the installer first, or check ~/.dogany/lite_instance." >&2
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# Log path resolution. Naming differs across versions:
+#   <instance>/.telegram_bot/logs/  (current)   or   <instance>/runtime/logs/
+# Pick whichever directory exists; prefer the one that actually holds bot.log.
+# --------------------------------------------------------------------------
+resolve_log() {
+  local inst="$1" d
+  for d in "$inst/runtime/logs" "$inst/.telegram_bot/logs"; do
+    [ -f "$d/bot.log" ] && { printf '%s' "$d/bot.log"; return 0; }
+  done
+  # No bot.log yet: return the log path under whichever logs dir exists.
+  for d in "$inst/runtime/logs" "$inst/.telegram_bot/logs"; do
+    [ -d "$d" ] && { printf '%s' "$d/bot.log"; return 0; }
+  done
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# Service label. Derive from the plist under <instance>/bridge/*.plist, reading
+# the <key>Label</key> value (filename != Label; same approach as install.sh).
+# Linux: the systemd unit is a fixed name.
+# --------------------------------------------------------------------------
+SYSTEMD_UNIT="dogany-agent.service"
+
+plist_label() {
+  local plist="$1" label=""
+  [ -f "$plist" ] || return 0
+  if command -v plutil >/dev/null 2>&1; then
+    label="$(plutil -extract Label raw -o - "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ] && [ -x /usr/libexec/PlistBuddy ]; then
+    label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ]; then
+    label="$(grep -A1 '<key>Label</key>' "$plist" 2>/dev/null \
+             | grep '<string>' | head -n1 \
+             | sed -E 's#.*<string>(.*)</string>.*#\1#')"
+  fi
+  printf '%s' "$label"
+}
+
+# Echo the launchd service label for an instance (macOS), or "" if none found.
+service_label() {
+  local inst="$1" p label=""
+  for p in "$inst"/bridge/*.plist; do
+    [ -e "$p" ] || continue
+    label="$(plist_label "$p")"
+    [ -n "$label" ] || label="$(basename "$p" .plist)"
+    break
+  done
+  printf '%s' "$label"
+}
+
+# --------------------------------------------------------------------------
+# Subcommands.
+# --------------------------------------------------------------------------
+
+cmd_chat() {
+  local inst; inst="$(resolve_instance)" || return 1
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "$PROG: 'claude' CLI not found on PATH." >&2
+    return 1
+  fi
+  cd "$inst" || return 1
+  exec claude
+}
+
+cmd_status() {
+  local inst; inst="$(resolve_instance)" || return 1
+  echo "instance:  $inst"
+
+  local os; os="$(uname -s)"
+
+  # --- service loaded? ---
+  if [ "$os" = "Darwin" ]; then
+    local label; label="$(service_label "$inst")"
+    if [ -z "$label" ]; then
+      echo "service:   (no plist found under $inst/bridge)"
+    elif launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 \
+         || launchctl list 2>/dev/null | grep -q -- "$label"; then
+      echo "service:   loaded ($label)"
+    else
+      echo "service:   NOT loaded ($label)"
+    fi
+  else
+    if command -v systemctl >/dev/null 2>&1 \
+       && systemctl --user is-active --quiet "$SYSTEMD_UNIT" 2>/dev/null; then
+      echo "service:   active ($SYSTEMD_UNIT)"
+    elif command -v systemctl >/dev/null 2>&1; then
+      echo "service:   NOT active ($SYSTEMD_UNIT)"
+    else
+      echo "service:   (systemctl not available)"
+    fi
+  fi
+
+  # --- bridge process alive? (scoped to THIS instance path) ---
+  if pgrep -f "bridge --path $inst" >/dev/null 2>&1; then
+    echo "bridge:    running"
+  else
+    echo "bridge:    not running"
+  fi
+
+  # --- bot.log last-write age ---
+  local log; log="$(resolve_log "$inst" 2>/dev/null || true)"
+  if [ -n "$log" ] && [ -f "$log" ]; then
+    local mtime now age
+    if mtime="$(stat -f %m "$log" 2>/dev/null)"; then :;    # BSD/macOS
+    elif mtime="$(stat -c %Y "$log" 2>/dev/null)"; then :;  # GNU/Linux
+    else mtime=""; fi
+    if [ -n "$mtime" ]; then
+      now="$(date +%s)"
+      age=$(( now - mtime ))
+      echo "bot.log:   last write ${age}s ago ($log)"
+    else
+      echo "bot.log:   present ($log)"
+    fi
+  else
+    echo "bot.log:   not found"
+  fi
+
+  # --- routine labels present (scoped to THIS instance's routine plists) ---
+  if [ "$os" = "Darwin" ]; then
+    local total=0 loaded=0 p rlabel
+    for p in "$inst"/routines/*.plist; do
+      [ -e "$p" ] || continue
+      total=$(( total + 1 ))
+      rlabel="$(plist_label "$p")"
+      [ -n "$rlabel" ] || rlabel="$(basename "$p" .plist)"
+      if launchctl print "gui/$(id -u)/$rlabel" >/dev/null 2>&1 \
+         || launchctl list 2>/dev/null | grep -q -- "$rlabel"; then
+        loaded=$(( loaded + 1 ))
+      fi
+    done
+    echo "routines:  $loaded/$total routine plist(s) loaded"
+  else
+    if command -v systemctl >/dev/null 2>&1; then
+      local n
+      n="$(systemctl --user list-units --type=timer --all 2>/dev/null \
+           | grep -c 'dogany-' || true)"
+      echo "routines:  $n systemd timer(s) matching dogany-*"
+    else
+      echo "routines:  (systemctl not available)"
+    fi
+  fi
+}
+
+cmd_logs() {
+  local inst follow=0 log
+  inst="$(resolve_instance)" || return 1
+  case "${1:-}" in -f|--follow) follow=1 ;; esac
+  log="$(resolve_log "$inst" 2>/dev/null || true)"
+  if [ -z "$log" ] || [ ! -f "$log" ]; then
+    echo "$PROG: no bot.log found under $inst (runtime/logs or .telegram_bot/logs)." >&2
+    return 1
+  fi
+  if [ "$follow" = "1" ]; then
+    exec tail -f "$log"
+  else
+    exec tail -n 200 "$log"
+  fi
+}
+
+cmd_update() {
+  local root; root="$(repo_root)"
+  if [ ! -x "$root/update.sh" ]; then
+    echo "$PROG: update.sh not found or not executable at $root." >&2
+    return 1
+  fi
+  exec "$root/update.sh" "$@"
+}
+
+# Shared y/n confirm (default no). Returns 0 on yes.
+confirm() {
+  local prompt="$1" reply
+  printf '%s [y/N] ' "$prompt"
+  IFS= read -r reply || return 1
+  reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+cmd_start() {
+  cmd_service_op "start"
+}
+
+cmd_stop() {
+  cmd_service_op "stop"
+}
+
+cmd_service_op() {
+  local op="$1" inst os
+  inst="$(resolve_instance)" || return 1
+  os="$(uname -s)"
+
+  if ! confirm "$PROG $op: $op the agent service now?"; then
+    echo "aborted."
+    return 0
+  fi
+
+  if [ "$os" = "Darwin" ]; then
+    local label; label="$(service_label "$inst")"
+    if [ -z "$label" ]; then
+      echo "$PROG: no plist found under $inst/bridge -- cannot derive the service label." >&2
+      return 1
+    fi
+    local dest="$HOME/Library/LaunchAgents/$(basename "$(ls "$inst"/bridge/*.plist 2>/dev/null | head -n1)")"
+    if [ "$op" = "start" ]; then
+      launchctl kickstart "gui/$(id -u)/$label" 2>/dev/null \
+        || launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null \
+        || { echo "$PROG: failed to start $label." >&2; return 1; }
+      echo "started: $label"
+    else
+      launchctl bootout "gui/$(id -u)/$label" 2>/dev/null \
+        || launchctl bootout "gui/$(id -u)" "$dest" 2>/dev/null \
+        || { echo "$PROG: failed to stop $label." >&2; return 1; }
+      echo "stopped: $label"
+    fi
+  else
+    if ! command -v systemctl >/dev/null 2>&1; then
+      echo "$PROG: systemctl not available." >&2
+      return 1
+    fi
+    systemctl --user "$op" "$SYSTEMD_UNIT" \
+      || { echo "$PROG: systemctl --user $op $SYSTEMD_UNIT failed." >&2; return 1; }
+    echo "${op}ed: $SYSTEMD_UNIT"
+  fi
+}
+
+usage() {
+  cat <<USAGE
+$PROG -- local launcher for your Dogany agent
+
+Usage: $PROG [command]
+
+Commands:
+  (none) | chat    cd into the instance and open claude (the local door)
+  status           one-screen health (service / bridge / bot.log / routines)
+  logs [-f]        tail the bot log (-f to follow)
+  update           run the repo's update.sh (git pull + refresh)
+  start            start the agent service (asks to confirm)
+  stop             stop the agent service (asks to confirm)
+  help             this message
+
+Instance is resolved from ~/.dogany/lite_instance, else <repo>/agents/main.
+USAGE
+}
+
+# --------------------------------------------------------------------------
+# Dispatch.
+# --------------------------------------------------------------------------
+main() {
+  local sub="${1:-chat}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    chat)           cmd_chat "$@" ;;
+    status)         cmd_status "$@" ;;
+    logs)           cmd_logs "$@" ;;
+    update)         cmd_update "$@" ;;
+    start)          cmd_start "$@" ;;
+    stop)           cmd_stop "$@" ;;
+    help|-h|--help) usage ;;
+    *)              echo "$PROG: unknown command: $sub" >&2; echo >&2; usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"
