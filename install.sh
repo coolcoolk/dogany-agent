@@ -43,7 +43,7 @@ EMAIL_APP_PASSWORD="${EMAIL_APP_PASSWORD:-}"
 EMAIL_CC="${EMAIL_CC:-}"
 ENABLE_VOICE="${DOGANY_VOICE:-0}"     # 0 core-only (default), 1 full
 INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$SCRIPT_PATH/agents/main}"
-# Lite = 1 agent. Pro flips this knob (env or config) to allow more; !=1 bypasses the single-agent refusal.
+# Default 1 installed agent. A non-1 value (env or config) bypasses the single-agent refusal.
 DOGANY_MAX_AGENTS="${DOGANY_MAX_AGENTS:-1}"
 AGENT_NAME="${DOGANY_AGENT_NAME:-dogany}"
 SERVICE_CHOICE=""                     # auto | manual
@@ -116,15 +116,16 @@ canon_path() {
   fi
 }
 
-# Enforce Lite free-tier limit: at most ONE installed instance.
-# Call before minting. Exits non-zero if a different root already holds the
-# marker. Returns 0 if mint should proceed (no conflict, or same root).
+# Single-agent idempotency: at most ONE installed instance by default.
+# Call before minting. Exits non-zero if a different VALID instance already
+# holds the marker. Returns 0 if mint should proceed (no conflict, same root, or
+# a stale marker that was self-healed).
 check_lite_single_agent() {
   local current_root="$1"
   local current_canon
   current_canon="$(canon_path "$current_root")"
 
-  # Config knob: non-1 limit (Pro) bypasses the Lite single-agent refusal.
+  # Config knob: a non-1 limit bypasses the single-agent refusal.
   if [ "${DOGANY_MAX_AGENTS:-1}" != "1" ]; then
     return 0
   fi
@@ -153,12 +154,14 @@ check_lite_single_agent() {
     return 0
   fi
 
-  # --- recorded root no longer exists on disk -> stale marker, self-heal ---
-  # (e.g. user deleted the install dir). Treat as absent so a fresh install
-  # at a new location is not permanently blocked.
-  if [ ! -d "$recorded" ]; then
-    msg "[경고] 기록된 설치 경로가 더 이상 존재하지 않습니다: $recorded. 마커를 무시하고 신규 설치로 진행합니다." \
-        "[WARN] Recorded install root no longer exists: $recorded. Ignoring stale marker; proceeding as a new install."
+  # --- DGN-145: recorded root missing OR not a minted instance -> stale marker,
+  # self-heal (warn, drop the marker, CONTINUE the install). A minted instance
+  # always carries an AGENT.md; its absence means the marked path is not a real
+  # instance (moved/deleted/leftover), so it must not block a fresh install.
+  if [ ! -d "$recorded" ] || [ ! -f "$recorded/AGENT.md" ]; then
+    msg "[경고] 기록된 설치 경로가 유효한 인스턴스가 아닙니다: $recorded. 오래된 마커를 제거하고 신규 설치로 계속합니다." \
+        "[WARN] Recorded install path is not a valid instance: $recorded. Removing the stale marker and continuing with a new install." >&2
+    [ "$DRY_RUN" = "1" ] || rm -f "$LITE_MARKER" 2>/dev/null || true
     return 0
   fi
 
@@ -172,14 +175,13 @@ check_lite_single_agent() {
     return 0
   fi
 
-  # --- different root -> second agent -> REFUSE ---
+  # --- DGN-145: a valid instance already exists at a different path -> stop and
+  # point the user at the reset command. No tier language, no upsell.
   hr >&2
-  msg "[Lite] 에이전트가 이미 설치되어 있습니다: $recorded_canon" \
-      "[Lite] An agent is already installed at: $recorded_canon" >&2
-  msg "Lite는 에이전트 1개를 지원합니다. 추가 에이전트 생성은 Pro 기능입니다(멀티-에이전트 오케스트레이션)." \
-      "Lite supports a single agent. Creating additional agents is a Pro feature (multi-agent orchestration)." >&2
-  msg "기존 인스턴스를 재설정하려면 해당 경로를 --root 옵션에 지정하세요:" \
-      "To reconfigure the existing instance, point --root at it:" >&2
+  msg "에이전트 인스턴스가 이미 존재합니다: $recorded_canon" \
+      "An agent instance already exists at: $recorded_canon" >&2
+  msg "해당 인스턴스를 초기화하려면 그 경로를 --root 로 지정해 다시 실행하세요:" \
+      "To reset it, rerun with --root pointing at that path:" >&2
   printf '  bash install.sh --root "%s"\n' "$recorded_canon" >&2
   hr >&2
   exit 2
@@ -227,8 +229,28 @@ abort_on_eof() {
   exit 1
 }
 
+# Drain any lines still buffered on the tty right now, non-blocking, and echo
+# them (newline-joined) to stdout. Used after a paste so extra lines the user
+# pasted (a full multi-line BotFather / userinfobot message) do not leak into
+# the NEXT prompt one-per-read. bash 3.2 (macOS) note: `read -t` rejects
+# fractional seconds ("invalid timeout specification"), so the smallest portable
+# window is `-t 1`. Each buffered line arrives instantly; the 1s ceiling only
+# applies once, when the buffer is empty (nothing more to drain). Prints nothing
+# when the buffer is empty. Safe in non-interactive/EOF contexts (loop just ends).
+drain_buffered_lines() {
+  local extra
+  while IFS= read -r -t 1 extra; do
+    printf '%s\n' "$extra"
+  done
+}
+
 # ask VAR "ko prompt" "en prompt" [default]  -- reads a line into VAR.
 # In dry-run, if VAR is already set (from env/args), keep it and echo the mock.
+# After the first read, drains any further tty-buffered lines into the value so a
+# multi-line paste is captured whole (DGN-142) rather than dribbling into later
+# prompts. Callers that only want the first line (single-value answers) still work
+# because the drained tail is simply appended; extraction over the whole blob then
+# picks the right token/id, and single-token answers have no tail to drain.
 ask() {
   local __var="$1" ko="$2" en="$3" def="${4:-}"
   local __cur
@@ -245,6 +267,12 @@ ask() {
   # read fails (nonzero) only on EOF, not on an empty line -> abort on EOF so a
   # dead/exhausted stdin never loops the caller forever.
   IFS= read -r reply || abort_on_eof
+  # Drain leftover buffered paste lines and append them to the value BEFORE the
+  # caller extracts (token/id) or the next prompt runs. Newline-joined so a
+  # multi-line blob stays intact for grep-based extraction.
+  local __tail
+  __tail="$(drain_buffered_lines)"
+  if [ -n "$__tail" ]; then reply="$reply"$'\n'"$__tail"; fi
   if [ -z "$reply" ] && [ -n "$def" ]; then reply="$def"; fi
   eval "$__var=\$reply"
 }
@@ -278,6 +306,10 @@ confirm() {
     msgn "$ko " "$en "; printf '%s [dry-run: %s]\n' "$hint" "$def"
     [ "$def" = "y" ]; return
   fi
+  # DGN-142: drain any leftover tty-buffered paste lines (e.g. the tail of a
+  # BotFather message) BEFORE printing the prompt, so none is silently consumed
+  # as the y/n answer. Discard them -- a confirm has no use for pasted prose.
+  drain_buffered_lines >/dev/null
   msgn "$ko " "$en "; printf '%s ' "$hint"
   IFS= read -r reply || abort_on_eof
   reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
@@ -580,6 +612,29 @@ PYEOF
   return 0  # no validator available -> accept
 }
 
+# DGN-143: fuzzy timezone lookup. Given a rough query (e.g. "tokyo", "seoul"),
+# print up to 8 IANA zone names whose full name contains the query
+# (case-insensitive substring) over python3's zoneinfo.available_timezones(),
+# one per line, sorted. Prints nothing when python3 is unavailable or no zone
+# matches -- callers fall back to plain reprompt. Never fails the install.
+tz_fuzzy_candidates() {
+  local query="$1"
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$query" <<'PYEOF' 2>/dev/null || true
+import sys
+try:
+    from zoneinfo import available_timezones
+    q = sys.argv[1].strip().lower()
+    if not q:
+        sys.exit(0)
+    hits = sorted(z for z in available_timezones() if q in z.lower())
+    for z in hits[:8]:
+        print(z)
+except Exception:
+    pass
+PYEOF
+}
+
 # Resolve the SYSTEM local timezone -- the clock launchd/systemd actually fire
 # on. This is independent of the user's chosen DOGANY_TZ (e.g. a UTC server with
 # a user in Asia/Seoul). Best-effort; empty -> caller treats as "same as chosen"
@@ -637,15 +692,46 @@ step_timezone() {
   if ! confirm "이 타임존이 맞나요?" "Is this timezone correct?" "y"; then
     local tz_in="" tries=0
     while [ "$tries" -lt 3 ]; do
-      ask tz_in "IANA 타임존을 입력하세요 (예: Asia/Seoul, UTC): " \
-                "Enter an IANA timezone (e.g. Asia/Seoul, UTC): "
+      ask tz_in "타임존을 입력하세요 (IANA 이름 또는 도시명, 예: Asia/Seoul, America/New_York): " \
+                "Enter a timezone (IANA name or a city, e.g. Asia/Seoul, America/New_York): "
       [ -z "$tz_in" ] && break  # keep detected
+      # Exact IANA input is accepted directly (final gate below).
       if tz_valid "$tz_in"; then
         DOGANY_TZ="$tz_in"; break
       fi
+      # DGN-143: not exact -> case-insensitive substring search over the IANA
+      # zone list and offer numbered candidates to pick from.
+      local cands=""
+      cands="$(tz_fuzzy_candidates "$tz_in")"
+      if [ -n "$cands" ]; then
+        msg "정확히 일치하지 않습니다. '$tz_in' 후보:" \
+            "No exact match. Candidates for '$tz_in':"
+        local i=0 line pick=""
+        # Build a numbered menu; capture choices into positional-safe vars.
+        local c1="" c2="" c3="" c4="" c5="" c6="" c7="" c8=""
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          i=$((i + 1))
+          eval "c$i=\$line"
+          printf '  %d) %s\n' "$i" "$line"
+        done <<EOF
+$cands
+EOF
+        ask pick "번호를 선택하세요 (건너뛰려면 빈 줄): " \
+                 "Pick a number (blank to skip): "
+        case "$pick" in
+          ''|*[!0-9]*) : ;;  # non-numeric / blank -> reprompt
+          *)
+            if [ "$pick" -ge 1 ] && [ "$pick" -le "$i" ]; then
+              eval "tz_in=\$c$pick"
+              if tz_valid "$tz_in"; then DOGANY_TZ="$tz_in"; break; fi
+            fi
+            ;;
+        esac
+      fi
       tries=$((tries + 1))
-      msg "유효한 IANA 타임존이 아닙니다: $tz_in (예: Asia/Seoul, America/New_York, UTC)" \
-          "Not a valid IANA timezone: $tz_in (e.g. Asia/Seoul, America/New_York, UTC)"
+      msg "유효한 타임존을 찾지 못했습니다 (예: Asia/Seoul, America/New_York)." \
+          "Could not resolve a valid timezone (e.g. Asia/Seoul, America/New_York)."
     done
   fi
   msg "타임존: $DOGANY_TZ" "Timezone: $DOGANY_TZ"
@@ -662,8 +748,13 @@ step_dependencies() {
       "Default installs core dependencies only (fast and light)."
   # ENABLE_VOICE may already be preset via env for dry-run.
   if [ "$ENABLE_VOICE" != "1" ]; then
-    if confirm "음성 입력을 활성화할까요? (대용량 모델 다운로드)" \
-               "Enable voice input? (downloads a large model)" "n"; then
+    # DGN-144: state the real download size and the device disk state so the
+    # user can judge before opting in.
+    msg "음성 입력은 faster-whisper small 모델(~0.5GB)을 내려받습니다." \
+        "Voice input downloads faster-whisper small (~0.5GB)."
+    disk_free_line
+    if confirm "음성 입력을 활성화할까요?" \
+               "Enable voice input?" "n"; then
       ENABLE_VOICE=1
     else
       ENABLE_VOICE=0
@@ -677,6 +768,26 @@ step_dependencies() {
 
   # Optional semantic-memory embedding backend (Ollama + bge-m3).
   step_embedding
+}
+
+# DGN-144: disk free/total for the $HOME volume, as a bilingual one-liner
+# "disk: N GB free of M GB" (integers, floor). Portable via `df -k` + awk (GB =
+# kB / 1024 / 1024). Fail-open: prints nothing if df/awk cannot produce numbers,
+# so a detection miss never blocks or breaks a prompt. Always returns 0.
+disk_free_line() {
+  local out avail_kb total_kb
+  # df -k on $HOME: 1K-blocks. Columns vary (BSD vs GNU); read the data row's
+  # total(2) and available(4) fields via awk, tolerating a wrapped first line.
+  out="$(df -k "$HOME" 2>/dev/null | awk 'NR>1 && $2 ~ /^[0-9]+$/ {print $2" "$4; exit}')"
+  total_kb="${out%% *}"
+  avail_kb="${out##* }"
+  case "$total_kb" in ''|*[!0-9]*) return 0 ;; esac
+  case "$avail_kb" in ''|*[!0-9]*) return 0 ;; esac
+  local free_gb=$((avail_kb / 1024 / 1024))
+  local total_gb=$((total_kb / 1024 / 1024))
+  msg "  디스크: ${free_gb}GB 여유 / 총 ${total_gb}GB" \
+      "  disk: ${free_gb} GB free of ${total_gb} GB"
+  return 0
 }
 
 # Total system RAM in GB (integer, floor). macOS: sysctl hw.memsize (bytes).
@@ -734,6 +845,8 @@ step_embedding() {
     msg "  감지된 RAM: ${ram_disp}GB (16GB 미만/불명) -> 키워드 검색만으로도 동작합니다. 나중에 언제든 추가 가능." \
         "  Detected RAM: ${ram_disp}GB (<16GB or unknown) -> keyword-only recall works; add later anytime."
   fi
+  # DGN-144: show the device disk state next to the RAM check (bge-m3 ~1.5GB).
+  disk_free_line
 
   if ! confirm "지금 Ollama + bge-m3 를 설치할까요?" "Install Ollama + bge-m3 now?" "$def"; then
     msg "  임베딩을 건너뜁니다. 키워드 검색으로 동작하며, 나중에 언제든 추가할 수 있습니다." \
@@ -937,14 +1050,14 @@ step_bot_token() {
       "  1) Open @BotFather (Telegram's official bot maker) in Telegram."
   msg "  2) /newbot 를 보내고 표시 이름과 사용자명(@...bot)을 정합니다." \
       "  2) Send /newbot and pick a display name and a username (must end in 'bot')."
-  msg "  3) BotFather 가 보낸 답장 전체를 그대로 여기에 붙여넣으세요 -- 토큰만 자동으로 추출합니다." \
-      "  3) Paste BotFather's WHOLE reply here -- we auto-extract just the token."
+  msg "  3) BotFather 답장에서 토큰 줄만 복사해 여기에 붙여넣으세요 (형식 예: 1234567890:***)." \
+      "  3) Copy the token line from BotFather's reply and paste it here (shape: 1234567890:***)."
 
   # --- token (capped retries: give up after 5 failed attempts) ---
   local token_tries=0
   while :; do
     local blob=""
-    ask blob "BotFather 메시지 붙여넣기: " "Paste BotFather message: " \
+    ask blob "봇 토큰만 입력 (예: 1234567890:***): " "Enter the bot token only (e.g. 1234567890:***): " \
         "${DOGANY_MOCK_TOKEN_BLOB:-}"
     BOT_TOKEN="$(extract_token "$blob")"
     if [ -n "$BOT_TOKEN" ]; then
@@ -976,11 +1089,11 @@ step_bot_token() {
       "  1) Open @userinfobot (a bot that tells you your id) in Telegram."
   msg "  2) 아무 메시지나 보내면 당신의 숫자 ID 를 답장으로 보냅니다." \
       "  2) Send it any message; it replies with your numeric id."
-  msg "  3) 그 답장을 그대로 붙여넣으세요 -- ID 만 자동 추출합니다 (건너뛰려면 빈 줄)." \
-      "  3) Paste that reply here -- we auto-extract just the id (leave blank to skip)."
+  msg "  3) 답장에서 숫자 ID 만 입력하세요 (예: 12345678). 건너뛰려면 빈 줄." \
+      "  3) Enter just the numeric id from the reply (e.g. 12345678). Leave blank to skip."
   local id_blob=""
-  ask id_blob "userinfobot 메시지 붙여넣기 (선택): " \
-              "Paste userinfobot message (optional): " \
+  ask id_blob "숫자 ID 만 입력 (예: 12345678, 선택): " \
+              "Enter the numeric id only (e.g. 12345678, optional): " \
               "${DOGANY_MOCK_ID_BLOB:-}"
   OWNER_ID="$(extract_user_id "$id_blob")"
   if [ -n "$OWNER_ID" ]; then
@@ -1137,7 +1250,7 @@ step_mint_and_env() {
 
   target="$INSTALL_ROOT"
 
-  # Lite idempotency check: refuse a second distinct agent (Pro feature).
+  # Single-agent idempotency check: stop if a distinct valid instance exists.
   check_lite_single_agent "$target"
 
   # Re-run handling: if an .env already exists, back it up before touching it.
