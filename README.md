@@ -197,6 +197,135 @@ reusing your personal one -- isolation from personal data and a clean agent
 identity for email and integrations. Connecting that account (email send, etc.)
 is an optional, opt-in step during install (you can skip it and add it later).
 
+## Windows (WSL2)
+
+The agent runs on Windows through WSL2 (a real Linux environment). Native
+Windows is a separate track. The install is copy-paste friendly and needs no
+prior terminal experience.
+
+### What "always on" means on Windows
+
+The agent runs inside WSL2 and survives:
+- closing every terminal window,
+- locking the screen (Win+L),
+- the machine sleeping and waking (it is unreachable while the machine
+  sleeps, and answers again after it wakes).
+
+The agent STOPS when you:
+- sign out of Windows,
+- shut down or restart the machine.
+
+After a restart or sign-out, the agent comes back the next time you sign in
+to Windows -- not before. A machine sitting at the lock screen after an
+overnight automatic Windows Update restart has NO agent running until
+someone signs in. This is a Windows platform limit: WSL cannot run without
+an interactive session.
+
+If this machine is a dedicated always-on box and you need the agent to
+survive unattended reboots, enable Windows automatic sign-in yourself
+(netplwiz, or Sysinternals Autologon which stores the password as an
+encrypted LSA secret). Understand the tradeoff: with auto-logon, anyone who
+powers on the machine gets your Windows session. Use it only on a physically
+secure machine, and pair it with a lock-on-logon step (e.g. a logon task
+running `rundll32.exe user32.dll,LockWorkStation`) so the desktop locks
+immediately while the agent keeps running behind the lock screen.
+
+Recommendation for always-on use: keep the machine on AC power and set sleep
+to Never (Settings > System > Power, or `powercfg /change standby-timeout-ac 0`)
+-- the same advice as macOS.
+
+### Install (Windows 11)
+
+Requirements: Windows 11 (we rely on `vmIdleTimeout`, a Windows 11 setting),
+8GB RAM minimum (16GB recommended for voice input), ~10GB free disk.
+
+1. Install WSL + Ubuntu. In PowerShell ("Run as administrator"):
+
+       wsl --install
+
+   Reboot when prompted. Ubuntu then opens by itself and asks you to create a
+   Linux username and password: USE ONLY ENGLISH LETTERS for the username
+   (your Windows account name can stay Korean -- that is fine). If WSL was
+   already installed: `wsl --update`, then `wsl --install -d Ubuntu`.
+
+2. Get the agent code + Claude Code (inside the Ubuntu window):
+
+       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
+
+   Then install Claude Code and log in (`claude`), same as the Linux setup
+   above. If a browser does not open for login, copy the printed URL into your
+   Windows browser.
+
+3. Windows-side setup. In PowerShell (normal user -- NOT administrator):
+
+       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1
+
+   This runs the setup script that came with the cloned code (nothing is
+   downloaded from a URL). It keeps the agent alive with no terminal open,
+   turns on systemd inside Ubuntu, and briefly restarts WSL (your Ubuntu
+   window will close -- that is expected). It needs no administrator elevation.
+
+4. Install the agent (reopen Ubuntu):
+
+       cd ~/dogany-agent && bash install.sh
+
+   The standard wizard runs once, start to finish. If step 3 was skipped, the
+   installer stops in under five seconds -- before any question -- and prints
+   the exact step 3 command.
+
+5. Verify keep-alive: close ALL Ubuntu windows, wait 2 minutes, message your
+   bot. It must reply.
+
+6. Verify the reboot contract: restart Windows; BEFORE signing in, message the
+   bot -- it must NOT reply (the documented platform limit). Sign in, wait up
+   to 2 minutes, message again -- it must reply.
+
+### Voice model on Windows
+
+WSL is given a memory cap (`[wsl2] memory=`, defaulted to `min(hostRAM/2, 8)`GB
+with a 4GB floor). On an 8GB machine, choose the `small` voice model or skip
+voice; running voice AND semantic memory together needs a 16GB machine.
+
+Because the cap is at most 8GB on every host, the installer's automatic voice
+recommendation stays at `small` even on large machines. On a 16GB+ host you
+may raise the cap (re-run `setup-windows.ps1 -MemoryGB <N>`) and then the
+installer can recommend the medium voice model.
+
+### Troubleshooting (Windows)
+
+- Bot silent minutes after you close all terminals: the keep-alive was
+  removed or WSL idled out. Re-run step 3 (`setup-windows.ps1`). One-off: open
+  Ubuntu, or run the `DoganyWSLKeepAlive` task from Task Scheduler.
+- `systemctl --user` says "Failed to connect to bus" (and the watchdog sends
+  a bus-down alert): recover with `sudo systemctl restart user@$(id -u)`. If
+  that fails, in PowerShell run `wsl --shutdown`, then reopen Ubuntu (a full
+  recycle that does not share this failure point).
+- Ubuntu first launch fails on a Korean-named Windows account: run
+  `wsl --update` and retry, or install Ubuntu-22.04.
+- Timezone changed on Windows but not in the agent: in PowerShell run
+  `wsl --shutdown`, then reopen Ubuntu.
+- Clock looks wrong after the machine wakes from sleep: in Ubuntu run
+  `sudo hwclock -s`.
+- If your organization blocks root access to WSL (`wsl -u root`): run the two
+  root-side commands that `setup-windows.ps1` performs by hand -- ensure
+  `[boot]\nsystemd=true` in `/etc/wsl.conf`, and
+  `sudo systemctl disable --now systemd-timesyncd`.
+- Reclaim disk: WSL's `ext4.vhdx` grows and never auto-shrinks. In PowerShell:
+  `wsl --shutdown`, then `wsl --manage Ubuntu --set-sparse true` (or
+  `Optimize-VHD` on Pro/Enterprise SKUs).
+
+### Uninstall (Windows)
+
+To remove the Windows-side keep-alive and setup (the distro and agent data are
+left intact), in PowerShell:
+
+    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1 -Uninstall
+
+That unregisters the scheduled task, removes the Dogany keys from `.wslconfig`
+(backing it up first), and removes the Linux-side setup marker. It PRINTS, but
+never runs, the data-destroying `wsl --unregister <distro>` command -- back up
+your instance folder before you ever run that yourself.
+
 ## Talk to it locally (no Telegram needed)
 
 The agent is the folder, not the bot. Telegram is just one door; a terminal

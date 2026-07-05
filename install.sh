@@ -514,6 +514,66 @@ detect_os() {
   esac
 }
 
+# The Windows-side setup (windows/setup-windows.ps1) writes a Linux-side marker
+# at this version. install.sh (preflight) and update.sh (drift nag) compare the
+# marker against REQUIRED_WINDOWS_SETUP_VERSION. Bump this in lockstep with the
+# .ps1's $SetupVersion whenever the required .wslconfig/wsl.conf shape changes.
+REQUIRED_WINDOWS_SETUP_VERSION=1
+WINDOWS_SETUP_MARKER="/etc/dogany/windows-setup.version"
+
+# True when running inside WSL (WSL1 or WSL2). Cheap, no external deps beyond
+# grep; the WSL kernel embeds "microsoft" in osrelease.
+is_wsl() {
+  grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
+}
+
+# WSL preflight HARD guard. On WSL, the agent needs Windows-side setup done
+# FIRST (windows/setup-windows.ps1): systemd as PID 1 and the keep-alive
+# task/timeouts. Without them install.sh would half-install silently (systemctl
+# exists but PID 1 is init, enable errors are swallowed, the bot ends up dead).
+# This runs immediately after detect_os(), before any prompt, and exits
+# non-zero with the exact Step 3 command when the environment is not ready.
+# No-op off WSL.
+wsl_preflight() {
+  is_wsl || return 0
+
+  local ps1='powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1'
+  local pid1 marker_ver
+  pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
+
+  local ok=1
+  [ "$pid1" = "systemd" ] || ok=0
+  [ -f "$WINDOWS_SETUP_MARKER" ] || ok=0
+  if [ -f "$WINDOWS_SETUP_MARKER" ]; then
+    marker_ver="$(tr -dc '0-9' < "$WINDOWS_SETUP_MARKER" 2>/dev/null)"
+    marker_ver="${marker_ver:-0}"
+    [ "$marker_ver" -ge "$REQUIRED_WINDOWS_SETUP_VERSION" ] 2>/dev/null || ok=0
+  fi
+  [ "$ok" = "1" ] && return 0
+
+  hr >&2
+  msg "[중단] Windows(WSL2) 준비가 완료되지 않았습니다." \
+      "[STOP] Windows (WSL2) setup is not complete." >&2
+  if [ "$pid1" != "systemd" ]; then
+    msg "  - systemd 가 PID 1 이 아닙니다 (현재: ${pid1:-unknown})." \
+        "  - systemd is not PID 1 (currently: ${pid1:-unknown})." >&2
+  fi
+  if [ ! -f "$WINDOWS_SETUP_MARKER" ]; then
+    msg "  - Windows 설정 마커가 없습니다 ($WINDOWS_SETUP_MARKER)." \
+        "  - Windows setup marker is missing ($WINDOWS_SETUP_MARKER)." >&2
+  elif [ "${marker_ver:-0}" -lt "$REQUIRED_WINDOWS_SETUP_VERSION" ] 2>/dev/null; then
+    msg "  - Windows 설정이 오래되었습니다 (마커 v${marker_ver:-0}, 필요 v${REQUIRED_WINDOWS_SETUP_VERSION}). setup-windows.ps1 을 다시 실행하세요." \
+        "  - Windows setup is stale (marker v${marker_ver:-0}, need v${REQUIRED_WINDOWS_SETUP_VERSION}). Re-run setup-windows.ps1." >&2
+  fi
+  msg "먼저 Windows PowerShell(일반 사용자, 관리자 아님)에서 아래를 실행하세요:" \
+      "First, run this in Windows PowerShell (normal user, NOT administrator):" >&2
+  printf '  %s\n' "$ps1" >&2
+  msg "그런 다음 Ubuntu 를 다시 열고 install.sh 를 다시 실행하세요." \
+      "Then reopen Ubuntu and run install.sh again." >&2
+  hr >&2
+  exit 1
+}
+
 # macOS TCC guard: launchd background services (and their child processes) run
 # under a context that CANNOT read TCC-gated folders -- ~/Documents, ~/Desktop,
 # ~/Downloads -- without an interactive "Operation not permitted" that a headless
@@ -1754,6 +1814,8 @@ step_service() {
     SERVICE_CHOICE="manual"
     msg "수동 실행 명령:" "Run manually with:"
     printf '  %s\n' "$manual_cmd"
+    msg "참고: 폴링 워치독은 자동 시작(auto) 모드를 선택했을 때만 함께 등록됩니다." \
+        "Note: the polling watchdog is registered automatically only when the service mode is auto."
     return 0
   fi
   SERVICE_CHOICE="auto"
@@ -1762,6 +1824,18 @@ step_service() {
     install_launchd "$manual_cmd"
   else
     install_systemd "$manual_cmd"
+  fi
+
+  # DGN-140: register the external polling watchdog (auto mode only).
+  # Non-fatal by contract: watchdog_setup.sh always exits 0; a failure there
+  # must never break the install.
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "워치독 등록(모의): bash \"$INSTALL_ROOT/bridge/watchdog_setup.sh\"" \
+        "Would register watchdog: bash \"$INSTALL_ROOT/bridge/watchdog_setup.sh\""
+  elif [ -f "$INSTALL_ROOT/bridge/watchdog_setup.sh" ]; then
+    bash "$INSTALL_ROOT/bridge/watchdog_setup.sh" \
+      || msg "[경고] 워치독 등록에 실패했습니다 (봇 자체 동작에는 영향 없음)." \
+             "[WARN] Watchdog registration failed (the bot itself is unaffected)."
   fi
 }
 
@@ -2248,6 +2322,22 @@ step_final() {
   fi
   msg "로컬 명령: 'dogany' 로 에이전트를 열고, 'dogany status' 로 상태를, 'dogany logs -f' 로 로그를 봅니다." \
       "Local command: run 'dogany' to open your agent, 'dogany status' for health, 'dogany logs -f' for logs."
+  if is_wsl; then
+    hr
+    msg "Windows(WSL2) 참고:" "Windows (WSL2) note:"
+    msg "  터미널을 모두 닫아도, 화면을 잠가도, 절전/복귀 후에도 에이전트는 살아 있습니다." \
+        "  The agent survives closing all terminals, screen lock, and sleep/wake."
+    msg "  로그아웃하면 멈추고, 재부팅 후에는 다음 로그인 때 돌아옵니다(그 전에는 아님)." \
+        "  It stops on sign-out; after a reboot it returns at the next sign-in (not before)."
+    msg "  무인 재부팅 생존은 자동 로그인 옵트인이 필요합니다(README 참고)." \
+        "  Unattended-reboot survival needs the opt-in auto-logon (see README)."
+    msg "  검증: 모든 Ubuntu 창을 닫고 2분 뒤 봇에게 메시지 -> 답장해야 정상." \
+        "  Verify: close all Ubuntu windows, wait 2 minutes, message the bot -> it must reply."
+    msg "  재부팅 검증: 로그인 전에는 답장 없음(정상), 로그인 후 2분 내 답장." \
+        "  Reboot check: no reply before sign-in (expected), reply within 2 minutes after sign-in."
+    msg "  권장: AC 전원 유지 + 절전 끄기 -> powercfg /change standby-timeout-ac 0" \
+        "  Recommended: keep on AC power and disable sleep -> powercfg /change standby-timeout-ac 0"
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     hr
     msg "[dry-run] 실제 변경 없음. 임시 디렉토리: $DRY_TMP" \
@@ -2300,6 +2390,10 @@ done
 # ---------------------------------------------------------------------------
 main() {
   detect_os
+  # WSL preflight runs first, before ANY prompt: on WSL a missing Windows-side
+  # setup would otherwise half-install silently. Hard stop in under 5s, zero
+  # typed answers. No-op off WSL.
+  wsl_preflight
   # TCC guard runs right after OS detection, before any interactive work, so a
   # doomed install location is refused immediately (not after the whole wizard).
   tcc_guard

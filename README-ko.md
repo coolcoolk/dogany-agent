@@ -171,6 +171,130 @@
 데이터와 격리되고, 이메일·연동에서 에이전트만의 정체성을 갖습니다.
 계정 연결(이메일 발송 등)은 설치 중 선택 사항이며 나중에 추가할 수 있습니다.
 
+## Windows (WSL2)
+
+에이전트는 WSL2(진짜 리눅스 환경)를 통해 Windows에서 동작합니다. 네이티브
+Windows는 별도 트랙입니다. 설치는 복사-붙여넣기 위주이며 터미널 경험이
+없어도 됩니다.
+
+### Windows에서 "항상 켜짐"의 의미
+
+에이전트는 WSL2 안에서 실행되며 다음 상황에서 살아남습니다:
+- 모든 터미널 창을 닫아도,
+- 화면을 잠가도(Win+L),
+- 기기가 절전에 들어갔다 깨어나도(절전 중에는 응답 불가, 깨어난 뒤 다시 응답).
+
+에이전트는 다음 경우 멈춥니다:
+- Windows에서 로그아웃할 때,
+- 기기를 종료하거나 재시작할 때.
+
+재시작이나 로그아웃 후에는 다음에 Windows에 로그인할 때 돌아옵니다 -- 그
+전에는 아닙니다. 야간 자동 Windows 업데이트로 재시작된 뒤 잠금 화면에 머물러
+있는 기기는, 누군가 로그인하기 전까지 에이전트가 실행되지 않습니다. 이는
+Windows 플랫폼의 한계입니다: WSL은 대화형 세션 없이는 실행될 수 없습니다.
+
+이 기기가 전용 상시 가동 기기라서 무인 재부팅에도 에이전트가 살아 있어야
+한다면, Windows 자동 로그인을 직접 켜세요(netplwiz, 또는 비밀번호를 암호화된
+LSA 시크릿으로 저장하는 Sysinternals Autologon). 절충점을 이해하세요: 자동
+로그인을 켜면 기기 전원을 켠 누구나 당신의 Windows 세션에 들어옵니다. 물리적으로
+안전한 기기에서만 사용하고, 로그인 시 잠금 단계를 함께 두세요(예: 로그인 태스크로
+`rundll32.exe user32.dll,LockWorkStation` 실행) -- 그러면 에이전트는 잠금 화면
+뒤에서 계속 돌아가는 동안 데스크톱은 즉시 잠깁니다.
+
+상시 가동 권장: 기기를 AC 전원에 연결하고 절전을 "안 함"으로 설정하세요
+(설정 > 시스템 > 전원, 또는 `powercfg /change standby-timeout-ac 0`) -- macOS와
+동일한 권장 사항입니다.
+
+### 설치 (Windows 11)
+
+요구 사항: Windows 11(`vmIdleTimeout`이 Windows 11 설정), RAM 최소 8GB(음성
+입력에는 16GB 권장), 여유 디스크 약 10GB.
+
+1. WSL + Ubuntu 설치. PowerShell("관리자 권한으로 실행")에서:
+
+       wsl --install
+
+   메시지가 나오면 재부팅하세요. 이후 Ubuntu가 스스로 열리며 리눅스 사용자명과
+   비밀번호를 만들라고 합니다: 사용자명은 반드시 영문자만 사용하세요(Windows
+   계정명은 한글이어도 괜찮습니다). WSL이 이미 설치돼 있다면:
+   `wsl --update` 후 `wsl --install -d Ubuntu`.
+
+2. 에이전트 코드 + Claude Code 받기 (Ubuntu 창 안에서):
+
+       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
+
+   그런 다음 위 리눅스 설치와 동일하게 Claude Code를 설치하고 로그인(`claude`)
+   하세요. 로그인 시 브라우저가 열리지 않으면, 출력된 URL을 Windows 브라우저에
+   복사해 넣으세요.
+
+3. Windows 쪽 설정. PowerShell(일반 사용자 -- 관리자 아님)에서:
+
+       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1
+
+   이는 클론된 코드에 함께 들어 있는 설정 스크립트를 실행합니다(URL에서
+   다운로드하는 것이 아닙니다). 터미널을 열어두지 않아도 에이전트가 살아 있도록
+   설정하고, Ubuntu 안에서 systemd를 켜고, WSL을 잠깐 재시작합니다(Ubuntu 창이
+   닫힙니다 -- 정상입니다). 관리자 권한이 필요 없습니다.
+
+4. 에이전트 설치 (Ubuntu 다시 열기):
+
+       cd ~/dogany-agent && bash install.sh
+
+   표준 마법사가 처음부터 끝까지 한 번에 실행됩니다. 3단계를 건너뛴 경우,
+   설치기는 어떤 질문도 하기 전에 5초 안에 멈추고 정확한 3단계 명령을 출력합니다.
+
+5. 상시 가동 검증: 모든 Ubuntu 창을 닫고 2분 기다린 뒤 봇에게 메시지를
+   보내세요. 반드시 답장해야 합니다.
+
+6. 재부팅 계약 검증: Windows를 재시작하세요; 로그인 전에 봇에게 메시지를
+   보내면 답장이 없어야 합니다(문서화된 플랫폼 한계). 로그인하고 최대 2분
+   기다린 뒤 다시 메시지를 보내면 답장해야 합니다.
+
+### Windows에서의 음성 모델
+
+WSL에는 메모리 상한이 부여됩니다(`[wsl2] memory=`, 기본값
+`min(hostRAM/2, 8)`GB, 최소 4GB). 8GB 기기에서는 `small` 음성 모델을
+선택하거나 음성을 건너뛰세요; 음성과 시맨틱 메모리를 동시에 쓰려면 16GB
+기기가 필요합니다.
+
+상한이 모든 기기에서 최대 8GB이므로, 설치기의 자동 음성 추천은 큰 기기에서도
+`small`에 머뭅니다. 16GB 이상 기기라면 상한을 올릴 수 있으며
+(`setup-windows.ps1 -MemoryGB <N>` 재실행), 그러면 설치기가 medium 음성 모델을
+추천할 수 있습니다.
+
+### 문제 해결 (Windows)
+
+- 모든 터미널을 닫은 뒤 몇 분 만에 봇이 조용해짐: keep-alive가 제거됐거나 WSL이
+  유휴 종료됐습니다. 3단계(`setup-windows.ps1`)를 다시 실행하세요. 일회성으로는
+  Ubuntu를 열거나 작업 스케줄러에서 `DoganyWSLKeepAlive` 태스크를 실행하세요.
+- `systemctl --user`가 "Failed to connect to bus"라고 함(그리고 워치독이
+  버스다운 알림을 보냄): `sudo systemctl restart user@$(id -u)`로 복구하세요.
+  그래도 안 되면 PowerShell에서 `wsl --shutdown` 후 Ubuntu를 다시 여세요(이
+  실패 지점을 공유하지 않는 전체 재활용).
+- 한글 이름의 Windows 계정에서 Ubuntu 첫 실행 실패: `wsl --update` 후 재시도,
+  또는 Ubuntu-22.04 설치.
+- Windows 시간대는 바뀌었는데 에이전트에 반영 안 됨: PowerShell에서
+  `wsl --shutdown` 후 Ubuntu를 다시 여세요.
+- 절전에서 깨어난 뒤 시계가 이상함: Ubuntu에서 `sudo hwclock -s`.
+- 조직에서 WSL 루트 접근(`wsl -u root`)을 막는 경우: `setup-windows.ps1`이
+  수행하는 두 개의 루트 명령을 직접 실행하세요 -- `/etc/wsl.conf`에
+  `[boot]\nsystemd=true`를 넣고, `sudo systemctl disable --now systemd-timesyncd`.
+- 디스크 회수: WSL의 `ext4.vhdx`는 커지기만 하고 자동으로 줄지 않습니다.
+  PowerShell에서 `wsl --shutdown` 후 `wsl --manage Ubuntu --set-sparse true`
+  (Pro/Enterprise SKU에서는 `Optimize-VHD`).
+
+### 제거 (Windows)
+
+Windows 쪽 keep-alive와 설정을 제거하려면(배포판과 에이전트 데이터는 그대로
+둡니다), PowerShell에서:
+
+    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1 -Uninstall
+
+이는 예약 작업을 해제하고, `.wslconfig`에서 Dogany 키를 제거하며(먼저 백업),
+리눅스 쪽 설정 마커를 지웁니다. 데이터를 파괴하는 `wsl --unregister <distro>`
+명령은 출력만 하고 실행하지 않습니다 -- 직접 실행하기 전에 반드시 인스턴스
+폴더를 백업하세요.
+
 ## 로컬에서 직접 대화하기 (텔레그램 없이)
 
 에이전트의 실체는 봇이 아니라 폴더입니다. 텔레그램은 입구 중 하나일 뿐,
