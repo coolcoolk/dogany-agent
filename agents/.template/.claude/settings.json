@@ -69,6 +69,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/skill-feedback-gate.py --stop",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

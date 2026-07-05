@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Skill-feedback gate: two-mode hook so skill feedback deterministically
+"""Skill-feedback gate: three-mode hook so skill feedback deterministically
 enters a propose-edit loop.
 
 Mode A  --record  (PostToolUse, matcher "Skill"): after a Skill runs, write a
   marker file <project_root>/.claude/.last-skill.json =
-  {"skill": <name>, "ts": <epoch int>, "session_id": <id>, "injected": 0},
-  overwritten each time. Meta skills (skill-creator, memory-search) are NOT
-  recorded: the propose-edit procedure itself invokes them, and stamping them
-  would overwrite the marker mid-feedback-loop with the wrong skill.
+  {"skill": <name>, "ts": <epoch int>, "session_id": <id>, "injected": 0,
+   "stop_nudged": false}, overwritten each time. Meta skills (skill-creator,
+  memory-search) are NOT recorded: the propose-edit procedure itself invokes
+  them, and stamping them would overwrite the marker mid-feedback-loop with
+  the wrong skill.
 
 Mode B  --inject  (UserPromptSubmit): read the marker; if it is missing,
   corrupt, stale (older than the window, default 1800s, env override
@@ -20,8 +21,21 @@ Mode B  --inject  (UserPromptSubmit): read the marker; if it is missing,
   marker's counter so the note appears at most MAX_INJECTIONS times per
   skill run instead of on every message in the window.
 
+Mode C  --stop  (Stop): proactive propose-at-completion. v1 is reactive (only
+  fires when the user sends feedback). v2 closes the gap where the model works
+  around a skill's missing step mid-task and never offers to fold the fix back
+  in. On Stop, if a skill ran THIS session and the marker is fresh (separate,
+  wider STOP window -- a task legitimately runs long after the skill fires),
+  BLOCK the stop ONCE with a reason telling the model to self-check for
+  deviation and, if it deviated, propose a skill update now (approval-gated,
+  same v1 rules). The block fires at most once per marker (stop_nudged flag),
+  and never when stop_hook_active is already true (Claude Code's native
+  loop guard). Any second Stop passes through unconditionally.
+
 Fail-open contract (mirrors token-gate.py / card-followup.py): ANY exception
 exits 0 with no output. The hook must never block or materially delay a turn.
+The one deliberate exception is --stop, which emits a single {"decision":
+"block"} at most once per marker; every failure path there still allows.
 """
 import json
 import os
@@ -30,6 +44,10 @@ import time
 
 MARKER_REL = os.path.join(".claude", ".last-skill.json")
 DEFAULT_WINDOW_SEC = 1800
+# Stop nudge uses a wider window: a task can legitimately run long after the
+# skill fired within the same session, and the session guard already prevents
+# cross-session poisoning. Env override DOGANY_SKILL_STOP_WINDOW.
+DEFAULT_STOP_WINDOW_SEC = 10800
 MAX_INJECTIONS = 2
 MAX_SKILL_NAME = 100
 
@@ -51,6 +69,16 @@ def _window_sec():
     except Exception:
         pass
     return DEFAULT_WINDOW_SEC
+
+
+def _stop_window_sec():
+    try:
+        v = int(os.environ.get("DOGANY_SKILL_STOP_WINDOW", ""))
+        if v > 0:
+            return v
+    except Exception:
+        pass
+    return DEFAULT_STOP_WINDOW_SEC
 
 
 def _marker_path(cwd):
@@ -97,6 +125,7 @@ def _record(data):
         "ts": int(time.time()),
         "session_id": data.get("session_id") or "",
         "injected": 0,
+        "stop_nudged": False,
     }
     _write_marker(path, payload)
 
@@ -116,6 +145,22 @@ NOTE = (
     "lifekit core), do not edit locally: say so and draft a product issue "
     "report. If this message is not feedback about the skill, ignore this "
     "note silently."
+)
+
+STOP_REASON = (
+    "[skill-feedback gate] Skill '{skill}' ran this session. Before you "
+    "finish: did the flow deviate from, work around, or manually supplement "
+    "that skill's documented procedure (e.g. you did a step the skill omits, "
+    "or fixed the skill's output by hand)? If YES -> propose the concrete "
+    "skill update to the user NOW, approval-gated: state the exact edit, wait "
+    "for approval, read the skill-creator skill (dogany-skill-creator in "
+    "product instances) before editing. If it is a dogany-* framework skill "
+    "OR a bundled lifekit skill (diet-log, workout-log, appointment-log, "
+    "relationship, task-update), do NOT edit in place -- note it as an "
+    "upstream product suggestion instead. If root cause is in service/product "
+    "code (bridge, runtime, memory engine, lifekit core), draft a product "
+    "issue report rather than editing locally. If there was NO deviation, "
+    "just finish normally -- this check will not fire again this turn."
 )
 
 
@@ -173,11 +218,73 @@ def _inject(data):
     print(json.dumps(out), flush=True)
 
 
+def _stop(data):
+    """Stop: proactively nudge a propose-at-completion, at most ONCE per marker.
+
+    Anti-loop, two independent belts:
+      1. Claude Code's native stop_hook_active flag -- if a prior Stop hook
+         already blocked this turn, it is true; we pass through immediately.
+      2. Our own stop_nudged marker flag -- set the first time we block, so a
+         later Stop event (even a fresh turn, or after stop_hook_active clears)
+         never blocks on the same marker again.
+    Every other path (missing/corrupt/stale marker, wrong session, no skill)
+    allows the stop with no output.
+    """
+    # Belt 1: never block if a Stop hook already ran this turn.
+    if data.get("stop_hook_active") is True:
+        return
+
+    cwd = data.get("cwd") or os.getcwd()
+    path = _marker_path(cwd)
+    try:
+        with open(path, "r") as fh:
+            marker = json.load(fh)
+    except Exception:
+        return  # missing / corrupt -> allow
+
+    if not isinstance(marker, dict):
+        return
+    skill = marker.get("skill")
+    ts = marker.get("ts")
+    if not isinstance(skill, str) or not skill.strip():
+        return
+    try:
+        ts = int(ts)
+    except Exception:
+        return
+
+    # Belt 2: already nudged for this marker -> allow unconditionally.
+    if marker.get("stop_nudged") is True:
+        return
+
+    age = int(time.time()) - ts
+    if age < 0 or age > _stop_window_sec():
+        return  # stale -> allow
+
+    # Session guard: only nudge the session that ran the skill. A marker from
+    # a different session (cron / subagent / earlier session) must not block.
+    marker_sid = marker.get("session_id") or ""
+    my_sid = data.get("session_id") or ""
+    if not marker_sid or not my_sid or marker_sid != my_sid:
+        return
+
+    # Mark fired BEFORE emitting the block, so a torn write still fails safe
+    # (worst case: we did not block, never: we block twice).
+    marker["stop_nudged"] = True
+    _write_marker(path, marker)
+
+    out = {
+        "decision": "block",
+        "reason": STOP_REASON.format(skill=skill.strip()[:MAX_SKILL_NAME]),
+    }
+    print(json.dumps(out), flush=True)
+
+
 def main():
     try:
         mode = ""
         for arg in sys.argv[1:]:
-            if arg in ("--record", "--inject"):
+            if arg in ("--record", "--inject", "--stop"):
                 mode = arg
         if not mode:
             sys.exit(0)  # no explicit mode -> no-op (wiring-typo guard)
@@ -190,6 +297,8 @@ def main():
 
         if mode == "--record":
             _record(data)
+        elif mode == "--stop":
+            _stop(data)
         else:
             _inject(data)
         sys.exit(0)
