@@ -34,7 +34,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from bridge import messages
+from bridge import heartbeat, messages
 from bridge.config import (
     AUTO_RESUME,
     AUTO_RESUME_MAX,
@@ -82,6 +82,13 @@ MAX_RAPID_CRASHES = 5
 CONFLICT_BACKOFF_BASE = 5  # seconds, base backoff before re-initializing polling
 CONFLICT_BACKOFF_MAX = 30  # seconds, cap for incremental backoff
 CONFLICT_SUSTAINED_SECONDS = 300  # log an error if conflict persists past this
+# DGN-140: in-process getUpdates heartbeat stall detection (layer 1; layer 2 is
+# the external bridge/watchdog.sh). The heartbeat beats on every getUpdates
+# round trip (success or transport timeout); silence past the threshold means
+# the polling task itself is dead while the process lives (zombie polling).
+HEARTBEAT_STALL_SECONDS = 120  # no poll beat for this long -> restart polling
+STALL_STREAK_RESET_SECONDS = 600  # healthy gap that resets the stall-restart streak
+STALL_STREAK_SUSPECT = 3  # more consecutive stall restarts than this -> CRITICAL log
 # Telegram delivers an album as N separate photo updates sharing one
 # media_group_id. Buffer same-group photos for this debounce window, then flush
 # them as a single task. 1.5s >> real album inter-arrival (~100ms), big margin.
@@ -138,6 +145,9 @@ class TelegramBot:
         self._audio_processor = AudioProcessor(ffmpeg_path=config.ffmpeg_path)
         self._build_transcriber = build_transcriber
         self._transcriber = None
+        # DGN-140: consecutive heartbeat-stall restart streak (loud-log guard).
+        self._stall_restart_count = 0
+        self._last_stall_restart: Optional[float] = None
 
     # --- lifecycle ---
 
@@ -153,7 +163,9 @@ class TelegramBot:
             write_timeout=10.0,
             pool_timeout=3.0,
         )
-        get_updates_request = HTTPXRequest(
+        # DGN-140: heartbeat-wrapped transport for getUpdates only, so the
+        # stall detector and the external watchdog see real polling liveness.
+        get_updates_request = heartbeat.HeartbeatHTTPXRequest(
             connection_pool_size=4,
             connect_timeout=5.0,
             read_timeout=35.0,
@@ -183,6 +195,10 @@ class TelegramBot:
         # First wall-clock time of an ongoing Conflict streak; reset on recovery.
         conflict_since: Optional[float] = None
         conflict_backoff = CONFLICT_BACKOFF_BASE
+        # DGN-140 MAJOR-1: drop pending updates ONLY on the very first polling
+        # start of this process. In-process re-inits (PollingRestart/Conflict)
+        # must NOT drop -- messages sent during the gap would be lost silently.
+        first_boot = True
         while not stop_event.is_set():
             if not self.application:
                 self.build()
@@ -212,10 +228,15 @@ class TelegramBot:
                 await self.application.start()
                 await self.application.updater.start_polling(
                     allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,
+                    drop_pending_updates=first_boot,
+                    # DGN-140: never give up re-establishing getUpdates after
+                    # network loss (e.g. laptop sleep/wake).
+                    bootstrap_retries=-1,
                     error_callback=self._on_polling_error,
                 )
+                first_boot = False
                 logger.info("Bot is running")
+                heartbeat.touch()
                 watchdog_task = asyncio.create_task(
                     polling_watchdog(
                         self.application,
@@ -289,7 +310,13 @@ class TelegramBot:
         without stopping the updater, so the run loop never notices. We flag it
         via an event so _wait_for_polling_exit can raise PollingConflict and
         trigger a clean backoff+restart instead of silently going zombie.
+
+        DGN-140 MINOR: RetryAfter (flood wait) means Telegram answered -- the
+        polling loop is alive but told to back off. Beat the heartbeat so a
+        long flood-wait cannot misfire the stall detector.
         """
+        if isinstance(error, telegram.error.RetryAfter):
+            heartbeat.touch()
         if isinstance(error, telegram.error.Conflict) and self._conflict_event:
             self._conflict_event.set()
 
@@ -304,7 +331,37 @@ class TelegramBot:
             ):
                 logger.warning("Polling exited unexpectedly, restarting")
                 raise PollingRestart()
+            if heartbeat.stalled(HEARTBEAT_STALL_SECONDS):
+                self._note_stall_restart()
+                logger.warning(
+                    "getUpdates heartbeat stalled >%ds (polling task presumed "
+                    "dead), restarting polling",
+                    HEARTBEAT_STALL_SECONDS,
+                )
+                raise PollingRestart()
             await asyncio.sleep(1)
+
+    def _note_stall_restart(self) -> None:
+        """Track consecutive heartbeat-stall restarts (DGN-140 MINOR).
+
+        A stall restart should be rare; a tight streak of them means the
+        heartbeat wiring itself is suspect (e.g. beats never arriving even
+        though polling works). Loud CRITICAL log only -- no behavior change.
+        A healthy gap (> STALL_STREAK_RESET_SECONDS) resets the streak.
+        """
+        now = time.monotonic()
+        if (
+            self._last_stall_restart is not None
+            and (now - self._last_stall_restart) > STALL_STREAK_RESET_SECONDS
+        ):
+            self._stall_restart_count = 0
+        self._stall_restart_count += 1
+        self._last_stall_restart = now
+        if self._stall_restart_count > STALL_STREAK_SUSPECT:
+            logger.critical(
+                "heartbeat wiring suspect: %d consecutive stall restarts",
+                self._stall_restart_count,
+            )
 
     async def _graceful_shutdown(self, force: bool = False) -> None:
         if not self.application:
