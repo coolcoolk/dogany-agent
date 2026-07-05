@@ -185,10 +185,14 @@ fi
 # Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
 # Args: <file> <sed-arg>...  (the sed args are the -e expressions to apply).
 # Preserves LC_ALL=C. GNU-safe by construction (no -i used at all).
+# MODE PRESERVATION: mktemp creates 0600 files, so a bare mv would clobber the
+# target's permissions (exec bits). `cp -p` stamps the original file's mode
+# onto the temp BEFORE the mv; the sed redirect truncates content only.
 sed_inplace() {
   local f="$1"; shift
   local tmp
   tmp="$(mktemp "${f}.sed.XXXXXX")"
+  cp -p "$f" "$tmp"
   if LC_ALL=C sed "$@" "$f" > "$tmp"; then
     mv -f "$tmp" "$f"
   else
