@@ -2,10 +2,14 @@
 # install.sh -- Dogany product first-run installer (macOS + Linux).
 #
 # The flagship, non-developer setup experience. Walks the user through:
-#   1. language   2. timezone   3. prerequisites   4. dependencies
-#   5. bot token + owner id (born-locked)   6. email connect (optional)
-#   7. mint the agent   8. write .env
+#   1. language   2. prerequisites   3. dependencies (voice + embedding)
+#   4. model recommendation   5. timezone   6. bot token + owner id (born-locked)
+#   7. email connect (optional)   8. mint the agent + write .env
 #   9. service autostart (launchd/systemd/manual)   10. final message
+#
+# DGN-164: heavy downloads (DGN-157 prereq auto-install, Ollama/bge-m3 embedding
+# pull, voice deps) are front-loaded right after language so the long downloads
+# start early; the light config steps (model pick, timezone, token, email) follow.
 #
 # BYO-compute: the user's OWN Claude Code auth is used as-is (personal/self-host
 # is within Anthropic policy). We only verify the `claude` CLI runs; we never
@@ -253,6 +257,54 @@ drain_buffered_lines() {
   while IFS= read -r -t 1 extra; do
     printf '%s\n' "$extra"
   done
+}
+
+# ---------------------------------------------------------------------------
+# 3a2. Download progress (DGN-164)
+# ---------------------------------------------------------------------------
+# Big downloads must NEVER sit silent for minutes. Two strategies:
+#   - run_with_progress: the tool emits its OWN live progress (ollama pull draws
+#     per-layer bars, brew prints download lines). Run it attached to the
+#     terminal so that native progress is visible; do not redirect its output.
+#   - run_with_heartbeat: the tool is silent (or we deliberately capture its
+#     output). Run it in the background and print a one-line elapsed heartbeat
+#     every few seconds so the screen never looks frozen.
+# Both are NO-OPs of their download in --dry-run (the callers already gate the
+# real command behind DRY_RUN, so these are only ever reached on a real run).
+
+# run_with_progress <label> -- CMD...
+# Runs CMD with stdout/stderr attached to the terminal so the tool's native
+# progress shows. Returns CMD's exit status. The label is informational only;
+# callers print their own "downloading <name> (~<size>)" line first.
+run_with_progress() {
+  local _label="$1"; shift
+  "$@"
+}
+
+# run_with_heartbeat <name> <approx-size> -- CMD...
+# For downloads with no native progress. Announces the name + expected size,
+# runs CMD in the background (output discarded), and prints a single rewriting
+# heartbeat line "  downloading <name> (~<size>)... elapsed Ns" every ~3s until
+# CMD exits. Returns CMD's exit status. On a non-TTY the heartbeat prints one
+# line per tick (no cursor rewrite) so logs stay readable. Never used in
+# --dry-run (callers gate the real command behind DRY_RUN first).
+run_with_heartbeat() {
+  local name="$1" size="$2"; shift 2
+  msg "  다운로드: ${name} (~${size})..." "  downloading ${name} (~${size})..."
+  "$@" >/dev/null 2>&1 &
+  local pid=$! elapsed=0 tty=0
+  [ -t 1 ] && tty=1
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 3; elapsed=$((elapsed + 3))
+    if [ "$tty" = "1" ]; then
+      # \r + clear-line so the elapsed counter updates in place.
+      printf '\r\033[2K  ... %s (~%s), elapsed %ds' "$name" "$size" "$elapsed"
+    else
+      printf '  ... %s (~%s), elapsed %ds\n' "$name" "$size" "$elapsed"
+    fi
+  done
+  [ "$tty" = "1" ] && printf '\r\033[2K'   # clear the heartbeat line
+  wait "$pid" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -873,7 +925,7 @@ apt_install() {
 
 check_prereqs() {
   hr
-  msg "[3/10] 사전 조건 확인" "[3/10] Checking prerequisites"
+  msg "[2/10] 사전 조건 확인" "[2/10] Checking prerequisites"
   hr
 
   # --- probe everything WITHOUT dying; collect the missing set (space list) ---
@@ -1149,7 +1201,7 @@ PYEOF
 
 step_timezone() {
   hr
-  msg "[2/10] 타임존" "[2/10] Timezone"
+  msg "[5/10] 타임존" "[5/10] Timezone"
   hr
   msg "감지된 타임존: $DOGANY_TZ" "Detected timezone: $DOGANY_TZ"
   if ! confirm "이 타임존이 맞나요?" "Is this timezone correct?" "y"; then
@@ -1232,7 +1284,7 @@ EOF
 # ---------------------------------------------------------------------------
 step_dependencies() {
   hr
-  msg "[4/10] 의존성" "[4/10] Dependencies"
+  msg "[3/10] 의존성" "[3/10] Dependencies"
   hr
   msg "기본은 핵심 의존성만 설치합니다 (빠르고 가벼움)." \
       "Default installs core dependencies only (fast and light)."
@@ -1447,8 +1499,8 @@ whisper_reco() {
 # + continue install). Dry-run only prints decisions.
 step_embedding() {
   hr
-  msg "  [4b] 시맨틱 메모리 임베딩 (선택: Ollama + bge-m3, ~1.2GB)" \
-      "  [4b] Semantic memory embedding (optional: Ollama + bge-m3, ~1.2GB)"
+  msg "  [3b] 시맨틱 메모리 임베딩 (선택: Ollama + bge-m3, ~1.2GB)" \
+      "  [3b] Semantic memory embedding (optional: Ollama + bge-m3, ~1.2GB)"
   hr
 
   local have_ollama=0
@@ -1505,8 +1557,11 @@ step_embedding() {
   if [ "$have_ollama" = "0" ]; then
     if [ "$OS_KIND" = "macos" ]; then
       if command -v brew >/dev/null 2>&1; then
-        msg "  Ollama 설치 중 (brew)..." "  Installing Ollama (brew)..."
-        if ! brew install ollama >/dev/null 2>&1; then
+        # DGN-164: let brew print its own download/progress output (do not
+        # silence it) so the ~hundreds-of-MB Ollama install is not a silent gap.
+        msg "  Ollama 설치 중 (brew, 진행 상황이 아래에 표시됩니다)..." \
+            "  Installing Ollama (brew; progress shown below)..."
+        if ! run_with_progress "ollama (brew)" brew install ollama; then
           msg "  [경고] brew 로 Ollama 설치 실패. 수동 설치: https://ollama.com/download . 키워드 검색으로 계속합니다." \
               "  [WARN] brew failed to install Ollama. Install manually: https://ollama.com/download . Continuing with keyword recall." >&2
           return 0
@@ -1549,9 +1604,19 @@ step_embedding() {
     return 0
   fi
 
+  # DGN-164: announce size, then show progress instead of a multi-minute silence.
+  # On a TTY, `ollama pull` draws its own live per-layer progress bars -> run it
+  # attached (run_with_progress). Off a TTY (piped/CI), those bars would spam raw
+  # control codes, so fall back to a periodic elapsed heartbeat instead.
   msg "  bge-m3 모델을 내려받습니다 (~1.2GB, 시간이 걸릴 수 있습니다)..." \
       "  Pulling bge-m3 (~1.2GB, this can take a while)..."
-  if ollama pull bge-m3 >/dev/null 2>&1; then
+  local pull_rc=0
+  if [ -t 1 ]; then
+    run_with_progress "bge-m3" ollama pull bge-m3 || pull_rc=$?
+  else
+    run_with_heartbeat "bge-m3" "1.2GB" ollama pull bge-m3 || pull_rc=$?
+  fi
+  if [ "$pull_rc" = "0" ]; then
     msg "  [OK] bge-m3 준비 완료 -> 시맨틱 메모리 사용 가능." \
         "  [OK] bge-m3 ready -> semantic memory available."
   else
@@ -1591,7 +1656,7 @@ PYEOF
 
 step_model() {
   hr
-  msg "[3b/10] 모델 추천" "[3b/10] Model recommendation"
+  msg "[4/10] 모델 추천" "[4/10] Model recommendation"
   hr
 
   # If a model was preset via env (dry-run/testing), honor it and skip detection.
@@ -1697,7 +1762,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 step_bot_token() {
   hr
-  msg "[5/10] 텔레그램 봇 토큰 + 오너 ID" "[5/10] Telegram bot token + owner id"
+  msg "[6/10] 텔레그램 봇 토큰 + 오너 ID" "[6/10] Telegram bot token + owner id"
   hr
   msg "이 토큰은 에이전트가 당신의 텔레그램 봇으로 대화하기 위한 열쇠입니다. 봇은 이 ID에 born-locked 되어 오너 전용으로 동작합니다." \
       "This token is the key that lets the agent talk as your Telegram bot. The bot is born-locked to your id and answers only you."
@@ -1855,7 +1920,7 @@ token_liveness() {
 # because Google displays it as 4x4 groups with spaces.
 step_email_connect() {
   hr
-  msg "[6/10] 이메일 연결 (선택)" "[6/10] Email connect (optional)"
+  msg "[7/10] 이메일 연결 (선택)" "[7/10] Email connect (optional)"
   hr
   if ! confirm \
       "에이전트가 메일을 보낼 수 있도록 이메일 계정을 연결할까요? 선택 사항 -- 건너뛰고 나중에 메인 에이전트를 통해 추가할 수 있습니다. 연결한다면 개인 계정이 아닌 전용(신규) 계정을 권장합니다." \
@@ -1947,7 +2012,7 @@ write_agent_lang() {
 
 step_mint_and_env() {
   hr
-  msg "[7-8/10] 에이전트 생성 및 설정 파일 작성" "[7-8/10] Mint the agent and write config"
+  msg "[8/10] 에이전트 생성 및 설정 파일 작성" "[8/10] Mint the agent and write config"
   hr
 
   local target env_file backup
@@ -2649,11 +2714,23 @@ main() {
   msg "OS: $OS_KIND" "OS: $OS_KIND"
   hr
 
+  # DGN-164: heavy downloads first. Language stays first (it localizes every
+  # later prompt). Then the DGN-157 prerequisite auto-install (python/git/claude
+  # CLI + auth), then the optional model downloads (voice deps + Ollama/bge-m3
+  # embedding pull) -- so the long downloads start as early as dependency order
+  # allows and the user is not left waiting at the very end. The light,
+  # interactive config steps (Claude model pick, timezone, bot token, email)
+  # follow. Dependency order preserved:
+  #   - language localizes all subsequent prompts -> stays first.
+  #   - check_prereqs installs the claude CLI (+auth), which step_model's
+  #     subscription-tier read (~/.claude.json) needs -> model pick stays after it.
+  #   - step_dependencies runs its own machine-spec detection (disk/RAM) inline
+  #     before each recommendation, and gates every download behind its opt-in.
   step_language
-  step_timezone
   check_prereqs
-  step_model
   step_dependencies
+  step_model
+  step_timezone
   step_bot_token
   step_email_connect
   step_mint_and_env
