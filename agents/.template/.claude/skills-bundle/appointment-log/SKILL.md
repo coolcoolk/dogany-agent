@@ -42,6 +42,11 @@ Ask using [[OPTIONS]] format (numbered list, marker on last line).
 Never guess-create. Even 0 matches may be alias or duplicate — must confirm.
 
 ## register / update procedure
+0. DEDUP GATE -- run FIRST, before asking __USER_LABEL__ anything (even a
+   missing start time): `appt-find <date> <date_plus_1>` for the target date.
+   - existing appointment(s) on that date -> show them, ask via [[OPTIONS]]:
+     merge/update into the existing one, or register as a separate new one?
+   - proceed to appt-add ONLY on 0 matches or an explicit "new" answer.
 1. parse time: expressions like "내일 저녁 7시" -> ISO relative to now (GMT+9).
    start_at required. end_at omitted -> appt-add defaults to start+3h
    (__USER_LABEL__ gives end/duration -> use that value).
