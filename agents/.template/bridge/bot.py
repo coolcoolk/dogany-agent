@@ -34,7 +34,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from bridge import heartbeat, messages
+from bridge import heartbeat, messages, model_state
 from bridge.config import (
     AUTO_RESUME,
     AUTO_RESUME_MAX,
@@ -121,6 +121,15 @@ def _model_whitelist() -> List[str]:
 
 # Backwards-compatible list of (name, label) for the inline model picker.
 MODELS = [(n, _MODEL_LABELS.get(n, n)) for n in _model_whitelist()]
+
+# Hardcoded last-rung fallback when nothing else in the chain yields a model.
+DEFAULT_MODEL = "sonnet"
+
+
+def _known_models() -> List[str]:
+    """Short names accepted for persistence/resolution: the env whitelist plus
+    the built-in labels (full 'claude-*' ids are accepted by the validator)."""
+    return list(dict.fromkeys([*_model_whitelist(), *_MODEL_LABELS.keys()]))
 
 
 class TelegramBot:
@@ -743,9 +752,15 @@ class TelegramBot:
         await update.message.reply_text(messages.NEW_SESSION)
 
     def _get_real_model(self, session: dict) -> str:
-        if model := session.get("model"):
-            return model
-        return "sonnet"
+        # Resolution chain (DGN-162): explicit session override > persisted
+        # last-session model > workspace settings > global settings > default.
+        # The resolver persists whatever concrete value wins so the next fresh
+        # session inherits the model this one actually used.
+        return model_state.resolve_session_model(
+            override=session.get("model"),
+            known=_known_models(),
+            fallback=DEFAULT_MODEL,
+        )
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._check_access(update):
@@ -767,6 +782,8 @@ class TelegramBot:
             session["session_id"] = None
             session["new_session"] = True
             await session_manager.update_session(user_id, session)
+            # DGN-162: a user-initiated switch becomes the new last-session model.
+            model_state.persist_model(name, _known_models())
             self._runtime_active_sessions.discard(user_id)
             label = _MODEL_LABELS.get(name, name)
             await update.message.reply_text(
@@ -1412,9 +1429,28 @@ class TelegramBot:
                 session["session_id"] = None
                 self._runtime_active_sessions.discard(user_id)
                 new_session = True
-            if new_session:
+            # DGN-162: resolve the effective session model through the chain
+            # (override > persisted last-session > settings > default) and pin
+            # it onto the session so every downstream call sees a concrete,
+            # persisted value. A fresh session (no override) thus inherits the
+            # model the last session actually used. Pinning the model does NOT
+            # by itself restart the conversation -- it only persists the choice.
+            resolved_model = self._get_real_model(session)
+            model_pinned = session.get("model") != resolved_model
+            if model_pinned:
+                session["model"] = resolved_model
+            if new_session or model_pinned:
                 await session_manager.update_session(user_id, session)
             await session_manager.set_last_user_message_at(user_id, message_ts)
+
+            # DGN-162: one user-visible notice per bridge start if a persisted
+            # model had to be rejected (corrupt / unknown). Never per-message.
+            notice = model_state.take_start_notice()
+            if notice:
+                try:
+                    await message.reply_text(messages.MODEL_STATE_FALLBACK)
+                except Exception:
+                    pass
 
             # Surface voice transcript as its own message before the streamed bubble.
             if voice_input_preview:
@@ -1830,6 +1866,8 @@ class TelegramBot:
             session["session_id"] = None
             session["new_session"] = True
             await session_manager.update_session(user_id, session)
+            # DGN-162: a user-initiated switch becomes the new last-session model.
+            model_state.persist_model(model_name, _known_models())
             self._runtime_active_sessions.discard(user_id)
             label = _MODEL_LABELS.get(model_name, model_name)
             await query.edit_message_text(

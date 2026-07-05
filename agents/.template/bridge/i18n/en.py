@@ -39,6 +39,9 @@ STRINGS = {
     "model_unknown": (
         "Unknown model '{name}'. Allowed models: {allowed}"
     ),
+    "model_state_fallback": (
+        "Saved model preference was unreadable; using the default instead."
+    ),
     "stop_paused": "Paused",
     "stop_nothing": "Nothing running",
     "no_session": "No active session. Start a conversation first.",
