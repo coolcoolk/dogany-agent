@@ -5,10 +5,14 @@ wires them to actual send calls.
 """
 
 import html
+import logging
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from bridge.options import OPTIONS_MARKER
+
+logger = logging.getLogger(__name__)
 
 # A reply only sends files when it contains a line whose stripped form starts
 # with this prefix. Bare prose paths are never sent.
@@ -43,10 +47,129 @@ def strip_send_markers(text: str) -> Tuple[str, bool]:
     return "\n".join(kept).rstrip(), True
 
 
+# DGN-159: the model can emit tool-call syntax INSIDE a text block (a text
+# block, not a real ToolUseBlock). The tool still runs, but the raw markup
+# rides along in the assistant's visible text and the bridge relays it verbatim
+# to Telegram. This is a relay-side safety net that strips that markup from any
+# outbound text.
+#
+# We recognize two structurally-anchored shapes:
+#   1. A standalone "call" line immediately followed by one or more <invoke ...>
+#      ... </invoke> blocks (each may carry <parameter ...> children). The "call"
+#      lead-in line is consumed together with the invoke block(s).
+#   2. An orphan <invoke ...> ... </invoke> block with no "call" lead-in.
+# Both the plain (<invoke>) and antml-namespaced (<invoke>) tag spellings
+# are covered.
+#
+# Conservative-by-design: the regex is anchored on the real tag structure
+# (<invoke name="...">...</invoke>), so ordinary prose that merely mentions the
+# word "invoke" is never touched.
+#
+# FENCED-CODE POLICY: text the agent deliberately wrote inside a ``` ... ```
+# fenced block is left untouched -- if the user asked to SEE tool-call syntax
+# (e.g. documenting it), stripping it would corrupt an intended answer. So we
+# strip ONLY in the prose regions OUTSIDE complete fenced blocks. Markup that
+# leaks unfenced (the actual bug) is still removed. An unterminated/opening
+# fence with no closer is treated as "not a real code block" so a stray ``` can
+# never be used to smuggle markup past the filter.
+
+# One <invoke .../> ... </invoke> block, plain or antml-namespaced. Non-greedy
+# body so consecutive blocks are matched individually (DOTALL applied at compile).
+_INVOKE_BLOCK = r"<(?:antml:)?invoke\b[^>]*>.*?</(?:antml:)?invoke>"
+# Optional standalone "call" lead-in line (the literal word on its own line,
+# possibly indented), then one or more invoke blocks separated by whitespace;
+# OR an orphan invoke block with no lead-in. Flags (I|M|S) set at compile time.
+_TOOLCALL_RE = re.compile(
+    r"^[ \t]*call[ \t]*\r?\n"                # a lone "call" line
+    r"(?:\s*" + _INVOKE_BLOCK + r")+"        # >= 1 invoke block after it
+    r"|"                                      # OR
+    r"(?:" + _INVOKE_BLOCK + r")",            # an orphan invoke block, no lead-in
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def _collapse_blank_runs(text: str) -> str:
+    """Collapse 3+ consecutive newlines (left by an excised block) to 2."""
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _strip_toolcall_in_prose(prose: str) -> Tuple[str, int]:
+    """Strip recognizable tool-call markup from a non-fenced prose region.
+
+    Returns (cleaned_prose, bytes_removed). bytes_removed counts the UTF-8
+    length of the removed markup only (never logged content), so a leak stays
+    observable without echoing what leaked.
+    """
+    removed = 0
+
+    def _sub(match: "re.Match") -> str:
+        nonlocal removed
+        removed += len(match.group(0).encode("utf-8"))
+        return ""
+
+    cleaned = _TOOLCALL_RE.sub(_sub, prose)
+    if removed:
+        cleaned = _collapse_blank_runs(cleaned)
+    return cleaned, removed
+
+
+def strip_toolcall_markup(text: str) -> str:
+    """Remove leaked tool-call markup from outbound assistant text.
+
+    Only prose OUTSIDE complete ``` fenced blocks is scrubbed (see the policy
+    note above). Surrounding prose is preserved; leftover blank runs collapse.
+    Logs one line with the total bytes removed (never the content) when a strip
+    happens, so leaks remain visible in bot.log.
+    """
+    if not text or ("invoke" not in text):
+        # Fast path: no tag substring at all -> byte-identical passthrough.
+        return text
+    total_removed = 0
+    out_parts: List[str] = []
+    # Walk the text splitting on complete fenced blocks; scrub prose, keep code.
+    pos = 0
+    n = len(text)
+    fence = "```"
+    while pos < n:
+        start = text.find(fence, pos)
+        if start == -1:
+            prose = text[pos:]
+            cleaned, removed = _strip_toolcall_in_prose(prose)
+            total_removed += removed
+            out_parts.append(cleaned)
+            break
+        end = text.find(fence, start + len(fence))
+        if end == -1:
+            # No closing fence: this is not a real code block. Scrub the rest as
+            # prose so an opening ``` cannot shield leaked markup.
+            prose = text[pos:]
+            cleaned, removed = _strip_toolcall_in_prose(prose)
+            total_removed += removed
+            out_parts.append(cleaned)
+            break
+        # Prose before the fence: scrub it.
+        prose = text[pos:start]
+        cleaned, removed = _strip_toolcall_in_prose(prose)
+        total_removed += removed
+        out_parts.append(cleaned)
+        # The fenced block itself (fences included): keep verbatim.
+        out_parts.append(text[start : end + len(fence)])
+        pos = end + len(fence)
+    if not total_removed:
+        return text
+    logger.warning("Stripped leaked tool-call markup (%d bytes removed)", total_removed)
+    return "".join(out_parts)
+
+
 def strip_display_markers(text: str) -> str:
-    """Drop both [[OPTIONS]] and send_file:: marker lines (for bubble text)."""
+    """Drop both [[OPTIONS]] and send_file:: marker lines (for bubble text).
+
+    Also strips any leaked tool-call markup (DGN-159) so streamed drafts and
+    finalized bubbles never surface raw <invoke> blocks.
+    """
     if not text:
         return text
+    text = strip_toolcall_markup(text)
     lines = text.split("\n")
     kept = [
         ln

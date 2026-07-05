@@ -51,6 +51,7 @@ from bridge.formatting import (
     split_text,
     strip_display_markers,
     strip_send_markers,
+    strip_toolcall_markup,
 )
 from bridge.health import PollingConflict, PollingRestart, polling_watchdog
 from bridge.options import (
@@ -1578,6 +1579,9 @@ class TelegramBot:
     ) -> None:
         display, _ = strip_options_marker(content)
         display, _ = strip_send_markers(display)
+        # DGN-159: last-mile scrub of leaked tool-call markup on the non-streamed
+        # / finalized send path (streamed drafts are scrubbed in strip_display_markers).
+        display = strip_toolcall_markup(display)
         if not streamed:
             await self._send_text_body(message, display, parse_mode)
         elif "```" in display and draft_message_ids:
@@ -1666,6 +1670,9 @@ class TelegramBot:
         bot = self.application.bot
         display, has_marker = strip_options_marker(content)
         display, _ = strip_send_markers(display)
+        # DGN-159: last-mile scrub of leaked tool-call markup (proactive / option /
+        # resume send path); streamed drafts are scrubbed in strip_display_markers.
+        display = strip_toolcall_markup(display)
         if not streamed:
             await self._send_text_body_chat(chat_id, display)
         elif "```" in display and draft_message_ids:
