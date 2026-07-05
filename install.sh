@@ -62,6 +62,13 @@ DRY_RUN=0
 # live command (mint / launchctl / systemctl) is ever executed.
 DRY_TMP=""
 
+# The Python interpreter check_prereqs resolved to >= 3.11. Exported into the
+# mint step (as DOGANY_PYTHON_BIN) so the bridge venv is built with THIS
+# interpreter -- important when the system python3 is old (< 3.11) and a newer
+# one (e.g. python3.12) was installed alongside it. Empty until check_prereqs
+# runs; mint.sh falls back to python3 when it is empty.
+PYTHON_BIN=""
+
 # Lite tier: single-agent idempotency marker.
 LITE_MARKER_DIR="$HOME/.dogany"
 LITE_MARKER="$LITE_MARKER_DIR/lite_instance"
@@ -697,35 +704,230 @@ claude_auth_ok() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# 5b. Prerequisite probes + auto-install (DGN-157)
+# ---------------------------------------------------------------------------
+# The product targets non-terminal users. A missing dep must NOT hard-die with
+# "install manually and re-run"; instead we probe everything WITHOUT dying,
+# collect the missing set, show ONE list + ONE confirm, then install
+# sequentially and re-probe. Anything still missing after the install pass ->
+# the original manual instructions for exactly those deps, then exit 1 (never
+# worse than today).
+
+# probe_claude -> 0 if `claude` is on PATH, else 1. (Auth is a separate concern,
+# handled after presence is assured.)
+probe_claude() { command -v claude >/dev/null 2>&1; }
+
+# probe_python -> 0 if a Python >= 3.11 is found. Sets PYTHON_BIN + globals
+# PY_FOUND_VER for the OK line. Reuses the existing candidate list + py_version_ok.
+PY_FOUND_VER=""
+probe_python() {
+  PYTHON_BIN=""; PY_FOUND_VER=""
+  local cand ver
+  for cand in python3 python3.13 python3.12 python3.11; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      ver="$("$cand" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || true)"
+      if py_version_ok "$ver"; then PYTHON_BIN="$cand"; PY_FOUND_VER="$ver"; return 0; fi
+    fi
+  done
+  return 1
+}
+
+# probe_git -> 0 if `git` is on PATH.
+probe_git() { command -v git >/dev/null 2>&1; }
+
+# Print the manual (fallback) install instructions for one dep, OS-aware. These
+# are the SAME instructions the pre-DGN-157 installer printed on hard-fail; they
+# are shown only for deps still missing after the auto-install pass.
+manual_hint() {
+  case "$1" in
+    claude)
+      msg "  claude CLI 설치: 아래 공식 설치 명령을 실행한 뒤 새 터미널을 여세요:" \
+          "  Install claude CLI: run the official installer below, then open a new terminal:"
+      # Officially recommended native installer for macOS + Linux + WSL.
+      # Verified 2026-07-05 at https://code.claude.com/docs/en/setup
+      printf '    %s\n' "curl -fsSL https://claude.ai/install.sh | bash"
+      msg "  그런 다음 본인 계정으로 로그인(구독/자체호스팅 모두 가능)한 뒤 다시 실행하세요." \
+          "  Then sign in with your own account (subscription or self-host both fine) and re-run."
+      ;;
+    python)
+      if [ "$OS_KIND" = "macos" ]; then
+        msg "  Python 3.11+ 설치: brew install python@3.12  (Homebrew 없으면 https://brew.sh)" \
+            "  Install Python 3.11+: brew install python@3.12  (no Homebrew? https://brew.sh)"
+      else
+        msg "  Python 3.11+ 설치: sudo apt-get install python3 python3-venv  (또는 배포판 패키지 매니저)" \
+            "  Install Python 3.11+: sudo apt-get install python3 python3-venv  (or your distro's package manager)"
+      fi
+      ;;
+    git)
+      if [ "$OS_KIND" = "macos" ]; then
+        msg "  git 설치: xcode-select --install  또는  brew install git" \
+            "  Install git: xcode-select --install  or  brew install git"
+      else
+        msg "  git 설치: sudo apt-get install git" \
+            "  Install git: sudo apt-get install git"
+      fi
+      ;;
+  esac
+}
+
+# Human label for a dep key, used in the summary list.
+dep_label() {
+  case "$1" in
+    claude) msgn "Claude Code CLI (claude)" "Claude Code CLI (claude)" ;;
+    python) msgn "Python 3.11+" "Python 3.11+" ;;
+    git)    msgn "git" "git" ;;
+  esac
+}
+
+# --- Homebrew bootstrap (macOS) -----------------------------------------------
+# Install Homebrew via the official script when absent. The script manages its
+# OWN sudo/password prompt, so we run it attached to the tty (no wrapping).
+# Returns 0 if brew is available afterwards. Best-effort PATH pickup for the
+# Apple-silicon default prefix so brew is usable in THIS shell.
+ensure_brew() {
+  command -v brew >/dev/null 2>&1 && return 0
+  msg "  Homebrew 가 없습니다. 공식 설치 스크립트로 설치합니다 (비밀번호를 물을 수 있습니다)." \
+      "  Homebrew is missing. Installing it via the official script (it may ask for your password)."
+  # Official Homebrew installer. It handles its own sudo/password prompting;
+  # attach it to the tty rather than capturing output.
+  # Source: https://brew.sh
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
+  # PATH pickup in THIS shell: Apple-silicon installs to /opt/homebrew, Intel to
+  # /usr/local. `brew shellenv` exports the right PATH for whichever exists.
+  local brew_bin
+  for brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$brew_bin" ]; then
+      eval "$("$brew_bin" shellenv)" 2>/dev/null || true
+      break
+    fi
+  done
+  command -v brew >/dev/null 2>&1
+}
+
+# --- per-dep installers -------------------------------------------------------
+# Each returns 0 on apparent success, non-zero otherwise. They print per-item
+# progress. The caller re-probes afterwards, so a false "success" is still
+# caught by the re-probe -> manual-hint fallback.
+
+install_claude() {
+  msg "  -> Claude Code CLI 설치 중..." "  -> Installing Claude Code CLI..."
+  # Officially recommended native installer for macOS AND Linux/WSL.
+  # Verified 2026-07-05 at https://code.claude.com/docs/en/setup
+  # (native installer script; npm is only an alternative). Binary lands in
+  # ~/.local/bin; auto-updates in the background.
+  curl -fsSL https://claude.ai/install.sh | bash || return 1
+  # PATH pickup in THIS shell: the native installer drops the binary in
+  # ~/.local/bin, which is often not yet on PATH in the running shell.
+  if ! command -v claude >/dev/null 2>&1; then
+    if [ -x "$HOME/.local/bin/claude" ]; then
+      case ":$PATH:" in *":$HOME/.local/bin:"*) : ;; *) PATH="$HOME/.local/bin:$PATH"; export PATH ;; esac
+    fi
+  fi
+  command -v claude >/dev/null 2>&1
+}
+
+install_python() {
+  msg "  -> Python 3.11+ 설치 중..." "  -> Installing Python 3.11+..."
+  if [ "$OS_KIND" = "macos" ]; then
+    ensure_brew || return 1
+    brew install python@3.12 || return 1
+    # brew keg for python@3.12 may not be first on PATH; brew links python3.12.
+    hash -r 2>/dev/null || true
+  else
+    apt_install python3 python3-venv || return 1
+  fi
+}
+
+install_git() {
+  msg "  -> git 설치 중..." "  -> Installing git..."
+  if [ "$OS_KIND" = "macos" ]; then
+    ensure_brew || return 1
+    brew install git || return 1
+    hash -r 2>/dev/null || true
+  else
+    apt_install git || return 1
+  fi
+}
+
+# --- Linux/Debian apt helper --------------------------------------------------
+# `apt-get update` runs at most ONCE per install (guarded by APT_UPDATED). The
+# first sudo is preceded by a plain-language notice that a password prompt may
+# appear. If apt-get is absent (non-Debian distro), returns non-zero so the
+# caller falls back to manual instructions.
+APT_UPDATED=0
+apt_install() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    msg "  [주의] apt-get 을 찾을 수 없습니다 (Debian/Ubuntu 계열이 아님). 수동 설치가 필요합니다." \
+        "  [NOTE] apt-get not found (non-Debian distro). Manual install required."
+    return 1
+  fi
+  if [ "$APT_UPDATED" = "0" ]; then
+    msg "  잠시 후 sudo 로 패키지 목록을 갱신합니다. 비밀번호 입력창이 뜰 수 있습니다." \
+        "  About to refresh the package list with sudo; a password prompt may appear."
+    sudo apt-get update || return 1
+    APT_UPDATED=1
+  fi
+  sudo apt-get install -y "$@" || return 1
+}
+
 check_prereqs() {
   hr
   msg "[3/10] 사전 조건 확인" "[3/10] Checking prerequisites"
   hr
 
-  # --- claude CLI (BYO-compute; verify it runs, do NOT dictate auth) ---
-  if command -v claude >/dev/null 2>&1; then
+  # --- probe everything WITHOUT dying; collect the missing set (space list) ---
+  local missing=""
+  if probe_claude; then
     local cver
     cver="$(claude --version 2>/dev/null | head -n1 || true)"
     msg "  [OK] claude CLI: ${cver:-발견됨}" "  [OK] claude CLI: ${cver:-found}"
   else
-    msg "  [실패] claude CLI 를 PATH 에서 찾을 수 없습니다." \
-        "  [FAIL] claude CLI not found on PATH."
-    msg "  설치: https://docs.claude.com/claude-code 를 참고해 Claude Code 를 설치하고," \
-        "  Install: follow https://docs.claude.com/claude-code to install Claude Code,"
-    msg "  본인 계정으로 로그인(구독/자체호스팅 모두 가능)한 뒤 다시 실행하세요." \
-        "  sign in with your own account (subscription or self-host both fine), then re-run."
-    exit 1
+    msg "  [미설치] claude CLI 를 PATH 에서 찾을 수 없습니다." \
+        "  [MISSING] claude CLI not found on PATH."
+    missing="$missing claude"
   fi
 
-  # --- claude AUTH probe (presence != authenticated) ---
-  # Presence alone lets a logged-OUT user pass, then the bot crashes on its first
-  # chat. Probe that the CLI can actually reach the model; if not, launch the
-  # OFFICIAL interactive login inline so the user signs in DURING install, then
-  # re-probe. We NEVER reimplement auth -- we only invoke `claude`.
+  if probe_python; then
+    msg "  [OK] Python: $PY_FOUND_VER ($PYTHON_BIN)" "  [OK] Python: $PY_FOUND_VER ($PYTHON_BIN)"
+  else
+    # python3 may exist but be < 3.11 -- that still counts as missing; we install
+    # a newer one ALONGSIDE (never uninstall) and re-resolve PYTHON_BIN after.
+    local old_ver=""
+    if command -v python3 >/dev/null 2>&1; then
+      old_ver="$(python3 -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || true)"
+    fi
+    if [ -n "$old_ver" ]; then
+      msg "  [미설치] Python 3.11 이상이 필요합니다 (현재 python3: $old_ver)." \
+          "  [MISSING] Python 3.11+ is required (current python3: $old_ver)."
+    else
+      msg "  [미설치] Python 3.11 이상이 필요합니다." \
+          "  [MISSING] Python 3.11+ is required."
+    fi
+    missing="$missing python"
+  fi
+
+  if probe_git; then
+    msg "  [OK] git: $(git --version 2>/dev/null | head -n1)" \
+        "  [OK] git: $(git --version 2>/dev/null | head -n1)"
+  else
+    msg "  [미설치] git 이 필요합니다." "  [MISSING] git is required."
+    missing="$missing git"
+  fi
+
+  # Trim leading space.
+  missing="${missing# }"
+
+  if [ -n "$missing" ]; then
+    resolve_missing_deps "$missing"
+  fi
+
+  # --- claude AUTH probe (presence != authenticated). Only meaningful once the
+  # CLI is actually present; runs after any install/re-probe above. ---
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] claude 인증 프로브/로그인은 건너뜁니다." \
         "  [dry-run] Skipping claude auth probe/login."
-  else
+  elif probe_claude; then
     if claude_auth_ok; then
       msg "  [OK] claude 인증됨 (모델 응답 확인)." "  [OK] claude authenticated (model responded)."
     else
@@ -748,48 +950,83 @@ check_prereqs() {
     fi
   fi
 
-  # --- Python 3.11+ ---
-  local py_bin="" py_ver=""
-  for cand in python3 python3.13 python3.12 python3.11; do
-    if command -v "$cand" >/dev/null 2>&1; then
-      py_ver="$("$cand" -c 'import sys;print("%d.%d.%d"%sys.version_info[:3])' 2>/dev/null || true)"
-      if py_version_ok "$py_ver"; then py_bin="$cand"; break; fi
-    fi
-  done
-  if [ -n "$py_bin" ]; then
-    msg "  [OK] Python: $py_ver ($py_bin)" "  [OK] Python: $py_ver ($py_bin)"
-  else
-    msg "  [실패] Python 3.11 이상이 필요합니다." "  [FAIL] Python 3.11+ is required."
-    if [ "$OS_KIND" = "macos" ]; then
-      msg "  설치: brew install python@3.12  (Homebrew 없으면 https://brew.sh)" \
-          "  Install: brew install python@3.12  (no Homebrew? https://brew.sh)"
-    else
-      msg "  설치: sudo apt install python3.12  (또는 배포판 패키지 매니저)" \
-          "  Install: sudo apt install python3.12  (or your distro's package manager)"
-    fi
-    exit 1
-  fi
-
-  # --- git ---
-  if command -v git >/dev/null 2>&1; then
-    msg "  [OK] git: $(git --version 2>/dev/null | head -n1)" \
-        "  [OK] git: $(git --version 2>/dev/null | head -n1)"
-  else
-    msg "  [실패] git 이 필요합니다." "  [FAIL] git is required."
-    if [ "$OS_KIND" = "macos" ]; then
-      msg "  설치: xcode-select --install  또는  brew install git" \
-          "  Install: xcode-select --install  or  brew install git"
-    else
-      msg "  설치: sudo apt install git" "  Install: sudo apt install git"
-    fi
-    exit 1
-  fi
-
   # --- mint.sh must exist ---
   if [ ! -f "$MINT_SH" ]; then
     msg "  [실패] mint.sh 를 찾을 수 없습니다: $MINT_SH" \
         "  [FAIL] mint.sh not found: $MINT_SH" >&2
     exit 1
+  fi
+}
+
+# resolve_missing_deps "<space-separated dep keys>" -- present ONE summary list,
+# ONE confirm (default Y), install sequentially with progress, RE-PROBE, and on
+# any still-missing dep print the manual instructions and exit 1. Handles
+# --dry-run (report only) and non-tty stdin (list + manual, exit 1) exactly like
+# the pre-DGN-157 behavior for those paths.
+resolve_missing_deps() {
+  local missing="$1" dep
+  hr
+  msg "다음 항목이 없어 설치가 필요합니다:" "The following prerequisites are missing and need to be installed:"
+  for dep in $missing; do
+    printf '  - %s\n' "$(dep_label "$dep")"
+  done
+  hr
+
+  # --dry-run: report what WOULD be installed, install nothing, continue.
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "[dry-run] 위 항목을 자동 설치할 예정입니다 (실제로는 아무것도 설치하지 않음)." \
+        "[dry-run] Would auto-install the above (nothing is actually installed)."
+    return 0
+  fi
+
+  # Non-interactive stdin (not a tty): do not hang on the confirm. Print the
+  # manual instructions and exit 1 -- same as the pre-DGN-157 behavior.
+  if [ ! -t 0 ]; then
+    msg "비대화형 입력(파이프)이라 자동 설치를 건너뜁니다. 아래를 수동으로 설치한 뒤 다시 실행하세요:" \
+        "Non-interactive input (piped) -- skipping auto-install. Install the following manually and re-run:"
+    for dep in $missing; do manual_hint "$dep"; done
+    exit 1
+  fi
+
+  # ONE confirm (default Y).
+  if ! confirm "지금 자동으로 설치할까요?" "Install them now automatically?" "y"; then
+    msg "자동 설치를 건너뜁니다. 아래를 수동으로 설치한 뒤 다시 실행하세요:" \
+        "Skipping auto-install. Install the following manually and re-run:"
+    for dep in $missing; do manual_hint "$dep"; done
+    exit 1
+  fi
+
+  # Install sequentially with per-item progress. A failed installer is not fatal
+  # here; the re-probe below is the single source of truth.
+  for dep in $missing; do
+    case "$dep" in
+      claude) install_claude || true ;;
+      python) install_python || true ;;
+      git)    install_git || true ;;
+    esac
+  done
+
+  # --- RE-PROBE everything; collect what is STILL missing ---
+  local still=""
+  probe_claude || still="$still claude"
+  probe_python || still="$still python"
+  probe_git    || still="$still git"
+  still="${still# }"
+
+  if [ -n "$still" ]; then
+    hr
+    msg "[실패] 다음 항목을 여전히 설치하지 못했습니다. 수동으로 설치한 뒤 다시 실행하세요:" \
+        "[FAIL] The following are still missing. Install them manually and re-run:"
+    for dep in $still; do manual_hint "$dep"; done
+    hr
+    exit 1
+  fi
+
+  hr
+  msg "  모든 사전 조건이 준비되었습니다." "  All prerequisites are ready."
+  # Re-print the resolved versions so the record is clear post-install.
+  if probe_python; then
+    msg "  [OK] Python: $PY_FOUND_VER ($PYTHON_BIN)" "  [OK] Python: $PY_FOUND_VER ($PYTHON_BIN)"
   fi
 }
 
@@ -1763,8 +2000,11 @@ step_mint_and_env() {
   fi
 
   # 6/7a) mint the instance (reuses scripts/mint.sh; passes the real token).
+  # DOGANY_PYTHON_BIN pins the venv interpreter to the one check_prereqs
+  # resolved as >= 3.11 (matters when system python3 is old and a newer one was
+  # installed alongside). mint.sh falls back to python3 when this is empty.
   msg "에이전트를 생성합니다... (수 분 소요 가능)" "Minting the agent... (may take a few minutes)"
-  bash "$MINT_SH" --root "$target" --name "$AGENT_NAME" --force \
+  DOGANY_PYTHON_BIN="$PYTHON_BIN" bash "$MINT_SH" --root "$target" --name "$AGENT_NAME" --force \
     --lang "$DOGANY_LANG" --token "$BOT_TOKEN" $(mint_dep_flag)
 
   # 7a2) record the collected install language in config/agent.conf so the

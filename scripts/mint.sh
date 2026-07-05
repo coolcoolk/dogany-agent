@@ -315,9 +315,13 @@ else
 fi
 
 # 6) build the bridge venv (self-contained, next to bridge/).
+# The interpreter defaults to python3 but can be pinned via DOGANY_PYTHON_BIN
+# (install.sh sets it to the interpreter it resolved as >= 3.11, so the venv is
+# built with the right Python even when the system python3 is older).
 if [ "$BUILD_VENV" = "1" ]; then
-  echo "[mint] building bridge venv ..."
-  python3 -m venv "$PROJECT_ROOT/bridge/venv"
+  VENV_PYTHON="${DOGANY_PYTHON_BIN:-python3}"
+  echo "[mint] building bridge venv (interpreter: $VENV_PYTHON) ..."
+  "$VENV_PYTHON" -m venv "$PROJECT_ROOT/bridge/venv"
   "$PROJECT_ROOT/bridge/venv/bin/pip" install -q --upgrade pip
   if [ "$CORE_ONLY" = "1" ]; then
     # Core deps needed to import the bridge. faster-whisper (voice) is optional
