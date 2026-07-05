@@ -41,6 +41,7 @@ STRINGS = {
                      ),
     "model_switch_warning": "주의: 모델을 전환하면 새 세션이 시작됩니다.",
     "model_unknown": "알 수 없는 모델 '{name}'. 사용 가능한 모델: {allowed}",
+    "model_state_fallback": "저장된 모델 설정을 읽지 못해 기본값으로 시작합니다.",
     "stop_paused": "세션을 중단했습니다.",
     "stop_nothing": "실행 중인 작업이 없습니다.",
     "no_session": "활성 세션이 없습니다. 먼저 대화를 시작해 주세요.",
