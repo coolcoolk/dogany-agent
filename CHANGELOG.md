@@ -3,6 +3,40 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.5] - 2026-07-06
+
+### Added
+- Bridge watchdog: a lightweight monitor checks the bot's polling heartbeat
+  every 2 minutes and restarts the service when it goes zombie (alive but
+  deaf). Two-strike design absorbs laptop sleep/wake; restarts are
+  rate-limited so a deeper failure never causes a restart storm.
+- Windows support via WSL2 (preview): setup script, install guard, and docs.
+- The installer now auto-installs missing prerequisites (Homebrew, Python
+  3.11+, git, Claude Code CLI) after a single confirmation, instead of
+  failing one by one with manual instructions.
+- Heavy downloads now run at the START of the install wizard, and large
+  model downloads show live progress (native progress bars or an elapsed
+  heartbeat) instead of a silent, frozen-looking screen.
+- The agent remembers your model choice: a new session starts with the model
+  the last session actually used, with a safe fallback chain (settings files,
+  then default) when the remembered value is missing or invalid.
+
+### Fixed
+- update.sh no longer resets your model choice, leaves stale service files,
+  misregisters backups, races during file replacement, or strips executable
+  permissions (the last one could silently kill scheduled routines like
+  morning briefings).
+- Outgoing messages are scrubbed of internal tool-call markup that could
+  occasionally leak into chat text.
+- Appointment logging now checks the target date for existing entries before
+  registering, preventing duplicate appointments.
+
+### Changed
+- Agents now propose skill updates at task completion when they had to
+  deviate from a documented procedure (skill-feedback gate).
+- Output rules: agents describe results in your terms and no longer expose
+  internal mechanics (script names, API calls) in chat.
+
 ## [1.0.4] - 2026-07-04
 
 ### Added
