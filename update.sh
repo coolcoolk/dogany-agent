@@ -42,6 +42,37 @@ DOGANY_LANG="${DOGANY_LANG:-en}"
 msg() { if [ "$DOGANY_LANG" = "ko" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 die() { msg "[오류] $1" "[ERROR] $1" >&2; exit 1; }
 
+# WSL drift check constants (mirror install.sh). The Windows-side setup writes
+# a marker at this version; if it drifts below the required version, update.sh
+# NAGS (prints, never fails the update) to re-run setup-windows.ps1.
+REQUIRED_WINDOWS_SETUP_VERSION=1
+WINDOWS_SETUP_MARKER="/etc/dogany/windows-setup.version"
+is_wsl() { grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; }
+
+# On WSL, warn (do not fail) when the Windows-side setup marker is missing or
+# older than required -- the .wslconfig/wsl.conf shape may have changed and the
+# user must re-run setup-windows.ps1. Reads only a Linux-side file; never
+# touches the Windows filesystem.
+wsl_drift_nag() {
+  is_wsl || return 0
+  local marker_ver=0
+  if [ -f "$WINDOWS_SETUP_MARKER" ]; then
+    marker_ver="$(tr -dc '0-9' < "$WINDOWS_SETUP_MARKER" 2>/dev/null)"
+    marker_ver="${marker_ver:-0}"
+  fi
+  [ "$marker_ver" -ge "$REQUIRED_WINDOWS_SETUP_VERSION" ] 2>/dev/null && return 0
+
+  local ps1='powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1'
+  printf '%s\n' "------------------------------------------------------------" >&2
+  msg "[update][주의] Windows(WSL2) 설정이 오래되었거나 없습니다 (마커 v${marker_ver}, 필요 v${REQUIRED_WINDOWS_SETUP_VERSION})." \
+      "[update][NOTE] Windows (WSL2) setup is stale or missing (marker v${marker_ver}, need v${REQUIRED_WINDOWS_SETUP_VERSION})." >&2
+  msg "Windows PowerShell(일반 사용자)에서 아래를 다시 실행하세요:" \
+      "Re-run this in Windows PowerShell (normal user):" >&2
+  printf '  %s\n' "$ps1" >&2
+  msg "업데이트는 계속 진행됩니다." "The update continues regardless." >&2
+  printf '%s\n' "------------------------------------------------------------" >&2
+}
+
 # Portable in-place sed: BSD (macOS) and GNU (Linux) disagree on `sed -i`'s
 # flavor (BSD requires a mandatory backup-suffix arg, GNU forbids the space).
 # Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
@@ -270,13 +301,69 @@ if [ -d "$MIG_DIR" ] && [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
   fi
 fi
 
+# Substitute the mint placeholders on a single file, in place. Hoisted here (out
+# of section 4) so BOTH the settings.json install (section 3g) and the skills
+# refresh loop can substitute a freshly installed file at install time. For the
+# skills loop this matters because we checksum right after: hashing before
+# substitution would make the substituted on-disk copy look "user-modified" on
+# the next update and back it up spuriously. For settings.json it matters because
+# a harness hook firing between copy and a later substitution would read a raw
+# __PROJECT_ROOT__ placeholder -- so we substitute atomically at install (3g).
+subst_one() {
+  local f="$1"
+  sed_inplace "$f" \
+    -e "s#__PROJECT_ROOT__#${INSTANCE}#g" \
+    -e "s#__HOME__#${HOME}#g"
+  if [ "$IDENTITY_OK" = "1" ]; then
+    sed_inplace "$f" \
+      -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
+      -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
+      -e "s#__USER_LABEL__#${USER_LABEL}#g" \
+      -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
+  fi
+}
+
 # 3g) harness config: .claude/settings.json (framework), keep the skills dir intact.
+#     Two defects handled here:
+#       * model reset: the instance may run a model different from the template
+#         default. We read the instance's current "model" value first and re-apply
+#         it after installing the template copy, so the choice survives the refresh.
+#       * copy->substitute race: a hook firing between an install and a LATER
+#         substitution pass would read a raw __PROJECT_ROOT__ placeholder. We build
+#         the fully substituted (and model-restored) content in a temp file, then
+#         atomically mv it into place, so the live file is never in a raw state.
 if [ -f "$TEMPLATE/.claude/settings.json" ]; then
   mkdir -p "$INSTANCE/.claude"
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] .claude/settings.json 갱신 예정" "  [dry-run] would refresh .claude/settings.json"
   else
-    cp -p "$TEMPLATE/.claude/settings.json" "$INSTANCE/.claude/settings.json"
+    SETTINGS_DEST="$INSTANCE/.claude/settings.json"
+    # Read the instance-chosen model BEFORE overwriting (empty if no file/key).
+    OLD_MODEL=""
+    if [ -f "$SETTINGS_DEST" ]; then
+      OLD_MODEL="$(python3 -c 'import json,sys
+try:
+    with open(sys.argv[1]) as fh:
+        print(json.load(fh).get("model","") or "")
+except Exception:
+    pass' "$SETTINGS_DEST" 2>/dev/null || true)"
+    fi
+    # Build substituted + model-restored content in a temp file, then atomic mv.
+    settings_tmp="$(mktemp "${SETTINGS_DEST}.new.XXXXXX")"
+    cp -p "$TEMPLATE/.claude/settings.json" "$settings_tmp"
+    subst_one "$settings_tmp"
+    if [ -n "$OLD_MODEL" ]; then
+      python3 -c 'import json,sys
+p, model = sys.argv[1], sys.argv[2]
+with open(p) as fh:
+    data = json.load(fh)
+data["model"] = model
+text = json.dumps(data, indent=2, ensure_ascii=False)
+with open(p, "w") as fh:
+    fh.write(text + "\n")' "$settings_tmp" "$OLD_MODEL" \
+        || die "failed to restore instance model in settings.json"
+    fi
+    mv -f "$settings_tmp" "$SETTINGS_DEST"
   fi
   UPDATED+=(".claude/settings.json")
 fi
@@ -303,7 +390,10 @@ fi
 #       * unmodified (instance sha == manifest sha) -> just refresh, as before.
 #       * user-modified (differs from manifest, OR manifest entry missing but the
 #         instance copy differs from the incoming template copy) -> back the
-#         instance dir up to <name>.user-<timestamp>/ and WARN, THEN refresh.
+#         instance dir up to .claude/skill-backups/<name>.user-<timestamp>/ and
+#         WARN, THEN refresh. The backup lives OUTSIDE .claude/skills/ on purpose:
+#         a backup dir under .claude/skills/ gets registered by the harness as a
+#         live duplicate skill.
 #     After each refresh the manifest is updated to the newly installed sha.
 
 # Deterministic, path-independent digest of a skill dir: hash each file's content
@@ -327,25 +417,6 @@ manifest_sha() {
   local name="$1"
   [ -f "$SKILLS_MANIFEST" ] || { printf '%s' ""; return; }
   awk -v n="$name" '$1==n {print $2; exit}' "$SKILLS_MANIFEST"
-}
-
-# Substitute the mint placeholders on a single file, in place. Hoisted here (out
-# of section 4) so the skills refresh loop can substitute a freshly installed
-# skill BEFORE it checksums the result -- otherwise the manifest records the
-# pre-substitution sha while the on-disk copy is post-substitution, and every
-# placeholder-bearing skill is falsely flagged "user-modified" on the next update.
-subst_one() {
-  local f="$1"
-  sed_inplace "$f" \
-    -e "s#__PROJECT_ROOT__#${INSTANCE}#g" \
-    -e "s#__HOME__#${HOME}#g"
-  if [ "$IDENTITY_OK" = "1" ]; then
-    sed_inplace "$f" \
-      -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
-      -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
-      -e "s#__USER_LABEL__#${USER_LABEL}#g" \
-      -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
-  fi
 }
 
 # Substitute placeholders across every text file in one skill dir (in place).
@@ -400,7 +471,10 @@ for d in "$SKILLS_ROOT"/dogany-*/; do
   if [ "$user_modified" = "1" ]; then
     # Reuse the section 3f-migrate timestamp pattern for the backup suffix.
     ts="$(date +%Y%m%d-%H%M%S)"
-    bak="$INSTANCE/.claude/skills/$name.user-$ts"
+    # Back up OUTSIDE .claude/skills/ -- a backup dir inside skills/ is registered
+    # by the harness as a live duplicate skill.
+    mkdir -p "$INSTANCE/.claude/skill-backups"
+    bak="$INSTANCE/.claude/skill-backups/$name.user-$ts"
     cp -a "$dest" "$bak" || die "failed to back up user-modified skill $name"
     msg "  [update][경고] 사용자 수정 스킬 발견 -- 백업: $bak" \
         "  [update][WARN] user-modified skill detected -- backed up to: $bak"
@@ -455,9 +529,10 @@ fi
 #    Identity placeholders are applied only when recovered from the manifest.
 # ---------------------------------------------------------------------------
 if [ "$DRY_RUN" = "0" ]; then
-  # subst_one is hoisted above (defined before the skills loop). Skills are already
-  # substituted in-loop (section 3i) so the manifest sha matches on-disk bytes;
-  # this pass covers the remaining refreshed framework files.
+  # subst_one is hoisted above (defined before section 3g). Skills are already
+  # substituted in-loop (section 3i) and settings.json is substituted atomically
+  # at install (section 3g), so neither is listed here; this pass covers the
+  # remaining refreshed framework files.
   # Substitute across refreshed framework file types, but NEVER identity/user
   # entrypoints (they carry the user's filled-in identity, not placeholders).
   while IFS= read -r -d '' f; do
@@ -465,7 +540,6 @@ if [ "$DRY_RUN" = "0" ]; then
   done < <(find \
       "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
       "$INSTANCE/config" "$INSTANCE/service" "$INSTANCE/database" \
-      "$INSTANCE/.claude/settings.json" \
       "$INSTANCE/worklog/_TEMPLATE.md" \
       \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
          -o -name '*.md' -o -name '*.conf' -o -name '*.txt' -o -name '*.example' \) \
@@ -478,8 +552,24 @@ if [ "$DRY_RUN" = "0" ]; then
     for p in "$INSTANCE"/bridge/*.plist "$INSTANCE"/routines/*.plist; do
       [ -e "$p" ] || continue
       np="${p//telegram-agent/$AGENT_NAME}"
-      [ "$np" != "$p" ] && [ ! -e "$np" ] && mv "$p" "$np"
+      [ "$np" = "$p" ] && continue
+      if [ ! -e "$np" ]; then
+        mv "$p" "$np"
+      else
+        # Agent-named plist already exists (already-minted instance): the freshly
+        # rsynced generic telegram-agent copy is pure cruft -- remove it rather
+        # than leave it lying in the instance forever.
+        rm -f "$p"
+      fi
     done
+
+    # DGN-140: (re)register the polling watchdog now that the watchdog files
+    # are refreshed, substituted, and renamed. Non-fatal by contract.
+    if [ -f "$INSTANCE/bridge/watchdog_setup.sh" ]; then
+      bash "$INSTANCE/bridge/watchdog_setup.sh" \
+        || msg "[update][경고] 워치독 등록에 실패했습니다 (무시하고 진행)." \
+               "[update][WARN] Watchdog registration failed (continuing)."
+    fi
   fi
 
   # Record the framework version this instance now matches.
@@ -516,3 +606,6 @@ else
   msg "[update] 완료. 브릿지 재시작이 필요하면 승인 후 진행하세요." \
       "[update] done. If the bridge needs a restart, do so with approval."
 fi
+
+# WSL: nag (never fail) if the Windows-side setup drifted below the required version.
+wsl_drift_nag
