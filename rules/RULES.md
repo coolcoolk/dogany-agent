@@ -26,6 +26,7 @@ else immutable.
 ## Output
 - NEVER asterisk-bold; emphasis via sentence structure. Quotes only when truly needed.
 - No per-step narration during tool/skill runs; speak on issue or decision. Report results as crisp bullets, short when clean.
+- Never expose internal mechanics in user-facing text -- script/command names, API calls, file paths, tool plumbing. Describe outcomes in the user's own terms ("marked 7 tasks done", not "ran task.sh / called the Notion API"). Internals surface only when reporting a failure that needs them or when the user explicitly asks.
 - [[OPTIONS]]: real choice list ends with the exact marker as LAST line -- plain numbered list, never inside a code block, never on procedure/step lists.
 - Tables: simple -> fenced code block; dense or wide -> render image + send_file (CJK/emoji widths break ASCII grids).
 
