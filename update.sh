@@ -6,16 +6,24 @@
 #   2. Re-sync ONLY framework code into the instance (agents/main by default):
 #      bridge code, routines, memory engine, service SDK, database schema,
 #      config, .claude/settings.json, worklog template, and the official
-#      framework skills (root skills/dogany-*).
-#   3. Re-substitute the five mint placeholders on the refreshed files, using
+#      framework skills (root skills/dogany-*). See the FRAMEWORK SERVICES
+#      MANIFEST comment below for the exact allowlist.
+#   3. Refresh RULES.md, the framework constitution (DGN-130). RULES.md is
+#      framework-owned: users must not edit it. It is refreshed with the SAME
+#      user-edit-detection + backup contract as the dogany-* skills -- if a
+#      local edit is detected, the instance copy is backed up to
+#      RULES.md.user-<timestamp> before being replaced.
+#   4. Re-substitute the five mint placeholders on the refreshed files, using
 #      the instance manifest (.instance.conf) written at mint time.
 #
-# What it NEVER touches (user data is preserved verbatim):
+# What it NEVER touches (user data + instance identity are preserved verbatim):
 #   - memories/            (long-term memory markdown)
 #   - .telegram_bot/.env   (bot token, allowed users) and runtime/.env
 #   - *.db                 (lifekit.db, memory-engine/state.db -- user data + cache)
 #   - bridge/venv/         (built virtualenv)
-#   - AGENT.md / USER.md / CLAUDE.md / RULES.md   (identity + user-owned entrypoints)
+#   - AGENT.md / USER.md   (instance identity: name, Role, accreted Workflows,
+#                           user facts -- instance-owned, see IDENTITY GUARD below)
+#   - CLAUDE.md            (thin entrypoint that @-includes RULES/AGENT/USER)
 #   - NON-dogany skills under .claude/skills/     (user-authored skills)
 #
 # It is idempotent: running it twice with no upstream changes is a no-op refresh.
@@ -120,12 +128,68 @@ INSTANCE="$(cd "$INSTANCE" && pwd)"
 [ "$INSTANCE" = "$REPO_ROOT" ] && die "refusing to update the repo root itself"
 [ "$INSTANCE" = "$TEMPLATE" ]  && die "refusing to update the template itself"
 
+# ===========================================================================
+# FRAMEWORK SERVICES MANIFEST (DGN-130) -- the EXACT, explicit allowlist of
+# framework-owned paths this script refreshes into an instance. This is the
+# single documented source of truth for the shared-services refresh; the
+# section-3 rsync blocks below implement exactly these entries and nothing
+# more. It is an ALLOWLIST by construction, never a "sync everything then
+# exclude" glob -- adding a path here is a deliberate act.
+#
+#   bridge/                 bridge code (framework); venv + .env preserved
+#   routines/               framework schedulers/scripts (+ bundle)
+#   memory-engine/*.py,*.md memory ENGINE code + taxonomy; NEVER state.db / markdown
+#   config/ (i18n only)     locales refreshed; agent.conf/lifekit.conf are
+#                           per-instance STATE (write-if-absent, never reset)
+#   service/                service SDK facade (lifekit + mailer)
+#   database/               schema.sql + lifekit.py/.sh/README; NEVER *.db
+#   .claude/settings.json   harness config (instance model choice preserved)
+#   worklog/_TEMPLATE.md    ticket template only; never existing tickets
+#   skills/dogany-*         official framework skills (edit-detect + backup)
+#   .claude/skills-bundle/  dormant lifekit bundle skills
+#   RULES.md                framework constitution (edit-detect + backup; DGN-130)
+#
+# Everything NOT on this list is instance state / personal data and is never
+# written: memories/, *.db, .env, sessions, runtime/, logs/, bridge/venv/,
+# user-authored (non-dogany-) skills, and the identity entrypoints below.
+#
+# IDENTITY GUARD (DGN-130): AGENT.md and USER.md are instance-owned identity
+# (agent name, Role, accreted Workflows; user facts). They are NEVER part of
+# any refresh path -- not in the manifest above, not in the RULES channel, not
+# in any section-3 rsync (all of which target named subdirs, not the instance
+# root). This constant exists so a future edit that tries to fold an entrypoint
+# into a refresh path trips an explicit, greppable guard rather than silently
+# clobbering identity. Do not remove; do not add AGENT.md / USER.md to it.
+FRAMEWORK_NEVER_REFRESH=( "AGENT.md" "USER.md" )
+assert_identity_never_refreshed() {
+  # RULES.md is deliberately ABSENT here: it is framework-owned and refreshed
+  # (with backup) by the DGN-130 channel. Only true identity files are guarded.
+  local f
+  for f in "${FRAMEWORK_NEVER_REFRESH[@]}"; do
+    case "$f" in
+      AGENT.md|USER.md) : ;;  # expected members
+      *) die "IDENTITY GUARD violated: unexpected entry '$f' in FRAMEWORK_NEVER_REFRESH" ;;
+    esac
+  done
+}
+assert_identity_never_refreshed
+
 RSYNC_DRY=""
 if [ "$DRY_RUN" = "1" ]; then
   RSYNC_DRY="--dry-run"
   msg "[dry-run] 파일을 쓰지 않고 변경 예정만 표시합니다." \
       "[dry-run] no files will be written; showing planned changes only."
 fi
+
+# Dry-run-safe directory creation (DGN-130). Several refresh sections `mkdir -p`
+# a destination dir before an rsync/cp that rsync's own --dry-run then skips --
+# which left empty scaffold dirs behind on a --dry-run (cosmetic, but violates
+# the "dry-run writes NOTHING" contract). ensure_dir is a no-op under --dry-run
+# so a preview never mutates the filesystem; real runs mkdir -p as before.
+ensure_dir() {
+  [ "$DRY_RUN" = "1" ] && return 0
+  mkdir -p "$1"
+}
 
 msg "[update] 레포   = $REPO_ROOT" "[update] repo     = $REPO_ROOT"
 msg "[update] 인스턴스 = $INSTANCE" "[update] instance = $INSTANCE"
@@ -254,7 +318,7 @@ if [ -d "$REPO_ROOT/service" ]; then
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).
-mkdir -p "$INSTANCE/database"
+ensure_dir "$INSTANCE/database"
 for f in schema.sql lifekit.py lifekit.sh README.md; do
   [ -f "$REPO_ROOT/database/$f" ] || continue
   if [ "$DRY_RUN" = "1" ]; then
@@ -338,7 +402,7 @@ subst_one() {
 #         the fully substituted (and model-restored) content in a temp file, then
 #         atomically mv it into place, so the live file is never in a raw state.
 if [ -f "$TEMPLATE/.claude/settings.json" ]; then
-  mkdir -p "$INSTANCE/.claude"
+  ensure_dir "$INSTANCE/.claude"
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] .claude/settings.json 갱신 예정" "  [dry-run] would refresh .claude/settings.json"
   else
@@ -375,7 +439,7 @@ fi
 
 # 3h) worklog template (framework), never existing worklog tickets.
 if [ -f "$TEMPLATE/worklog/_TEMPLATE.md" ]; then
-  mkdir -p "$INSTANCE/worklog"
+  ensure_dir "$INSTANCE/worklog"
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] worklog/_TEMPLATE.md 갱신 예정" "  [dry-run] would refresh worklog/_TEMPLATE.md"
   else
@@ -424,6 +488,27 @@ manifest_sha() {
   awk -v n="$name" '$1==n {print $2; exit}' "$SKILLS_MANIFEST"
 }
 
+# Content digest of a single file (DGN-130 RULES channel). Dereferences symlinks
+# (the template's RULES.md is a symlink into rules/); missing file -> stable
+# empty marker so a fresh instance and a deleted file both compare cleanly.
+file_checksum() {
+  local f="$1"
+  [ -f "$f" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
+  shasum < "$f" 2>/dev/null | awk '{print $1}'
+}
+
+# Framework single-file manifest (DGN-130): records the sha of framework-owned
+# FILES (currently RULES.md) as this script last installed them, exactly like
+# .dogany-skills.sha does for skill dirs. Used to detect a user edit before a
+# refresh overwrites it. Format: "<relpath>  <sha>". Kept separate from the
+# skills manifest so the two channels never race on one file.
+FRAMEWORK_MANIFEST="$INSTANCE/.claude/.dogany-framework.sha"
+framework_manifest_sha() {
+  local rel="$1"
+  [ -f "$FRAMEWORK_MANIFEST" ] || { printf '%s' ""; return; }
+  awk -v n="$rel" '$1==n {print $2; exit}' "$FRAMEWORK_MANIFEST"
+}
+
 # Substitute placeholders across every text file in one skill dir (in place).
 subst_skill_dir() {
   local dir="$1"
@@ -436,7 +521,7 @@ subst_skill_dir() {
       -print0 2>/dev/null)
 }
 
-mkdir -p "$INSTANCE/.claude/skills"
+ensure_dir "$INSTANCE/.claude/skills"
 DOGANY_SKILLS=()
 # Collect new manifest lines as we install; rewrite the manifest at the end so a
 # --dry-run leaves it untouched.
@@ -522,10 +607,86 @@ fi
 #     Framework-owned area: plain rsync (no --delete) so the activation symlinks
 #     in .claude/skills/ are untouched and any user files are never pruned.
 if [ -d "$TEMPLATE/.claude/skills-bundle" ]; then
-  mkdir -p "$INSTANCE/.claude/skills-bundle"
+  ensure_dir "$INSTANCE/.claude/skills-bundle"
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
     "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
   UPDATED+=(".claude/skills-bundle/")
+fi
+
+# 3k) RULES.md -- framework constitution (DGN-130). RULES.md is framework-owned:
+#     users are told never to edit it, so the framework may push updates to it.
+#     We refresh it with the SAME user-edit-detection + backup contract as the
+#     dogany-* skills (section 3i), so a hand-edited RULES.md is preserved as a
+#     dated backup before being replaced -- never silently clobbered.
+#
+#     Source: $TEMPLATE/RULES.md (a symlink into rules/RULES.md; shasum/cp
+#     dereference it). RULES.md carries NO mint placeholders, so it is
+#     deliberately NOT run through subst_one and is NOT in section 4's find set
+#     (which targets named subdirs, never the instance root) -- it is copied
+#     verbatim, exactly as it ships.
+#
+#     Contract mirror of section 3i:
+#       recorded (manifest) sha == instance sha  -> unmodified, just refresh.
+#       differs, OR no manifest entry but instance != incoming -> user-modified:
+#         back up to RULES.md.user-<timestamp> at the instance root, WARN, then
+#         refresh. The backup sits at the instance root (a peer of RULES.md),
+#         NOT under .claude/ -- it is the user's own copy of the constitution.
+#       After refresh, record the freshly installed sha in the framework manifest.
+if [ -f "$TEMPLATE/RULES.md" ]; then
+  RULES_SRC="$TEMPLATE/RULES.md"
+  RULES_DEST="$INSTANCE/RULES.md"
+  rules_recorded="$(framework_manifest_sha 'RULES.md')"
+  rules_cur="$(file_checksum "$RULES_DEST")"
+  rules_incoming="$(file_checksum "$RULES_SRC")"
+  rules_user_modified=0
+  if [ -f "$RULES_DEST" ]; then
+    if [ -n "$rules_recorded" ]; then
+      [ "$rules_cur" != "$rules_recorded" ] && rules_user_modified=1
+    else
+      # No manifest entry (pre-DGN-130 instance): treat as modified only if the
+      # instance copy actually differs from what we're about to install.
+      [ "$rules_cur" != "$rules_incoming" ] && rules_user_modified=1
+    fi
+  fi
+
+  if [ "$DRY_RUN" = "1" ]; then
+    if [ "$rules_user_modified" = "1" ]; then
+      msg "  [dry-run] 사용자 수정 RULES.md 백업 예정" \
+          "  [dry-run] would back up user-modified RULES.md"
+    fi
+    if [ "$rules_cur" != "$rules_incoming" ]; then
+      msg "  [dry-run] RULES.md 갱신 예정" "  [dry-run] would refresh RULES.md"
+    else
+      msg "  [dry-run] RULES.md 최신 (변경 없음)" "  [dry-run] RULES.md already current"
+    fi
+    # Do NOT copy, back up, or touch the framework manifest in dry-run.
+  else
+    if [ "$rules_user_modified" = "1" ]; then
+      ts="$(date +%Y%m%d-%H%M%S)"
+      bak="$INSTANCE/RULES.md.user-$ts"
+      cp -p "$RULES_DEST" "$bak" || die "failed to back up user-modified RULES.md"
+      msg "  [update][경고] 사용자 수정 RULES.md 발견 -- 백업: $bak" \
+          "  [update][WARN] user-modified RULES.md detected -- backed up to: $bak"
+    fi
+    # Refresh verbatim (dereference the source symlink; preserve source mode).
+    cp -pL "$RULES_SRC" "$RULES_DEST"
+    # Record the freshly installed sha in the framework manifest (upsert the
+    # RULES.md line; leave any future framework-file lines intact).
+    rules_installed="$(file_checksum "$RULES_DEST")"
+    mkdir -p "$INSTANCE/.claude"
+    fw_tmp="$(mktemp "${FRAMEWORK_MANIFEST}.XXXXXX")"
+    {
+      printf '# .dogany-framework.sha -- checksums of framework-owned FILES as installed\n'
+      printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
+      printf '# framework refresh overwrites them. Format: "<relpath>  <sha>".\n'
+      if [ -f "$FRAMEWORK_MANIFEST" ]; then
+        grep -vE '^#|^RULES\.md[[:space:]]' "$FRAMEWORK_MANIFEST" 2>/dev/null || true
+      fi
+      printf 'RULES.md  %s\n' "$rules_installed"
+    } > "$fw_tmp"
+    mv -f "$fw_tmp" "$FRAMEWORK_MANIFEST"
+  fi
+  UPDATED+=("RULES.md (framework constitution)")
 fi
 
 # ---------------------------------------------------------------------------
