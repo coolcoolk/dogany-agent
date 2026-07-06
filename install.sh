@@ -60,6 +60,9 @@ OS_KIND=""                            # macos | linux
 # (recommended from the subscription tier). Empty until then; template default
 # stays "sonnet" and is only overwritten post-mint when this is set.
 DOGANY_MODEL="${DOGANY_MODEL:-}"      # sonnet | opus
+# Browser automation (agent-browser) opt-in. 0 = skip (default), 1 = install.
+# Presettable via env for dry-run / scripted testing.
+ENABLE_BROWSER="${DOGANY_BROWSER:-0}"  # 0 skip (default), 1 install
 
 DRY_RUN=0
 # In --dry-run, all filesystem writes are redirected under this temp dir and no
@@ -1301,6 +1304,9 @@ step_dependencies() {
 
   # Optional semantic-memory embedding backend (Ollama + bge-m3).
   step_embedding
+
+  # Optional browser automation (agent-browser CLI + Chrome for Testing, ~684MB).
+  step_browser
 }
 
 # DGN-146: voice model picker. Shows the device spec header (disk free/total +
@@ -1623,6 +1629,131 @@ step_embedding() {
     msg "  [경고] bge-m3 다운로드 실패. 키워드 검색으로 계속합니다. 나중에  ollama pull bge-m3  로 재시도하세요." \
         "  [WARN] Failed to pull bge-m3. Continuing with keyword recall; retry later with  ollama pull bge-m3 ." >&2
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Step 4c: optional browser automation (agent-browser CLI + Chrome for Testing)
+# ---------------------------------------------------------------------------
+# agent-browser (Vercel Labs) ships Chrome for Testing (~684 MB) and a compact
+# accessibility-tree snapshot format. Token cost: ~7K per 10-step task (vs ~114K
+# for Playwright MCP). Default = NO -- the download is large and most users do not
+# need browser automation.
+#
+# Activation: creates a symlink from .claude/skills/agent-browser pointing at the
+# dormant bundle dir (.claude/skills-bundle/agent-browser). The CLI itself is
+# installed globally via npm. Fail-open: any install failure warns and continues.
+step_browser() {
+  hr
+  msg "  [4c] 브라우저 자동화 (선택: agent-browser CLI + Chrome for Testing, ~684MB)" \
+      "  [4c] Browser automation (optional: agent-browser CLI + Chrome for Testing, ~684 MB)"
+  hr
+
+  # Preset via env (dry-run / scripted): honor an explicit choice.
+  if [ "${DOGANY_BROWSER:-}" = "1" ]; then
+    ENABLE_BROWSER=1
+  fi
+
+  # Already opted in via env -> skip the prompt, go straight to install.
+  if [ "$ENABLE_BROWSER" = "1" ] && [ "$DRY_RUN" = "0" ]; then
+    _browser_install
+    return 0
+  fi
+
+  msg "  Chrome for Testing 다운로드 크기: ~684MB. agent-browser CLI 는 npm 으로 전역 설치됩니다." \
+      "  Chrome for Testing download size: ~684 MB. The agent-browser CLI is installed globally via npm."
+  msg "  Node.js 가 PATH 에 있어야 합니다." \
+      "  Node.js must be on PATH."
+  msg "  에이전트가 웹사이트 접속, 폼 입력, 스크린샷 등이 불필요하다면 건너뛰세요." \
+      "  Skip if you do not need the agent to open websites, fill forms, or take screenshots."
+  msg "  나중에 언제든  npm install -g agent-browser && agent-browser install  로 추가할 수 있습니다." \
+      "  You can add it anytime later with:  npm install -g agent-browser && agent-browser install"
+  disk_free_line
+
+  # Default NO: large download, not needed by every user.
+  if ! confirm \
+      "지금 브라우저 자동화를 설치할까요? (~684MB 다운로드, 기본값 N)?" \
+      "Install browser automation now? (~684 MB download, default N)?" \
+      "n"; then
+    ENABLE_BROWSER=0
+    msg "  브라우저 자동화를 건너뜁니다. 나중에 언제든  npm install -g agent-browser && agent-browser install  로 추가할 수 있습니다." \
+        "  Skipping browser automation. Add it anytime later with:  npm install -g agent-browser && agent-browser install"
+    return 0
+  fi
+
+  ENABLE_BROWSER=1
+
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "  [dry-run] npm install -g agent-browser 와 agent-browser install 을 수행할 예정 (실제 실행 안 함)." \
+        "  [dry-run] Would run npm install -g agent-browser and agent-browser install (not executed)."
+    msg "  [dry-run] 스킬 심볼릭 링크 생성 예정: .claude/skills/agent-browser -> ../skills-bundle/agent-browser" \
+        "  [dry-run] Would create skill symlink: .claude/skills/agent-browser -> ../skills-bundle/agent-browser"
+    return 0
+  fi
+
+  _browser_install
+}
+
+# Internal: run the actual install steps for browser automation. Fail-open.
+_browser_install() {
+  # 1. npm global install of the CLI.
+  if ! command -v npm >/dev/null 2>&1; then
+    msg "  [경고] npm 이 없습니다. 브라우저 CLI 를 설치하지 못했습니다. 나중에 Node.js 설치 후 수동으로 실행하세요:" \
+        "  [WARN] npm not found; cannot install the browser CLI. After installing Node.js, run manually:" >&2
+    printf '    npm install -g agent-browser && agent-browser install\n' >&2
+    ENABLE_BROWSER=0
+    return 0
+  fi
+
+  msg "  agent-browser CLI 설치 중 (npm)..." "  Installing agent-browser CLI (npm)..."
+  if ! npm install -g agent-browser >/dev/null 2>&1; then
+    msg "  [경고] npm install -g agent-browser 실패. 수동 설치 후 계속할 수 있습니다." \
+        "  [WARN] npm install -g agent-browser failed. You can install manually and continue." >&2
+    ENABLE_BROWSER=0
+    return 0
+  fi
+
+  # 2. Download Chrome for Testing.
+  msg "  Chrome for Testing 다운로드 중 (~684MB, 시간이 걸릴 수 있습니다)..." \
+      "  Downloading Chrome for Testing (~684 MB, this can take a while)..."
+  if ! agent-browser install >/dev/null 2>&1; then
+    msg "  [경고] agent-browser install 실패 (네트워크 또는 디스크 공간 부족일 수 있습니다). 수동으로 재시도:  agent-browser install" \
+        "  [WARN] agent-browser install failed (network or disk space issue). Retry manually:  agent-browser install" >&2
+    ENABLE_BROWSER=0
+    return 0
+  fi
+
+  # 3. Skill symlink activation is deferred. step_browser runs before mint, so
+  # the instance directory does not exist yet. browser_activate_skill() is called
+  # after step_mint_and_env completes (see 7d in that function).
+  msg "  [OK] agent-browser CLI 설치 완료. 스킬은 에이전트 생성 후 활성화됩니다." \
+      "  [OK] agent-browser CLI installed. Skill will be activated after the agent is minted."
+}
+
+# Activate the agent-browser skill symlink in a minted instance.
+# Called from step_mint_and_env (after mint) when ENABLE_BROWSER=1.
+# No-op in dry-run (printed there already).
+browser_activate_skill() {
+  local root="$1"
+  [ "$ENABLE_BROWSER" = "1" ] || return 0
+  [ "$DRY_RUN" = "1" ] && return 0
+
+  local bundle_dir="$root/.claude/skills-bundle/agent-browser"
+  local link_dir="$root/.claude/skills"
+  local link="$link_dir/agent-browser"
+
+  # The bundle dir must exist in the minted instance (copied from .template).
+  if [ ! -d "$bundle_dir" ]; then
+    msg "  [경고] 스킬 번들 디렉토리를 찾지 못했습니다: $bundle_dir" \
+        "  [WARN] Skill bundle directory not found: $bundle_dir" >&2
+    return 0
+  fi
+
+  mkdir -p "$link_dir"
+  # Idempotent: remove stale link before creating.
+  [ -L "$link" ] && rm -f "$link"
+  ln -s "../skills-bundle/agent-browser" "$link"
+  msg "  [OK] 브라우저 자동화 스킬 활성화됨: $link" \
+      "  [OK] Browser automation skill activated: $link"
 }
 
 # ---------------------------------------------------------------------------
@@ -2093,6 +2224,10 @@ step_mint_and_env() {
   # 7c) write the chosen model into the minted instance's .claude/settings.json
   #     (template default is "sonnet"; overwrite only when a model was chosen).
   write_instance_model "$target" "$DOGANY_MODEL"
+
+  # 7d) activate the agent-browser skill symlink when the user opted in.
+  #     The bundle dir ships from .template; the symlink makes it visible to Claude.
+  browser_activate_skill "$target"
 
   # Record this install root as the single Lite instance.
   write_lite_marker "$target"
@@ -2672,6 +2807,7 @@ install.sh -- Dogany product first-run installer
     DOGANY_MOCK_ID_BLOB      pasted userinfobot blob
     DOGANY_VOICE=1           opt into voice (full deps)
     DOGANY_WHISPER_MODEL=M   preselect the faster-whisper model (small|medium|large-v3)
+    DOGANY_BROWSER=1         opt into browser automation (agent-browser CLI + Chrome for Testing)
     DOGANY_TEST_RAM_GB=N     stub detected RAM in GB (spec-reco testing)
     DOGANY_TEST_DISK_GB=N    stub free disk in GB (spec-reco testing)
 USAGE

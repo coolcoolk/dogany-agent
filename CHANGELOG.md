@@ -3,6 +3,18 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - v1.1
+
+### Added
+- Browser automation skill (agent-browser, Vercel Labs) ships as a default-dormant
+  bundle skill. The skill is inactive unless the user opts in during install.
+- Install wizard step 4c: optional browser automation opt-in. Discloses the
+  Chrome for Testing download size (~684 MB) and that the agent-browser CLI will
+  be installed via npm. Default answer is No.
+- When opted in, the skill is activated by creating a symlink from
+  .claude/skills/agent-browser into the bundle directory after the agent is minted.
+- The DOGANY_BROWSER=1 env knob enables the opt-in in dry-run and scripted mode.
+
 ## [1.0.5] - 2026-07-06
 
 ### Added
