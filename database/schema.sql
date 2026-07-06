@@ -1,4 +1,4 @@
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -124,6 +124,7 @@ CREATE TABLE tasks (
   priority   TEXT,                       -- P0/P1/P2
   seq        REAL,                       -- 순번
   note       TEXT,                       -- 비고
+  archived_at TEXT,                      -- soft-delete marker (task-archive); NULL = active
   notion_id  TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );

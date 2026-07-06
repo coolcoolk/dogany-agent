@@ -664,6 +664,126 @@ def appt_persons(aid, conn=None):
             conn.close()
 
 
+# ── 태스크 (tasks) — task-update 스킬용 CLI (DGN-167) ──────
+def _is_iso_date(s):
+    """YYYY-MM-DD 형식이면 True."""
+    try:
+        datetime.date.fromisoformat(str(s))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+# TSV row shape shared by every task verb: (id, name, due-date, done-flag).
+_TASK_ROW_SQL = ("SELECT id, name, COALESCE(date(due_start),''), done "
+                 "FROM tasks ")
+
+
+def task_get(conn, tid):
+    return conn.execute(
+        _TASK_ROW_SQL + "WHERE id=?;", (int(tid),)).fetchone()
+
+
+def task_add(title, due=None, note=None, conn=None):
+    """태스크 한 건 신규 등록. 새 id 반환."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        cur = conn.execute(
+            "INSERT INTO tasks (name, due_start, note) VALUES (?,?,?);",
+            (title, _txt(due), _txt(note)))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        if own:
+            conn.close()
+
+
+def task_find(query=None, conn=None):
+    """태스크 목록(보관 제외). query: None|'all'=전체, YYYY-MM-DD=그날 예정,
+    그 외=이름 키워드(LIKE). (id, name, due, done) 리스트."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        base = _TASK_ROW_SQL + "WHERE archived_at IS NULL"
+        if query is None or query == 'all':
+            sql, args = base + " ORDER BY due_start, id;", ()
+        elif _is_iso_date(query):
+            sql, args = base + " AND date(due_start)=? ORDER BY id;", (query,)
+        else:
+            sql = base + " AND name LIKE ? ORDER BY due_start, id;"
+            args = (f"%{query}%",)
+        return conn.execute(sql, args).fetchall()
+    finally:
+        if own:
+            conn.close()
+
+
+def task_set_done(tid, val, conn=None):
+    """완료 플래그 갱신. 갱신 행 반환(없으면 None)."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        conn.execute("UPDATE tasks SET done=? WHERE id=?;",
+                     (1 if val else 0, int(tid)))
+        conn.commit()
+        return task_get(conn, tid)
+    finally:
+        if own:
+            conn.close()
+
+
+def task_reschedule(tid, date, conn=None):
+    """예정일(due_start) 변경. 갱신 행 반환(없으면 None)."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        conn.execute("UPDATE tasks SET due_start=? WHERE id=?;",
+                     (date, int(tid)))
+        conn.commit()
+        return task_get(conn, tid)
+    finally:
+        if own:
+            conn.close()
+
+
+def task_archive(tid, conn=None):
+    """보관(soft-delete): archived_at 기록 → find/overdue에서 숨김. 갱신 행 반환."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE tasks SET archived_at=datetime('now','localtime') "
+            "WHERE id=?;", (int(tid),))
+        conn.commit()
+        return task_get(conn, tid)
+    finally:
+        if own:
+            conn.close()
+
+
+def task_overdue(today=None, conn=None):
+    """기한 지난 미완료(보관 제외) 목록. (id, name, due, done) 리스트."""
+    today = today or datetime.date.today().isoformat()
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        return conn.execute(
+            _TASK_ROW_SQL +
+            "WHERE archived_at IS NULL AND done=0 "
+            "AND due_start IS NOT NULL AND date(due_start) < ? "
+            "ORDER BY due_start, id;", (today,)).fetchall()
+    finally:
+        if own:
+            conn.close()
+
+
 # ── 신체 스탯 / 목표 칼로리 모델 (card.py에서 이전, 공식 동일) ──
 # Generic illustrative defaults only (NOT any real person's measurements).
 # The owner's actual stats live in lifekit.db (config table) and override these.
@@ -1012,7 +1132,9 @@ def load_card_data(iso_date, conn=None):
 
 # ── CLI (lifekit.sh 서브커맨드 100% 동일 재현) ───────────────────
 USAGE = ("사용법: lifekit.sh meal-add|meal-find|meal-day|meal-del|meal-upd|"
-         "workout-add|workout-find|workout-del|agg-day|agg-week ...\n"
+         "workout-add|workout-find|workout-del|agg-day|agg-week|"
+         "task-add|task-find|task-done|task-undone|task-reschedule|"
+         "task-archive|task-overdue ...\n"
          "  workout-add <date> <category> <subtype> [minutes kcal note avg_hr]\n"
          "    (category=대분류, subtype=세부. 인자 순서는 옛 <type> <name>와 동일 위치.)")
 
@@ -1336,6 +1458,80 @@ def cli_appt_show(argv):
         conn.close()
 
 
+def _task_print(row):
+    # TSV contract: id<TAB>title<TAB>due<TAB>done|todo
+    tid, name, due, done = row
+    print(f"{tid}\t{name}\t{due}\t{'done' if done else 'todo'}")
+
+
+def cli_task_add(argv):
+    # task-add <title> [due_date] [note]
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh task-add <title> [due_date] [note]")
+    due = argv[1] if len(argv) > 1 and argv[1] else None
+    if due is not None and not _is_iso_date(due):
+        _err(f"날짜 형식 아님(YYYY-MM-DD): {due}")
+    note = argv[2] if len(argv) > 2 else None
+    conn = get_conn()
+    try:
+        tid = task_add(argv[0], due=due, note=note, conn=conn)
+        _task_print(task_get(conn, tid))
+    finally:
+        conn.close()
+
+
+def cli_task_find(argv):
+    # task-find [date|all|keyword] — 기본 all. 보관 제외.
+    q = argv[0] if argv and argv[0] else 'all'
+    for row in task_find(q):
+        _task_print(row)
+
+
+def cli_task_done(argv):
+    if not argv or not str(argv[0]).isdigit():
+        _err("사용법: lifekit.sh task-done <id>")
+    row = task_set_done(argv[0], True)
+    if row is None:
+        _err(f"해당 id 태스크 없음: {argv[0]}")
+    _task_print(row)
+
+
+def cli_task_undone(argv):
+    if not argv or not str(argv[0]).isdigit():
+        _err("사용법: lifekit.sh task-undone <id>")
+    row = task_set_done(argv[0], False)
+    if row is None:
+        _err(f"해당 id 태스크 없음: {argv[0]}")
+    _task_print(row)
+
+
+def cli_task_reschedule(argv):
+    # task-reschedule <id> <YYYY-MM-DD>
+    if len(argv) < 2 or not str(argv[0]).isdigit():
+        _err("사용법: lifekit.sh task-reschedule <id> <YYYY-MM-DD>")
+    if not _is_iso_date(argv[1]):
+        _err(f"날짜 형식 아님(YYYY-MM-DD): {argv[1]}")
+    row = task_reschedule(argv[0], argv[1])
+    if row is None:
+        _err(f"해당 id 태스크 없음: {argv[0]}")
+    _task_print(row)
+
+
+def cli_task_archive(argv):
+    if not argv or not str(argv[0]).isdigit():
+        _err("사용법: lifekit.sh task-archive <id>")
+    row = task_archive(argv[0])
+    if row is None:
+        _err(f"해당 id 태스크 없음: {argv[0]}")
+    _task_print(row)
+
+
+def cli_task_overdue(argv):
+    # task-overdue — 기한 지난 미완료(보관 제외) TSV.
+    for row in task_overdue():
+        _task_print(row)
+
+
 def cli_migrate_body_stats(argv):
     """body_stats.json 의 모든 키를 config 테이블로 복사(멱등, v2).
 
@@ -1455,6 +1651,13 @@ _DISPATCH = {
     'appt-upd': cli_appt_upd,
     'appt-person': cli_appt_person,
     'appt-show': cli_appt_show,
+    'task-add': cli_task_add,
+    'task-find': cli_task_find,
+    'task-done': cli_task_done,
+    'task-undone': cli_task_undone,
+    'task-reschedule': cli_task_reschedule,
+    'task-archive': cli_task_archive,
+    'task-overdue': cli_task_overdue,
 }
 
 

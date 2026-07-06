@@ -36,6 +36,13 @@
 #   lifekit.sh log-metric <date> <metric> <value> [note]   측정값 시계열 1건 upsert
 #   lifekit.sh targets --burn N          eff_goal bmr neat deficit protein_goal (공백구분 한 줄)
 #   lifekit.sh dump                      sqlite3 .dump 상당 (백업용)
+#   lifekit.sh task-add <title> [due_date] [note]   태스크 등록. 출력: id<TAB>title<TAB>due<TAB>done|todo
+#   lifekit.sh task-find [date|all|키워드]           태스크 목록 TSV(같은 4열). 기본 all, 보관 제외
+#   lifekit.sh task-done <id>                        완료 처리. 갱신 행 TSV 출력
+#   lifekit.sh task-undone <id>                      미완료로 되돌리기. 갱신 행 TSV 출력
+#   lifekit.sh task-reschedule <id> <YYYY-MM-DD>     예정일 변경. 갱신 행 TSV 출력
+#   lifekit.sh task-archive <id>                     보관(soft-delete) -- find/overdue에서 숨김
+#   lifekit.sh task-overdue                          기한 지난 미완료 목록 TSV (오늘 이전, 보관 제외)
 #
 # 종료코드: lifekit.py 종료코드를 그대로 전달.
 set -euo pipefail
