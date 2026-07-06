@@ -73,7 +73,18 @@ Two layers of access:
   Ollama with the bge-m3 model running locally (optional); without it, the engine
   automatically falls back to keyword-only (FTS) recall.
 
-Two scheduled write passes keep memory accurate:
+Where a fact lands is decided first -- routing is the big map. Durable
+knowledge is classified into one of four homes: the agent's identity
+(`AGENT.md`), your profile (`USER.md`), a reusable procedure (`SKILL.md`,
+which may persist domain records through the service layer into
+`database.sql` -- the CRAFT-tier lane), or everything else into `memories/`.
+The first three are routed manually by the agent; the last lane is AUTO --
+the engine keeps it without anyone lifting a finger.
+
+<p align="center"><img src="docs/img/routing-en.png" width="560" alt="Memory routing: user chat is classified into AGENT.md, USER.md, SKILL.md (service -> database.sql, CRAFT tier), or memories/ topic files; manual routing is agent-driven, the AUTO lane is engine-driven and expanded in the next diagram"></p>
+
+Zooming into the AUTO lane (the `memories/` box above): two scheduled write
+passes keep it accurate with zero manual effort:
 
 - Nightly consolidate: distills the day's chat into `memories/inbox.md`.
   Noise and duplicates are dropped; only facts worth keeping a year from now
@@ -83,13 +94,11 @@ Two scheduled write passes keep memory accurate:
   propose `NEW:<label>` for a genuinely new cluster, or DROP noise that slipped
   through.
 
-<p align="center"><img src="docs/img/distillation-en.png" width="520" alt="Memory distillation: raw chat is refined nightly into inbox.md, then routed weekly into topic files in memories/"></p>
+<p align="center"><img src="docs/img/distillation-en.png" width="520" alt="Memory processing -- the AUTO lane of the routing diagram in detail: raw chat is refined nightly into inbox.md, then routed weekly into topic files in memories/"></p>
 
 The write path is intentional: facts flow `chat -> inbox.md -> topic files`,
 never written directly to topic files by the agent. This keeps the vault
 clean and auditable.
-
-<p align="center"><img src="docs/img/routing-en.png" width="560" alt="Memory routing: user chat is classified into AGENT.md, USER.md, SKILL.md, or memories/ topic files; manual routing is agent-driven, automatic routing is engine-driven"></p>
 
 ## Repo layout
 

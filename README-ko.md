@@ -66,7 +66,17 @@
   로컬에서 Ollama + bge-m3 모델이 실행 중일 때만 활성화됩니다(선택 사항).
   설치하지 않으면 엔진이 자동으로 키워드 전용(FTS) 검색으로 전환됩니다.
 
-두 가지 스케줄 쓰기 패스로 기억을 최신 상태로 유지합니다:
+사실이 어디에 저장될지는 라우팅이 먼저 결정합니다 — 라우팅이 큰 지도입니다.
+오래 남을 지식은 네 갈래 중 하나로 분류됩니다: 에이전트 정체성(`AGENT.md`),
+당신의 프로필(`USER.md`), 재사용 절차(`SKILL.md` — 도메인 기록은 서비스
+레이어를 거쳐 `database.sql`에 쌓입니다. CRAFT 티어 구간), 그리고 나머지
+전부는 `memories/`로. 앞의 셋은 에이전트가 수동으로 라우팅하고, 마지막
+갈래는 AUTO — 엔진이 알아서 관리합니다.
+
+<p align="center"><img src="docs/img/routing-ko.png" width="560" alt="기억 라우팅: 사용자 대화가 AGENT.md·USER.md·SKILL.md(service→database.sql, CRAFT 티어)·memories/ 토픽 파일로 분류됩니다. 수동은 에이전트가, AUTO 갈래는 엔진이 처리하며 다음 도식에서 확대됩니다"></p>
+
+AUTO 갈래(위 도식의 `memories/` 박스)를 확대하면: 두 가지 스케줄 쓰기
+패스가 손 하나 안 대고 기억을 최신 상태로 유지합니다:
 
 - 야간 consolidate: 그날 대화를 `memories/inbox.md`로 제련합니다.
   잡음과 중복은 걷어내고, 1년 뒤에도 가치 있는 사실만 기록합니다.
@@ -75,13 +85,11 @@
   라우팅합니다(올바른 파일에 추가, inbox에서 제거). 엔진은 진짜 새로운
   클러스터에 `NEW:<label>`을 제안하거나, 통과된 잡음을 DROP할 수 있습니다.
 
-<p align="center"><img src="docs/img/distillation-ko.png" width="520" alt="기억 제련: 원시 대화가 매일 밤 inbox.md로 정제되고, 매주 memories/ 토픽 파일로 라우팅됩니다"></p>
+<p align="center"><img src="docs/img/distillation-ko.png" width="520" alt="기억 프로세싱 — 라우팅 도식의 AUTO 갈래 상세: 원시 대화가 매일 밤 inbox.md로 정제되고, 매주 memories/ 토픽 파일로 라우팅됩니다"></p>
 
 쓰기 경로는 의도적입니다: 사실은 `대화 → inbox.md → 토픽 파일` 순으로
 흐르며, 에이전트가 토픽 파일에 직접 쓰지 않습니다. 이렇게 볼트를
 깔끔하고 감사 가능하게 유지합니다.
-
-<p align="center"><img src="docs/img/routing-ko.png" width="560" alt="기억 라우팅: 사용자 대화가 AGENT.md·USER.md·SKILL.md·memories/ 토픽 파일로 분류됩니다. 수동은 에이전트가, 자동은 엔진이 처리합니다"></p>
 
 ## 레포 구조
 
