@@ -35,6 +35,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from bridge import heartbeat, messages, model_state
+from bridge.i18n import skill_display_name
 from bridge.config import (
     AUTO_RESUME,
     AUTO_RESUME_MAX,
@@ -1001,10 +1002,15 @@ class TelegramBot:
         def _fmt(entries: List[tuple]) -> List[str]:
             rows = []
             for name, desc in entries:
+                label = skill_display_name(name)
+                # Show localized label with the command id in parens for power
+                # users who invoke skills by slash command.  Example:
+                #   식단 기록 (/diet-log) - description...
+                prefix = f"{label} (/{name})" if label != name else f"/{name}"
                 desc = (desc or "").strip()
                 if len(desc) > 120:
                     desc = desc[:117] + "..."
-                rows.append(f"/{name}" + (f" - {desc}" if desc else ""))
+                rows.append(prefix + (f" - {desc}" if desc else ""))
             return rows
 
         if project_skills:

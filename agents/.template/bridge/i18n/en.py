@@ -242,3 +242,28 @@ STRINGS = {
         "ask the user directly in their next message."
     ),
 }
+
+# ---------------------------------------------------------------------------
+# Skill display-name catalog (DGN-102)
+#
+# Keys = immutable skill folder IDs. Values = user-facing Title Case labels in
+# this locale. skill_display_name() in bridge/i18n/__init__.py resolves these;
+# fall-back is the raw ID when a key is absent (fail-open, never KeyError).
+# ---------------------------------------------------------------------------
+SKILL_DISPLAY_NAMES = {
+    # --- Framework / dogany-* skills ---
+    "dogany-cron-register":   "Cron Register",
+    "dogany-lifekit-setup":   "Life Management Setup",
+    "dogany-mailer":          "Mailer",
+    "dogany-memory-search":   "Memory Search",
+    "dogany-proactive-push":  "Proactive Push",
+    "dogany-reminder":        "Reminder",
+    "dogany-skill-creator":   "Skill Creator",
+    "dogany-user-onboarding": "User Onboarding",
+    # --- Lifekit bundle skills ---
+    "diet-log":         "Diet Log",
+    "workout-log":      "Workout Log",
+    "appointment-log":  "Appointment Manager",
+    "relationship":     "Relationship Manager",
+    "task-update":      "Task Manager",
+}

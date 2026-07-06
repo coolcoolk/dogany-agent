@@ -80,3 +80,8 @@ exists / routine-ctl status. desired != actual -> apply desired. report diff.
   -- say so honestly when describing it: "prepared; activates when task
   tracking lands".
 - model: conversation is the main agent itself; no delegation needed.
+- display names: skill folder IDs (diet-log, workout-log, etc.) are machine
+  IDs, never speak them to the user. Use the localized display name instead
+  (e.g. say "식단 기록" not "diet-log", "운동 기록" not "workout-log"). The
+  bridge /skills command renders these automatically; follow the same rule in
+  any dialogue or summary you produce.

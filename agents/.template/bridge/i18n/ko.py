@@ -237,3 +237,28 @@ STRINGS = {
         "ask the user directly in their next message."
     ),
 }
+
+# ---------------------------------------------------------------------------
+# Skill display-name catalog (DGN-102)
+#
+# Keys = immutable skill folder IDs (same keys as en.SKILL_DISPLAY_NAMES).
+# Values = user-facing Korean labels. skill_display_name() in
+# bridge/i18n/__init__.py resolves these with en fallback.
+# ---------------------------------------------------------------------------
+SKILL_DISPLAY_NAMES = {
+    # --- Framework / dogany-* skills ---
+    "dogany-cron-register":   "반복 일정 등록",
+    "dogany-lifekit-setup":   "생활 관리 설정",
+    "dogany-mailer":          "메일러",
+    "dogany-memory-search":   "기억 검색",
+    "dogany-proactive-push":  "선제적 알림",
+    "dogany-reminder":        "리마인더",
+    "dogany-skill-creator":   "스킬 제작",
+    "dogany-user-onboarding": "사용자 온보딩",
+    # --- Lifekit bundle skills ---
+    "diet-log":         "식단 기록",
+    "workout-log":      "운동 기록",
+    "appointment-log":  "약속 관리",
+    "relationship":     "관계 관리",
+    "task-update":      "할 일 관리",
+}
