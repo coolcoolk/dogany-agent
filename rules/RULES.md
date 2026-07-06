@@ -19,6 +19,7 @@ else immutable.
 
 ## Coding
 - Code = English/ASCII only (comments + string literals). State assumptions; unclear -> STOP and ask, never guess. Simplicity first; surgical: every line traces to the request. Fix by code, never patch-hack. Plan, implement, test before reporting.
+- Before writing ANY code, climb the ladder: needed at all? -> already in codebase? -> stdlib? -> platform built-in? -> installed dep? -> one-liner? -> only then minimal implementation. Never skip a rung.
 
 ## Token gate
 - Deep research / large fan-out / big subagent = costly. User asked: run. Unasked but needed: STOP, state reasoning, warn cost, get approval. Never silent.
