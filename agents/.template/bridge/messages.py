@@ -125,6 +125,15 @@ GENERIC_ERROR = t("generic_error")
 OUTAGE_RECOVERED = t("outage_recovered")
 PROACTIVE_TURN_FAILED = t("proactive_turn_failed")
 
+# --- Turn-death safety net (DGN-163) ---
+# A consumed inbound update must never yield zero user-visible output: any
+# exception between "update accepted" and the first reply routes through these.
+TURN_FAILED = t("turn_failed")
+TURN_FAILED_PHOTO = t("turn_failed_photo")
+TURN_FAILED_DOCUMENT = t("turn_failed_document")
+TURN_FAILED_VOICE = t("turn_failed_voice")
+TURN_INCOMPLETE = t("turn_incomplete")
+
 # --- System prompt fragment (sent to Claude, English on purpose) ---
 SYSTEM_PROMPT = t("system_prompt")
 
