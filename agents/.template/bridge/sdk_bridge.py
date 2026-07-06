@@ -776,5 +776,26 @@ class SdkBridge:
                     logger.error("Failed to cancel streaming for user %s: %s", user_id, e)
         return cancelled
 
+    def user_has_streamed_output(self, user_id: int) -> bool:
+        """DGN-163: did this user's live turn already stream partial output?
+
+        The turn-death safety net uses this to choose between the "message not
+        processed" notice and the softer "reply may be incomplete" variant. True
+        when any pending request for this user has a streaming handler holding at
+        least one draft bubble (mirrors handle_timeout_preserve's partial check).
+        Read-only, sync, best-effort: never raises into the caller.
+        """
+        try:
+            state = self._streams.get(user_id)
+            if not state:
+                return False
+            for req in state.pending:
+                handler = getattr(req, "streaming_handler", None)
+                if handler is not None and getattr(handler, "drafts", None):
+                    return True
+        except Exception as e:
+            logger.error("user_has_streamed_output check failed for %s: %s", user_id, e)
+        return False
+
 
 sdk_bridge = SdkBridge()

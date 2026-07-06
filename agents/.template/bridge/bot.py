@@ -481,12 +481,16 @@ class TelegramBot:
             logger.warning("Failed to set bot commands: %s", e)
 
     async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # PTB-level catch for exceptions in a handler BODY before the turn is
+        # enqueued (e.g. access check / media-group scheduling crash). DGN-163:
+        # emit the bounded turn-death notice instead of a raw traceback so a
+        # consumed update still yields one user-visible, no-internals message.
         logger.error("Unhandled exception:", exc_info=context.error)
         if isinstance(update, Update) and update.effective_chat:
             try:
                 await context.bot.send_message(
                     update.effective_chat.id,
-                    messages.INTERNAL_ERROR.format(error=context.error),
+                    messages.TURN_FAILED,
                 )
             except Exception:
                 pass
@@ -707,12 +711,52 @@ class TelegramBot:
         tasks.clear()
         return cleared
 
+    async def _turn_death_notice(
+        self,
+        user_id: int,
+        chat_id: Optional[int],
+        failure_message: str,
+    ) -> None:
+        """DGN-163 safety net: emit ONE user-visible notice for a turn that would
+        otherwise die silently (any exception between "update accepted" and the
+        first user reply).
+
+        Never sends a raw traceback. If partial output already streamed for this
+        turn, route to the softer "reply may be incomplete" variant instead of
+        claiming the message was dropped. The send itself is best-effort: wrapped
+        so a failing notice-send logs and returns rather than crash-looping.
+        """
+        if chat_id is None:
+            chat_id = user_id
+        try:
+            if sdk_bridge.user_has_streamed_output(user_id):
+                text = messages.TURN_INCOMPLETE
+            else:
+                text = failure_message
+        except Exception:
+            text = failure_message
+        try:
+            await self.application.bot.send_message(chat_id, text)
+        except Exception as e:
+            logger.error(
+                "turn-death notice send failed for user %s chat %s: %s",
+                user_id, chat_id, e,
+            )
+
     async def _enqueue_user_task(
         self,
         user_id: int,
         run_task: Callable[[], Awaitable[None]],
         on_overflow: Callable[[], Awaitable[None]],
+        *,
+        chat_id: Optional[int] = None,
+        failure_message: Optional[str] = None,
     ) -> bool:
+        # DGN-163: wrap every enqueued turn so ANY escaping exception (handler
+        # crash, download failure, mid-turn death) still produces one bounded
+        # user-visible notice. Without this, run_task exceptions only reached the
+        # done-callback logger and the consumed update produced zero output.
+        death_message = failure_message or messages.TURN_FAILED
         accepted: Optional[asyncio.Task] = None
         async with self._get_user_queue_lock(user_id):
             tasks = self._prune_user_tasks(user_id)
@@ -721,6 +765,13 @@ class TelegramBot:
                     self._active_tasks[user_id] = asyncio.current_task()
                     try:
                         await run_task()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.error(
+                            "turn died for user %s: %s", user_id, e, exc_info=True
+                        )
+                        await self._turn_death_notice(user_id, chat_id, death_message)
                     finally:
                         self._active_tasks.pop(user_id, None)
 
@@ -1027,7 +1078,9 @@ class TelegramBot:
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id, run_task, on_overflow, chat_id=chat.id if chat else user_id
+        )
 
     # --- session listing (reads Claude conversation JSONL) ---
 
@@ -1153,7 +1206,12 @@ class TelegramBot:
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id,
+            run_task,
+            on_overflow,
+            chat_id=update.effective_chat.id if update.effective_chat else user_id,
+        )
 
     async def _handle_voice_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1178,12 +1236,11 @@ class TelegramBot:
                 ext = self._voice_extension(getattr(voice, "mime_type", None))
                 source_path = self._audio_dir / f"{user_id}_{int(time.time() * 1000)}.{ext}"
                 cleanup_paths.append(source_path)
-                try:
-                    await self._download_file(voice.file_id, source_path)
-                except Exception as e:
-                    logger.error("Voice download failed for user %s: %s", user_id, e)
-                    await message.reply_text(messages.VOICE_DOWNLOAD_FAILED)
-                    return
+                # DGN-082/163: download already retries with backoff. A final
+                # failure re-raises so the enqueue safety net emits the
+                # voice-specific notice -- one unified turn-death path, no silent
+                # loss. The finally below still runs its cleanup.
+                await self._download_file(voice.file_id, source_path)
                 try:
                     audio_path = await self._audio_processor.prepare_for_whisper(
                         source_path, cleanup_paths
@@ -1222,7 +1279,13 @@ class TelegramBot:
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id,
+            run_task,
+            on_overflow,
+            chat_id=update.effective_chat.id if update.effective_chat else user_id,
+            failure_message=messages.TURN_FAILED_VOICE,
+        )
 
     async def _handle_photo_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1277,9 +1340,21 @@ class TelegramBot:
             group = self._media_groups.pop(mgid, None)
         if not group or not group["file_ids"]:
             return
-        await self._dispatch_photo_task(
-            group["update"], group["user_id"], group["file_ids"], group["caption"]
-        )
+        # DGN-163: this runs as a bare debounce task, so an exception escaping the
+        # dispatch would be swallowed by asyncio (silent album loss). Guard it and
+        # route to the safety-net notice. The per-download failures are handled
+        # inside the enqueued run_task; this catches the rarer pre-enqueue crash.
+        try:
+            await self._dispatch_photo_task(
+                group["update"], group["user_id"], group["file_ids"], group["caption"]
+            )
+        except Exception as e:
+            logger.error("Media-group dispatch failed for user %s: %s", group["user_id"], e)
+            upd = group["update"]
+            chat_id = upd.effective_chat.id if upd.effective_chat else group["user_id"]
+            await self._turn_death_notice(
+                group["user_id"], chat_id, messages.TURN_FAILED_PHOTO
+            )
 
     async def _dispatch_photo_task(
         self, update: Update, user_id: int, file_ids: List[str], caption: str
@@ -1291,17 +1366,23 @@ class TelegramBot:
         async def run_task() -> None:
             self._image_dir.mkdir(parents=True, exist_ok=True)
             paths: List[Path] = []
+            last_exc: Optional[Exception] = None
             for idx, fid in enumerate(file_ids):
                 dest = self._image_dir / f"{user_id}_{int(time.time() * 1000)}_{idx}.jpg"
                 try:
                     await self._download_file(fid, dest)
                 except Exception as e:
+                    # Per-photo miss in an album is tolerated (best-effort); the
+                    # turn still proceeds with whatever downloaded. Only a total
+                    # wipeout (no paths) is a turn-death, handled below.
                     logger.error("Photo download failed for user %s: %s", user_id, e)
+                    last_exc = e
                     continue
                 paths.append(dest)
             if not paths:
-                await message.reply_text(messages.PHOTO_DOWNLOAD_FAILED)
-                return
+                # DGN-082/163: every photo failed after retries -> re-raise so the
+                # enqueue safety net emits the photo-specific notice. No silent loss.
+                raise (last_exc or RuntimeError("photo download produced no paths"))
             if len(paths) == 1:
                 lines = [
                     messages.PHOTO_PROMPT_SINGLE,
@@ -1318,7 +1399,13 @@ class TelegramBot:
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id,
+            run_task,
+            on_overflow,
+            chat_id=update.effective_chat.id if update.effective_chat else user_id,
+            failure_message=messages.TURN_FAILED_PHOTO,
+        )
 
     async def _handle_document_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -1338,12 +1425,9 @@ class TelegramBot:
             # Preserve the original filename; prefix user+ts to avoid clashes.
             safe_name = Path(doc.file_name).name if doc.file_name else "file"
             dest = self._inbox_dir / f"{user_id}_{int(time.time() * 1000)}_{safe_name}"
-            try:
-                await self._download_file(doc.file_id, dest)
-            except Exception as e:
-                logger.error("Document download failed for user %s: %s", user_id, e)
-                await message.reply_text(messages.DOC_DOWNLOAD_FAILED)
-                return
+            # DGN-082/163: download retries with backoff; a final failure
+            # re-raises into the enqueue safety net (doc-specific notice).
+            await self._download_file(doc.file_id, dest)
             lines = [
                 messages.DOC_PROMPT,
                 messages.DOC_PROMPT_PATH.format(path=dest),
@@ -1355,7 +1439,13 @@ class TelegramBot:
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id,
+            run_task,
+            on_overflow,
+            chat_id=update.effective_chat.id if update.effective_chat else user_id,
+            failure_message=messages.TURN_FAILED_DOCUMENT,
+        )
 
     @staticmethod
     def _voice_extension(mime_type: Optional[str]) -> str:
@@ -1378,11 +1468,14 @@ class TelegramBot:
         # file downloads need a longer read_timeout than the shared
         # request default (10s). When the Telegram API is briefly slow, a 10s
         # read_timeout drops inbound photos/documents/voice. 60s rides it out.
-        # add retry-with-exponential-backoff for transient errors
-        # (Telegram 5xx / connection reset / TLS blip). 3 attempts, 1s/2s backoff.
-        # Mirrors _send_guaranteed pattern. Callers' catch/notify logic unchanged.
+        # DGN-082: retry-with-exponential-backoff for transient errors
+        # (Telegram 5xx / connection reset / TLS blip). 3 attempts, 1s/3s/9s
+        # backoff (sleep after attempt 1 = 1s, after attempt 2 = 3s; the 9s slot
+        # is reserved should attempts grow). Mirrors _send_guaranteed. On final
+        # failure this raises -- the caller's enqueue safety net (DGN-163) then
+        # emits the media-specific turn-death notice, so no inbound is lost.
         _max_attempts = 3
-        _backoff_delays = [1.0, 2.0]  # sleep after attempt 1, attempt 2; none after 3
+        _backoff_delays = [1.0, 3.0, 9.0]
         last_exc: Exception
         for _attempt in range(1, _max_attempts + 1):
             try:
@@ -1852,7 +1945,9 @@ class TelegramBot:
             async def on_overflow() -> None:
                 await app.bot.send_message(chat_id, messages.QUEUE_BUSY)
 
-            await self._enqueue_user_task(user_id, run_task, on_overflow)
+            await self._enqueue_user_task(
+                user_id, run_task, on_overflow, chat_id=chat_id
+            )
             return
 
         if data.startswith("resume:"):
@@ -1951,7 +2046,9 @@ class TelegramBot:
         async def on_overflow() -> None:
             await app.bot.send_message(chat_id, messages.QUEUE_BUSY)
 
-        await self._enqueue_user_task(user_id, run_task, on_overflow)
+        await self._enqueue_user_task(
+            user_id, run_task, on_overflow, chat_id=chat_id
+        )
 
 
 bot = TelegramBot()

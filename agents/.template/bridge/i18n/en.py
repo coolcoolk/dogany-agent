@@ -177,6 +177,32 @@ STRINGS = {
         "A background turn ended without a reply (model overloaded or an API error "
         "after retries). Nothing was delivered - please ask again."
     ),
+    # --- Turn-death safety net (DGN-163) ---
+    # Fired when a consumed inbound update would otherwise produce zero output:
+    # any exception between "update accepted" and the first user-visible reply.
+    # Bounded prose, never a raw traceback.
+    "turn_failed": (
+        "Something went wrong handling that message - it was not processed. "
+        "Please resend or try again."
+    ),
+    "turn_failed_photo": (
+        "Couldn't download the photo, so the message was not processed. "
+        "Please send it again."
+    ),
+    "turn_failed_document": (
+        "Couldn't download the file, so the message was not processed. "
+        "Please send it again."
+    ),
+    "turn_failed_voice": (
+        "Couldn't download the voice message, so it was not processed. "
+        "Please send it again."
+    ),
+    # Variant when partial output already streamed before the turn died: do not
+    # claim the message was dropped, warn the visible reply may be cut short.
+    "turn_incomplete": (
+        "That reply may be incomplete - the turn ended early. "
+        "Ask me to continue or resend if anything is missing."
+    ),
     # --- System prompt fragment (sent to Claude, English on purpose) ---
     "system_prompt": (
         "\n\n## User Questions and Choices\n\n"
