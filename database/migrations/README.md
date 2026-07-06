@@ -5,10 +5,13 @@ Forward-only, versioned schema migrations for `lifekit.db`, applied by
 
 ## Version model
 
-- A DB freshly created from `../schema.sql` is **version 1** (the schema file
-  sets `PRAGMA user_version = 1;` at its top).
-- `001` is therefore RESERVED: the `schema.sql` baseline *is* version 1. There is
-  no `001_*.sql` file. Real migrations start at **002**.
+- A DB freshly created from `../schema.sql` is at the **latest migration
+  number** (the schema file sets `PRAGMA user_version = NNN;` at its top --
+  currently 2). When you add migration `NNN`, also fold the change into
+  `schema.sql` and bump its `user_version` to `NNN`, so fresh DBs never re-run
+  a migration they were born with.
+- `001` is RESERVED: the original `schema.sql` baseline *was* version 1. There
+  is no `001_*.sql` file. Real migrations start at **002**.
 
 ## File convention
 

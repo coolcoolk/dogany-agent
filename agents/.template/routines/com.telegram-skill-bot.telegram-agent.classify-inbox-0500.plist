@@ -8,6 +8,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/lib/run-notify.sh</string>
+        <string>classify-inbox</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>__PROJECT_ROOT__/routines/classify-inbox-check.sh</string>
     </array>
     <key>StartCalendarInterval</key>

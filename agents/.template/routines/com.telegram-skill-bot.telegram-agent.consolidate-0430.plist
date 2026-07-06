@@ -8,6 +8,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/lib/run-notify.sh</string>
+        <string>consolidate-0430</string>
+        <string>--</string>
+        <string>/bin/bash</string>
         <string>__PROJECT_ROOT__/routines/consolidate-0430.sh</string>
     </array>
     <key>StartCalendarInterval</key>
