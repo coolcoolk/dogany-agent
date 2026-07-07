@@ -8,8 +8,11 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>__PROJECT_ROOT__/routines/lib/run-notify.sh</string>
-        <string>consolidate-0430</string>
+        <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.__AGENT_NAME__.consolidate-0430</string>
+        <string>--log</string>
+        <string>__PROJECT_ROOT__/.telegram_bot/logs/consolidate-0430.stdout.log</string>
         <string>--</string>
         <string>/bin/bash</string>
         <string>__PROJECT_ROOT__/routines/consolidate-0430.sh</string>
