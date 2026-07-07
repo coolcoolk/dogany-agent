@@ -67,7 +67,9 @@ clean_tmp() {
             log "  삭제: $item"
         fi
     done < <(find "$TMP_DIR" -mindepth 1 -maxdepth 1 ! -name '.gitkeep' -print0)
-    [[ "$found" -eq 0 ]] && log "  (tmp 비어있음)"
+    # NOTE: if/fi, not `[[..]] && log` -- under set -e a false test as the
+    # function's last statement returns non-zero and aborts the whole script.
+    if [[ "$found" -eq 0 ]]; then log "  (tmp 비어있음)"; fi
 }
 
 # ---- 2) outbox / images 30일 초과 → trash 또는 _archive ----
@@ -86,14 +88,19 @@ archive_old() {
             fi
         else
             if command -v trash >/dev/null 2>&1; then
-                trash -- "$item" && log "  trash: $item"
+                # NOTE: no `--` -- /usr/bin/trash treats it as a literal filename
+                # (no end-of-options support) -> spurious "-- doesn't exist" errors.
+                # Safe: find is given an absolute $dir, so every $item is an
+                # absolute path (starts with /), never a dash-leading flag.
+                trash "$item" && log "  trash: $item"
             else
                 guard_dir "$ARCHIVE_DIR" || { log "  _archive 없음, 건너뜀: $item"; continue; }
                 mv -- "$item" "$ARCHIVE_DIR/" && log "  _archive 이동: $item"
             fi
         fi
     done < <(find "$dir" -mindepth 1 -maxdepth 1 ! -name '.gitkeep' -mtime "+${RETENTION_DAYS}" -print0)
-    [[ "$found" -eq 0 ]] && log "  (대상 없음)"
+    # NOTE: if/fi, not `[[..]] && log` -- see clean_tmp() above (set -e footgun).
+    if [[ "$found" -eq 0 ]]; then log "  (대상 없음)"; fi
 }
 
 log "시작 $( [[ "$DRY_RUN" -eq 1 ]] && echo '(DRY-RUN)' )"
