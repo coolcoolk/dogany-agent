@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # update.sh -- refresh a Dogany instance's FRAMEWORK from this repo, safely.
 #
+# update != release. This script CONSUMES a published framework release INTO
+# an instance ("update yourself"). Bumping VERSION + tagging PRODUCES a release
+# (that is release.sh, a separate maintainer-only act). Told to "update
+# yourself", an agent runs routines/self-update.sh (a zero-arg wrapper that
+# resolves its own instance root and git-pulls the repo before invoking this
+# script with --root <self> --yes) -- it does NOT cut a release.
+#
 # What it does:
 #   1. git pull (fast-forward the repo to the latest published framework).
 #   2. Re-sync ONLY framework code into the instance (agents/main by default):

@@ -201,6 +201,12 @@ edited one, `update.sh` detects the change and backs your copy up to
 To customize durably, copy the skill under your own (non-`dogany-`) name and edit
 that instead of editing a `dogany-*` skill directly.
 
+Telling the agent to "update yourself" means CONSUME the latest framework into
+this instance -- it is not cutting a release. The agent runs
+`routines/self-update.sh`, a zero-argument wrapper that resolves its own
+instance root, `git pull`s the framework repo, then runs `update.sh` against
+itself. You never have to point it at a directory.
+
 Recommended: create a dedicated Gmail/Apple account for the agent instead of
 reusing your personal one -- isolation from personal data and a clean agent
 identity for email and integrations. Connecting that account (email send, etc.)
