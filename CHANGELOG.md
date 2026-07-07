@@ -3,6 +3,38 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-07-08
+
+### Added
+- New `/usage` command in Telegram: shows your live Claude rate-limit status
+  as ASCII progress bars (5-hour window, weekly limit, per-model) with a
+  countdown to the next reset. Output is localized (ko/en) to match your
+  agent's language setting. Use `--full` flag for the detailed cache report;
+  the default is the compact live view only.
+- Self-update routing: agents now have a documented `self-update` workflow
+  that consumes a published framework release without triggering a new
+  release. The `routines/self-update.sh` script ships in the template so
+  every minted instance inherits it.
+
+### Fixed
+- update.sh now requires a minted instance config (`.instance.conf`) before
+  running and shows a preflight confirmation prompt. Bare invocations that
+  previously silently targeted the wrong directory are now blocked upfront.
+- update.sh AGENT_LANG lookup is now guarded against silent death under
+  `pipefail`: a missing key in `agent.conf` no longer kills the update with
+  no error message.
+- Self-restart completion notice propagated to the `.template` baseline, so
+  newly minted agents send a proactive Telegram notice when a bridge restart
+  completes (previously users had to ask).
+- `cleanup-files` routine no longer exits with an error code when the outbox
+  or tmp directory is non-empty. A `set -e` footgun in the conditional log
+  path was treating a false branch as a non-zero exit, causing a spurious
+  "ROUTINE FAILED" notification every day once files accumulated.
+- Event 3-layer SDK (task + appointment unified under `event`) landed on
+  canonical: schema DDL, Python data-access layer, and migration script
+  (DGN-178/179 P0). Fixes cross-agent data arbitration and time-slot
+  ownership for multi-agent deployments.
+
 ## [1.1.0] - 2026-07-07
 
 ### Added
