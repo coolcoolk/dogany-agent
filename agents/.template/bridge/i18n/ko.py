@@ -56,6 +56,7 @@ STRINGS = {
         "/resume - 이전 세션 이어가기\n"
         "/history - 최근 기록 보기\n"
         "/skills - 설치된 스킬 목록\n"
+        "/usage - Claude 사용량/한도\n"
         "/help - 이 도움말 보기\n\n"
         "임의의 /이름 을 보내면 해당 스킬이 실행됩니다.\n"
         "최초 설정: /claim <code> 로 소유자가 되세요. "
@@ -72,7 +73,12 @@ STRINGS = {
     "cmd_desc_resume": "세션 이어가기",
     "cmd_desc_history": "메시지 기록 보기",
     "cmd_desc_skills": "스킬 목록",
+    "cmd_desc_usage": "Claude 사용량/한도",
     "cmd_desc_help": "도움말 보기",
+    # --- Usage report (/usage -> routines/claude-usage.sh) ---
+    "usage_script_missing": "사용량 스크립트를 찾을 수 없습니다 (routines/claude-usage.sh).",
+    "usage_timeout": "사용량 조회가 시간 내에 끝나지 않았습니다. 잠시 후 다시 시도해 주세요.",
+    "usage_failed": "사용량 조회 실패: {error}",
     # --- Resume (session history) ---
     "no_session_history": "세션 기록을 찾을 수 없습니다.",
     "session_history_header": "세션 기록",

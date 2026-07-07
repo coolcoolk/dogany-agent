@@ -6,9 +6,11 @@ blips (launchd owns crash-restart). Per-user serialized queue (max 3 in-flight,
 """
 
 import asyncio
+import html
 import logging
 import os
 import signal
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -436,6 +438,7 @@ class TelegramBot:
         app.add_handler(CommandHandler("stop", self._cmd_stop))
         app.add_handler(CommandHandler("history", self._cmd_history))
         app.add_handler(CommandHandler("skills", self._cmd_skills))
+        app.add_handler(CommandHandler("usage", self._cmd_usage))
         app.add_handler(CommandHandler("help", self._cmd_help))
         # Catch-all: any other /foo is forwarded to the agent as a slash command
         # (the dedicated /skill and /command handlers were dropped -- this already
@@ -460,6 +463,7 @@ class TelegramBot:
             BotCommand("resume", messages.CMD_DESC_RESUME),
             BotCommand("history", messages.CMD_DESC_HISTORY),
             BotCommand("skills", messages.CMD_DESC_SKILLS),
+            BotCommand("usage", messages.CMD_DESC_USAGE),
             BotCommand("help", messages.CMD_DESC_HELP),
         ]
         try:
@@ -922,6 +926,55 @@ class TelegramBot:
         if not await self._check_access(update):
             return
         await update.message.reply_text(messages.HELP_TEXT)
+
+    async def _cmd_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Run routines/claude-usage.sh and reply with its report.
+
+        No model call / no session: run the script directly (like /skills),
+        capture stdout, HTML-escape it, and wrap it in <pre> so the ASCII bars
+        and tables keep their alignment in Telegram. Long reports are split.
+        """
+        if not await self._check_access(update):
+            return
+        script = PROJECT_ROOT / "routines" / "claude-usage.sh"
+        if not script.is_file():
+            await update.message.reply_text(messages.USAGE_SCRIPT_MISSING)
+            return
+
+        def _run() -> str:
+            # Pass the active locale so the script localizes its labels
+            # (ko/en) to match the bridge UI.
+            run_env = {**os.environ, "LOCALE": config.locale}
+            proc = subprocess.run(
+                [str(script)],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                env=run_env,
+            )
+            out = proc.stdout or ""
+            if not out.strip():
+                out = (proc.stderr or "").strip() or "(no output)"
+            return out
+
+        try:
+            output = await asyncio.to_thread(_run)
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text(messages.USAGE_TIMEOUT)
+            return
+        except Exception as e:
+            await update.message.reply_text(
+                messages.USAGE_FAILED.format(error=str(e))
+            )
+            return
+
+        escaped = html.escape(output)
+        for part in split_text(escaped):
+            body = f"<pre>{part}</pre>"
+            try:
+                await update.message.reply_text(body, parse_mode="HTML")
+            except Exception:
+                await update.message.reply_text(part)
 
     @staticmethod
     def _read_skill_frontmatter(skill_md: Path) -> Optional[tuple]:

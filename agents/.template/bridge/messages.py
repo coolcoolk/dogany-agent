@@ -52,7 +52,13 @@ CMD_DESC_MODEL = t("cmd_desc_model")
 CMD_DESC_RESUME = t("cmd_desc_resume")
 CMD_DESC_HISTORY = t("cmd_desc_history")
 CMD_DESC_SKILLS = t("cmd_desc_skills")
+CMD_DESC_USAGE = t("cmd_desc_usage")
 CMD_DESC_HELP = t("cmd_desc_help")
+
+# --- Usage report (/usage -> routines/claude-usage.sh) ---
+USAGE_SCRIPT_MISSING = t("usage_script_missing")
+USAGE_TIMEOUT = t("usage_timeout")
+USAGE_FAILED = t("usage_failed")
 
 # --- Slash command usage ---
 USAGE_SKILL = t("usage_skill")
