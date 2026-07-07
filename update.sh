@@ -28,11 +28,20 @@
 #
 # It is idempotent: running it twice with no upstream changes is a no-op refresh.
 #
+# A real minted instance is REQUIRED: the target must carry a .instance.conf
+# (written at mint time). The default ./agents/main is a repo SCAFFOLD, not a
+# minted instance, so a bare ./update.sh with no --root now errors out instead
+# of silently no-op'ing against the scaffold. Point --root at a real deployed
+# instance dir (e.g. ~/dogany/Metal), or pass --force to override the gate.
+#
 # Usage:
-#   ./update.sh                 # update ./agents/main (default instance)
-#   ./update.sh --root DIR      # update a specific instance dir
+#   ./update.sh --root DIR      # update a specific minted instance dir (required)
+#   ./update.sh                 # targets ./agents/main -- REFUSED unless --force
+#                               #   (scaffold has no .instance.conf)
 #   ./update.sh --no-pull       # skip git pull (refresh from current checkout)
 #   ./update.sh --dry-run       # show what would change, write nothing
+#   ./update.sh --force         # bypass the .instance.conf validity gate
+#   ./update.sh --yes | -y      # bypass the pre-flight confirmation prompt
 #   DOGANY_LANG=ko ./update.sh  # Korean messages (default: en)
 set -euo pipefail
 
@@ -109,13 +118,17 @@ sed_inplace() {
 INSTANCE="$REPO_ROOT/agents/main"
 DO_PULL=1
 DRY_RUN=0
+FORCE=0
+ASSUME_YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --root)    INSTANCE="$2"; shift 2 ;;
     --no-pull) DO_PULL=0; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --force)   FORCE=1; shift ;;
+    -y|--yes)  ASSUME_YES=1; shift ;;
     -h|--help)
-      sed -n '2,40p' "$0"; exit 0 ;;
+      sed -n '2,48p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -127,6 +140,17 @@ INSTANCE="$(cd "$INSTANCE" && pwd)"
 # Guard: never treat the repo itself or the template as the instance.
 [ "$INSTANCE" = "$REPO_ROOT" ] && die "refusing to update the repo root itself"
 [ "$INSTANCE" = "$TEMPLATE" ]  && die "refusing to update the template itself"
+
+# INSTANCE-VALIDITY GATE: a real minted instance carries a .instance.conf (written
+# by mint.sh). The default ./agents/main is a repo SCAFFOLD (no .instance.conf,
+# RULES/USER symlinked into rules/), NOT a deployable instance -- updating it is
+# almost always an operator who forgot --root. Refuse unless --force. This turns
+# what used to be a silent no-op against the scaffold into an immediate error.
+if [ ! -f "$INSTANCE/.instance.conf" ] && [ "$FORCE" = "0" ]; then
+  die "not a minted Dogany instance (no .instance.conf): $INSTANCE
+        pass --root DIR pointing at a real instance (e.g. ~/dogany/Metal),
+        or --force to override the gate."
+fi
 
 # ===========================================================================
 # FRAMEWORK SERVICES MANIFEST (DGN-130) -- the EXACT, explicit allowlist of
@@ -239,9 +263,42 @@ if [ -z "$AGENT_NAME" ]; then
 fi
 IDENTITY_OK=1
 if [ -z "$AGENT_NAME" ] || [ -z "$AGENT_LABEL" ] || [ -z "$USER_LABEL" ]; then
+  # Reachable when .instance.conf is missing/incomplete. A wholly missing
+  # .instance.conf now only gets here under --force (the validity gate above
+  # dies otherwise); a present-but-incomplete manifest still lands here. Either
+  # way we skip identity substitution rather than write empty labels.
   IDENTITY_OK=0
   msg "[update][경고] 인스턴스 정체성(.instance.conf)을 못 찾음 -- 정체성 플레이스홀더 치환은 건너뜁니다." \
       "[update][WARN] instance identity (.instance.conf) not found -- skipping identity placeholder substitution."
+fi
+
+# ---------------------------------------------------------------------------
+# 2.5) Pre-flight confirmation. Print a one-line summary of the target instance
+#      and the framework version transition, then require an explicit y before
+#      the first destructive rsync in section 3. Default is NO. --yes/-y bypasses
+#      it; --dry-run skips it (nothing is written). In a non-interactive context
+#      (stdin not a TTY) without --yes we refuse rather than proceed blindly.
+# ---------------------------------------------------------------------------
+if [ "$DRY_RUN" = "0" ] && [ "$ASSUME_YES" = "0" ]; then
+  # Instance name from the manifest (DOGANY_AGENT_NAME, sourced above); fall back
+  # to the recovered AGENT_NAME slug, else the basename of the instance dir.
+  PREFLIGHT_NAME="${DOGANY_AGENT_NAME:-${AGENT_NAME:-$(basename "$INSTANCE")}}"
+  CUR_FW="${DOGANY_FW_VERSION:-unknown}"
+  msg "[update] 대상: ${PREFLIGHT_NAME}  ($INSTANCE)" \
+      "[update] target: ${PREFLIGHT_NAME}  ($INSTANCE)"
+  msg "[update] 프레임워크: ${CUR_FW} -> ${REPO_VERSION}" \
+      "[update] framework: ${CUR_FW} -> ${REPO_VERSION}"
+  if [ -t 0 ]; then
+    msg "[update] 이 인스턴스를 업데이트할까요? [y/N] " \
+        "[update] Update this instance? [y/N] "
+    read -r _reply || _reply=""
+    case "$_reply" in
+      y|Y|yes|YES) : ;;
+      *) die "aborted by user (no changes written)" ;;
+    esac
+  else
+    die "non-interactive stdin and no --yes/-y: refusing to proceed. Re-run with --yes to confirm."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
