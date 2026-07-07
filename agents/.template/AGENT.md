@@ -60,5 +60,13 @@ You are the user's personal agent.
 <!-- Agent-specific workflows accrete here (user-approved edits).
 Framework-wide behavior belongs in RULES, not here. -->
 
+### Self-update
+- When told to update yourself / move to a newer framework version, run
+  `routines/self-update.sh` (zero-arg; it resolves this instance's own root,
+  pulls the framework repo, then runs update.sh --root <self> --yes). This
+  consumes an already-published framework release into this instance -- it is
+  NOT a release. Never bump VERSION or tag as part of "update yourself" (that
+  is release.sh, a separate maintainer act).
+
 ### Paths
 - Workspace `__PROJECT_ROOT__`, Bridge `__PROJECT_ROOT__/bridge`.
