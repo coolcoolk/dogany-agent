@@ -60,6 +60,19 @@ You are the user's personal agent.
 <!-- Agent-specific workflows accrete here (user-approved edits).
 Framework-wide behavior belongs in RULES, not here. -->
 
+### Self-restart notice (self-restart)
+- When restarting after a bridge fix or self-update, do not finish silently. Restart via
+  `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>" --prefix <__AGENT_EMOJI__> --label <__LAUNCHD_LABEL__>`.
+  This does: nohup detach -> delayed SIGTERM (KeepAlive brings up new code) -> poll for
+  marker ("Bot is running") -> Telegram completion notice. The user should not have to ask
+  "did it work?" -- the result arrives first.
+- IMPORTANT: the script default PREFIX is `[agent]` (neutral). Pass `--prefix <your-signature-emoji>`
+  so the notice is clearly attributed to this instance. Pass `--label <launchd-label>` if it
+  differs from the script default.
+- For post-restart self-verification, use `--verify "<prompt>"` (headless claude confirms,
+  result attached to notice). `--dry-run` tests notification path without killing the process.
+- If polling marker does not appear within 60s, treat as zombie-poll and push warning.
+
 ### Self-update
 - When told to update yourself / move to a newer framework version, run
   `routines/self-update.sh` (zero-arg; it resolves this instance's own root,
