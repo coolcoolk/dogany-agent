@@ -7,7 +7,7 @@ Forward-only, versioned schema migrations for `lifekit.db`, applied by
 
 - A DB freshly created from `../schema.sql` is at the **latest migration
   number** (the schema file sets `PRAGMA user_version = NNN;` at its top --
-  currently 2). When you add migration `NNN`, also fold the change into
+  currently 3). When you add migration `NNN`, also fold the change into
   `schema.sql` and bump its `user_version` to `NNN`, so fresh DBs never re-run
   a migration they were born with.
 - `001` is RESERVED: the original `schema.sql` baseline *was* version 1. There

@@ -18,12 +18,16 @@ lifekit.py — lifekit.db(로컬 라이프 OS)의 공식 코어
 """
 
 import os
+import re
 import sys
 import json
+import time
+import secrets
 import argparse
 import sqlite3
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta, timezone
 
 # ── 경로 ───────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,15 +43,56 @@ _WDAY_KO = ['월', '화', '수', '목', '금', '토', '일']
 _WDAY_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 
-# ── 연결 ───────────────────────────────────────────────────
+# ── 연결 (F1 하드닝: WAL + busy_timeout + 유계 SQLITE_BUSY 재시도) ──────
+# DGN-179: 여러 프로세스가 같은 lifekit.db 파일을 동시에 열 때 쓰기 유실/
+# SQLITE_BUSY 를 막는다. 전제 = 동일 호스트 로컬 파일(WAL 는 네트워크 FS 금지).
+BUSY_TIMEOUT_MS = 5000
+RETRY_BUDGET = 20
+RETRY_BASE_SLEEP = 0.005
+
+
+def _apply_pragmas(conn):
+    """Uniform hardening PRAGMAs for every lifekit connection (F1).
+    journal_mode=WAL serializes cross-process writers; busy_timeout gives the
+    C layer a backstop; foreign_keys stays ON (legacy contract)."""
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = %d;" % BUSY_TIMEOUT_MS)
+
+
 def get_conn():
-    """lifekit.db 연결(단일 진입점). foreign_keys ON."""
+    """lifekit.db 연결(단일 진입점). WAL + busy_timeout=5000 + foreign_keys ON.
+
+    시그니처/반환은 기존과 동일(무인자, sqlite3.Connection 반환, 파일 없으면
+    stderr 후 exit(1)) -- 기존 호출부 무변경. 하드닝 PRAGMA 만 추가된다."""
     if not os.path.isfile(DB_PATH):
         print(f"lifekit.db 없음 ({DB_PATH})", file=sys.stderr)
         sys.exit(1)
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON;")
+    _apply_pragmas(conn)
     return conn
+
+
+def is_busy(err):
+    s = str(err).lower()
+    return ("database is locked" in s) or ("database is busy" in s)
+
+
+def with_retry(fn, budget=RETRY_BUDGET):
+    """Bounded SQLITE_BUSY retry wrapper. On budget exhaustion, re-raises the
+    original sqlite3.OperationalError verbatim (M6: preserve caller exception
+    semantics -- callers that catch OperationalError keep working)."""
+    retries = 0
+    while True:
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            if is_busy(e) and retries < budget:
+                retries += 1
+                time.sleep(RETRY_BASE_SLEEP * (1 + (os.getpid() % 7)) * retries * 0.1
+                           + RETRY_BASE_SLEEP)
+                continue
+            raise
 
 
 def area_id(conn, name):
@@ -664,126 +709,6 @@ def appt_persons(aid, conn=None):
             conn.close()
 
 
-# ── 태스크 (tasks) — task-update 스킬용 CLI (DGN-167) ──────
-def _is_iso_date(s):
-    """YYYY-MM-DD 형식이면 True."""
-    try:
-        datetime.date.fromisoformat(str(s))
-        return True
-    except (TypeError, ValueError):
-        return False
-
-
-# TSV row shape shared by every task verb: (id, name, due-date, done-flag).
-_TASK_ROW_SQL = ("SELECT id, name, COALESCE(date(due_start),''), done "
-                 "FROM tasks ")
-
-
-def task_get(conn, tid):
-    return conn.execute(
-        _TASK_ROW_SQL + "WHERE id=?;", (int(tid),)).fetchone()
-
-
-def task_add(title, due=None, note=None, conn=None):
-    """태스크 한 건 신규 등록. 새 id 반환."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        cur = conn.execute(
-            "INSERT INTO tasks (name, due_start, note) VALUES (?,?,?);",
-            (title, _txt(due), _txt(note)))
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        if own:
-            conn.close()
-
-
-def task_find(query=None, conn=None):
-    """태스크 목록(보관 제외). query: None|'all'=전체, YYYY-MM-DD=그날 예정,
-    그 외=이름 키워드(LIKE). (id, name, due, done) 리스트."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        base = _TASK_ROW_SQL + "WHERE archived_at IS NULL"
-        if query is None or query == 'all':
-            sql, args = base + " ORDER BY due_start, id;", ()
-        elif _is_iso_date(query):
-            sql, args = base + " AND date(due_start)=? ORDER BY id;", (query,)
-        else:
-            sql = base + " AND name LIKE ? ORDER BY due_start, id;"
-            args = (f"%{query}%",)
-        return conn.execute(sql, args).fetchall()
-    finally:
-        if own:
-            conn.close()
-
-
-def task_set_done(tid, val, conn=None):
-    """완료 플래그 갱신. 갱신 행 반환(없으면 None)."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        conn.execute("UPDATE tasks SET done=? WHERE id=?;",
-                     (1 if val else 0, int(tid)))
-        conn.commit()
-        return task_get(conn, tid)
-    finally:
-        if own:
-            conn.close()
-
-
-def task_reschedule(tid, date, conn=None):
-    """예정일(due_start) 변경. 갱신 행 반환(없으면 None)."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        conn.execute("UPDATE tasks SET due_start=? WHERE id=?;",
-                     (date, int(tid)))
-        conn.commit()
-        return task_get(conn, tid)
-    finally:
-        if own:
-            conn.close()
-
-
-def task_archive(tid, conn=None):
-    """보관(soft-delete): archived_at 기록 → find/overdue에서 숨김. 갱신 행 반환."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        conn.execute(
-            "UPDATE tasks SET archived_at=datetime('now','localtime') "
-            "WHERE id=?;", (int(tid),))
-        conn.commit()
-        return task_get(conn, tid)
-    finally:
-        if own:
-            conn.close()
-
-
-def task_overdue(today=None, conn=None):
-    """기한 지난 미완료(보관 제외) 목록. (id, name, due, done) 리스트."""
-    today = today or datetime.date.today().isoformat()
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        return conn.execute(
-            _TASK_ROW_SQL +
-            "WHERE archived_at IS NULL AND done=0 "
-            "AND due_start IS NOT NULL AND date(due_start) < ? "
-            "ORDER BY due_start, id;", (today,)).fetchall()
-    finally:
-        if own:
-            conn.close()
-
-
 # ── 신체 스탯 / 목표 칼로리 모델 (card.py에서 이전, 공식 동일) ──
 # Generic illustrative defaults only (NOT any real person's measurements).
 # The owner's actual stats live in lifekit.db (config table) and override these.
@@ -1130,11 +1055,724 @@ def load_card_data(iso_date, conn=None):
             conn.close()
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# DGN-179 event SDK core -- unified L1 event model (spec v5 LOCK 2026-07-07).
+# Ported verbatim from the verified sandbox event_core.py. Three tables
+# (event / sub_event / reschedule_requests). English/ASCII only in this block.
+#
+# Key invariants enforced here:
+#   - canonical UTC 'YYYY-MM-DDThh:mm:ssZ' (20 chars) for every instant; a
+#     non-canonical write is refused by the app validator AND by table CHECKs.
+#   - occupancy predicate targets slot_exclusive=1 AND settled_at IS NULL
+#     AND start_at IS NOT NULL (v5.1: physical liveness bit; status cache NOT
+#     consulted). schedule_kind='timed' was dropped from the filter so an
+#     exclusive all_day day-block physically repels timed events that day;
+#     untimed rows fall out via start_at IS NOT NULL.
+#   - every slot-touching mutation (INSERT + all UPDATE variants) passes the
+#     SAME atomic half-open overlap predicate in one write txn (FG-1). UPDATEs
+#     exclude self. changes()==0 -> re-query to tell CAS-fail from overlap-reject.
+#   - recompute derives status but NEVER derives 'abandoned'; a settled event
+#     returns its stored settled_outcome verbatim (F-A seal).
+#   - cancel = force-settle with outcome 'abandoned'; force_settle = outcome 'done'.
+#
+# NOTE ON user_version: the event schema is framework migration 003 (DGN-180
+# D180-0 renumber -- 002_tasks_archived_at already owns user_version=2, so the
+# event schema is 3). SDK asserts 3.
+# ═══════════════════════════════════════════════════════════════════════════
+
+EXPECTED_USER_VERSION = 3
+
+# INF sentinel string: lexicographically greater than any canonical "...Z"
+# instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
+# open-ended end stays SQL NULL on disk.
+INF_STR = "~~~~~~~~~~~~~~~~~~~~"
+
+CANON_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+# effective (half-open) end for a stored event row `e`, matching _cand_eff_end.
+# NULL end -> INF ; zero-length (start==end) -> start + 1 second ; else end.
+EFF_END_SQL = (
+    "(CASE WHEN e.end_at IS NULL THEN '%s' "
+    "WHEN e.end_at = e.start_at "
+    "  THEN strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ', e.start_at, '+1 second') "
+    "ELSE e.end_at END)" % INF_STR
+)
+
+# liveness filter for the occupancy predicate (physical bit, not status cache).
+# v5.1 (spec correction): drop schedule_kind='timed'. An exclusive
+# all_day day-block (exam day, etc.) must physically block timed events that day
+# via the atomic predicate. all_day rows are stored as UTC instant ranges so they
+# join the uniform half-open formula directly. Untimed rows are excluded by the
+# explicit start_at IS NOT NULL guard (they have no instant to occupy).
+LIVE_FILTER = ("e.slot_exclusive = 1 AND e.settled_at IS NULL "
+               "AND e.start_at IS NOT NULL")
+
+
+class MigrationRequired(Exception):
+    """Raised when user_version does not match. Actionable, not a hard exit."""
+
+
+def event_conn(db_path=None, assert_version=True):
+    """Open a hardened connection for the event SDK. WAL + busy_timeout=5000.
+    Asserts user_version==3 unless told otherwise (migration tooling opens with
+    assert_version=False). Defaults to the module DB_PATH; a path override lets
+    tests / migration point at a copy.
+
+    This is distinct from get_conn() (the legacy no-arg entrypoint) so the
+    version assertion never fires on legacy lifekit callers -- only the event
+    SDK opts into it."""
+    path = db_path or DB_PATH
+    conn = sqlite3.connect(path)
+    _apply_pragmas(conn)
+    if assert_version:
+        v = conn.execute("PRAGMA user_version;").fetchone()[0]
+        if v != EXPECTED_USER_VERSION:
+            conn.close()
+            raise MigrationRequired(
+                "event schema user_version=%d, expected %d. "
+                "run migration: sqlite3 <db> < migrations/003_event_schema.sql"
+                % (v, EXPECTED_USER_VERSION))
+    return conn
+
+
+# ── time / canonical validator ────────────────────────────────────────────
+def canonical(dt_str):
+    """App-side validator (refusal path). Returns dt_str if canonical UTC,
+    else raises ValueError. Mirrors the table CHECKs (belt-and-suspenders)."""
+    if dt_str is None:
+        return None
+    if not CANON_RE.match(dt_str):
+        raise ValueError("non-canonical time refused: %r" % dt_str)
+    return dt_str
+
+
+def validate_interval(start_at, end_at):
+    """grill-5 (MINOR-1) app-level validator: reject a reversed interval
+    (end < start). Zero-length (end == start) is LEGAL; only strictly-reversed
+    is refused. Both args must already be canonical (fixed-width UTC sorts
+    chronologically, so a lexical compare is exact). Mirrors the table CHECK
+    (end_at IS NULL OR start_at IS NULL OR end_at >= start_at). No-op if either
+    endpoint is NULL. Returns None; raises ValueError on a reversed interval."""
+    if start_at is None or end_at is None:
+        return None
+    if end_at < start_at:
+        raise ValueError(
+            "reversed interval refused: end_at %r < start_at %r" % (end_at, start_at))
+    return None
+
+
+def now_utc():
+    return datetime.datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _plus_one_second(ts):
+    """Canonical ts + 1 second, computed by sqlite so it is byte-identical to
+    the in-DB EFF_END_SQL promotion (same strftime, same rollover)."""
+    c = sqlite3.connect(":memory:")
+    r = c.execute("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', ?, '+1 second');",
+                  (ts,)).fetchone()[0]
+    c.close()
+    return r
+
+
+def _cand_eff_end(start, end, open_ended):
+    """Half-open effective end for a candidate (mirror of EFF_END_SQL)."""
+    if open_ended:
+        return INF_STR
+    if end == start:
+        return _plus_one_second(start)
+    return end
+
+
+def all_day_instants(local_date_start, local_date_end=None, tz_name="Asia/Seoul"):
+    """Derive the canonical UTC instant pair for an all_day event via zoneinfo
+    (fixed offset forbidden -- N3). Single day: local_date_end None.
+    Returns (start_at_utc, end_at_utc):
+        [start_day 00:00 local, end_day+1 00:00 local)
+    local_date_* are 'YYYY-MM-DD' strings.
+    """
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(tz_name)
+    sd = datetime.datetime.strptime(local_date_start, "%Y-%m-%d").date()
+    ed = (datetime.datetime.strptime(local_date_end, "%Y-%m-%d").date()
+          if local_date_end else sd)
+    start_local = datetime.datetime(sd.year, sd.month, sd.day, 0, 0, 0, tzinfo=tz)
+    end_local = (datetime.datetime(ed.year, ed.month, ed.day, 0, 0, 0, tzinfo=tz)
+                 + timedelta(days=1))
+    su = start_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    eu = end_local.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return su, eu
+
+
+# ── ULID generator (stdlib only, Crockford base32, monotonic-ish) ──────────
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def _encode(value, length):
+    out = []
+    for _ in range(length):
+        out.append(_CROCKFORD[value & 0x1F])
+        value >>= 5
+    return "".join(reversed(out))
+
+
+def new_ulid(ts_ms=None):
+    """26-char Crockford base32 ULID: 48-bit ms timestamp + 80 random bits."""
+    if ts_ms is None:
+        ts_ms = int(time.time() * 1000)
+    ts_part = _encode(ts_ms & ((1 << 48) - 1), 10)
+    rand = secrets.randbits(80)
+    rand_part = _encode(rand, 16)
+    return ts_part + rand_part
+
+
+# ── kind policy: slot_exclusive is decided by SDK, never per-write. ────────
+# skills that declare a time-occupying task kind register here (born exclusive).
+TIME_OCCUPYING_TASK_KINDS = set()  # e.g. {'workout_session', 'focus_block'}
+
+
+def resolve_slot_exclusive(kind, schedule_kind, task_kind=None, day_block=False):
+    """Decide slot_exclusive per kind-policy (N5/D8 locus):
+      - appointment: always 1.
+      - task with a declared time-occupying kind: 1 (born exclusive).
+      - all_day: default 0 (containing context: trip/travel), 1 only if the
+        caller explicitly marks a full-day block (exam day, etc).
+      - general task: 0.
+    """
+    if kind == "appointment":
+        return 1
+    if schedule_kind == "all_day":
+        return 1 if day_block else 0
+    if task_kind is not None and task_kind in TIME_OCCUPYING_TASK_KINDS:
+        return 1
+    return 0
+
+
+# ── derived status recompute (F-A seal: never derives abandoned) ───────────
+def derive_status(schedule_kind, start_at, end_at, open_ended,
+                  settled_at, settled_outcome, live_subs, completion_rule,
+                  now=None):
+    """Pure recompute. live_subs = list of done(0/1) for non-tombstoned subs.
+    Priority: settled(outcome verbatim) > expired > vacuous-open > all-done > open.
+    Derivation NEVER produces 'abandoned'.
+
+    completion_rule is 'all' or 'manual' ONLY (grill-5 enum shrink; 'any'/'n_of_m'
+    removed -- undefined derivation). 'all' auto-completes when every live sub is
+    done; 'manual' never auto-completes (only force_settle can complete it), so a
+    manual event with all subs done stays 'open' until settled -- this is
+    intentional (manual = human-confirmed completion).
+    """
+    # 1. settled: return stored outcome verbatim (F-A seal, immune to sub-writes).
+    if settled_at is not None:
+        return settled_outcome  # 'done' or 'abandoned'
+
+    if now is None:
+        now = now_utc()
+
+    # only 'all' auto-completes; 'manual' waits for force_settle (enum shrink).
+    all_done = (completion_rule == "all" and len(live_subs) > 0
+                and all(x == 1 for x in live_subs))
+
+    # 2. expired: past deadline with not-all-done. Only timed/all_day have a
+    #    deadline instant; untimed has none so it can never expire.
+    deadline = (_cand_eff_end(start_at, end_at, open_ended)
+                if start_at is not None else None)
+    if deadline is not None and deadline != INF_STR and now >= deadline and not all_done:
+        return "expired"
+
+    # 3. vacuous-open: zero live subs stays open (vacuous-AND fix).
+    if len(live_subs) == 0:
+        return "open"
+    # 4. all-done.
+    if all_done:
+        return "done"
+    # 5. default open.
+    return "open"
+
+
+def _live_subs(conn, eid):
+    return [r[0] for r in conn.execute(
+        "SELECT done FROM sub_event WHERE event_id=? AND tombstone=0;",
+        (eid,)).fetchall()]
+
+
+def _recompute_and_store(conn, eid, now=None):
+    """Recompute derived status from live sub rows + settle state and store it.
+    Caller holds an open write txn."""
+    row = conn.execute(
+        "SELECT schedule_kind, start_at, end_at, open_ended, settled_at, "
+        "settled_outcome, completion_rule FROM event WHERE id=?;", (eid,)).fetchone()
+    sk, sa, ea, oe, set_at, set_out, rule = row
+    live = _live_subs(conn, eid)
+    st = derive_status(sk, sa, ea, oe, set_at, set_out, live, rule, now=now)
+    conn.execute("UPDATE event SET status=? WHERE id=?;", (st, eid))
+    return st
+
+
+# ── overlap predicate helpers (uniform half-open; slot-touching mutations) ─
+def is_blocker(slot_exclusive, start_at):
+    """v5.1 liveness predicate in Python: a row participates in the occupancy
+    predicate iff it is slot_exclusive AND has a start instant (settled_at NULL
+    is guaranteed for the just-touched row -- an unsettled write). Mirrors
+    LIVE_FILTER for the mutation-side 'should I guard the slot?' decision.
+    schedule_kind is NOT consulted (timed AND exclusive-all_day both block;
+    untimed has NULL start and falls out)."""
+    return slot_exclusive == 1 and start_at is not None
+
+
+def _overlap_not_exists(exclude_id=False):
+    """WHERE NOT EXISTS(...) overlap probe against live exclusive rows.
+    Params (in order): cand_start, cand_eff_end [, exclude_id].
+    Uniform half-open: e.start < cand_eff_end AND cand_start < eff_end(e).
+    """
+    sql = ("NOT EXISTS (SELECT 1 FROM event e WHERE " + LIVE_FILTER +
+           " AND ? < " + EFF_END_SQL + " AND e.start_at < ?")
+    if exclude_id:
+        sql += " AND e.id != ?"
+    sql += ")"
+    return sql
+
+
+# ── event_add: atomic conditional insert for slot_exclusive events. ────────
+# non-exclusive events insert unconditionally (no slot to guard).
+def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
+              open_ended=0, owning_agent=None, created_by=None,
+              completion_rule="all", note=None, area_id=None,
+              display_tz="Asia/Seoul", task_kind=None, day_block=False,
+              notion_id=None, extra=None):
+    """Insert a new event. For slot_exclusive events with a start instant, the
+    insert is atomic INSERT..WHERE NOT EXISTS(overlap): returns event id on win,
+    None on slot loss. For non-exclusive/no-start, always inserts (no slot guard).
+
+    Time validation is enforced here (canonical) and by table CHECKs.
+    """
+    canonical(start_at)
+    canonical(end_at)
+    validate_interval(start_at, end_at)   # grill-5: reject reversed interval
+    if owning_agent is None or created_by is None:
+        raise ValueError("owning_agent and created_by are required")
+    slot_exclusive = resolve_slot_exclusive(kind, schedule_kind, task_kind, day_block)
+    now = now_utc()
+    ulid = new_ulid()
+    extra = extra or {}
+
+    cols = ("ulid, kind, title, note, area_id, schedule_kind, start_at, end_at, "
+            "display_tz, open_ended, slot_exclusive, completion_rule, "
+            "owning_agent, created_by, notion_id, created_at, updated_at")
+    base_vals = [ulid, kind, title, note, area_id, schedule_kind, start_at, end_at,
+                 display_tz, open_ended, slot_exclusive, completion_rule,
+                 owning_agent, created_by, notion_id, now, now]
+
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        # v5.1: guard the slot for any exclusive row that has a start instant
+        # (timed OR exclusive all_day day-block). untimed has NULL start -> no slot.
+        if is_blocker(slot_exclusive, start_at):
+            cee = _cand_eff_end(start_at, end_at, open_ended)
+            sql = ("INSERT INTO event (" + cols + ") SELECT " +
+                   ",".join("?" for _ in base_vals) + " WHERE " +
+                   _overlap_not_exists(exclude_id=False))
+            cur = conn.execute(sql, base_vals + [start_at, cee])
+            if cur.rowcount != 1:
+                conn.commit()
+                return None
+        else:
+            sql = ("INSERT INTO event (" + cols + ") VALUES (" +
+                   ",".join("?" for _ in base_vals) + ")")
+            conn.execute(sql, base_vals)
+        eid = conn.execute("SELECT id FROM event WHERE ulid=?;", (ulid,)).fetchone()[0]
+        _recompute_and_store(conn, eid, now=now)
+        conn.commit()
+        return eid
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ── slot-touching UPDATE family (FG-1): move / kind transition / promotion. ─
+# All share UPDATE..WHERE id=? AND version=? AND NOT EXISTS(overlap, self excl).
+# changes()==0 -> re-query to distinguish CAS-fail from overlap-reject.
+class MutationResult(object):
+    APPLIED = "applied"
+    CAS_FAIL = "cas_fail"
+    OVERLAP_REJECT = "overlap_reject"
+    NOT_FOUND = "not_found"
+
+
+def _cas_slot_update(conn, eid, version, set_clause, set_params,
+                     new_start, new_eff_end, will_be_exclusive_timed):
+    """Run a slot-touching UPDATE under version CAS + self-excluded overlap.
+    Returns a MutationResult. Caller supplies an OPEN write txn.
+
+    will_be_exclusive_timed: whether the row AFTER the update is exclusive+timed
+    (so we must guard the slot). If not, no overlap guard is applied.
+    """
+    where_overlap = (" AND " + _overlap_not_exists(exclude_id=True)
+                     if will_be_exclusive_timed else "")
+    sql = ("UPDATE event SET " + set_clause + ", version=version+1, updated_at=? "
+           "WHERE id=? AND version=?" + where_overlap)
+    now = now_utc()
+    params = set_params + [now, eid, version]
+    if will_be_exclusive_timed:
+        params += [new_start, new_eff_end, eid]
+    cur = conn.execute(sql, params)
+    if cur.rowcount == 1:
+        _recompute_and_store(conn, eid, now=now)
+        return MutationResult.APPLIED
+    # changes()==0: distinguish CAS-fail vs overlap-reject vs not-found.
+    row = conn.execute("SELECT version FROM event WHERE id=?;", (eid,)).fetchone()
+    if row is None:
+        return MutationResult.NOT_FOUND
+    if row[0] != version:
+        return MutationResult.CAS_FAIL
+    # version still matches -> the overlap guard was what blocked it.
+    return MutationResult.OVERLAP_REJECT
+
+
+def event_move(conn, eid, version, new_start, new_end, open_ended=0):
+    """Move a timed event to a new [start,end). Passes the atomic slot predicate
+    (self excluded). Returns MutationResult."""
+    canonical(new_start)
+    canonical(new_end)
+    validate_interval(new_start, new_end)   # grill-5: reject reversed interval
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        row = conn.execute("SELECT slot_exclusive, schedule_kind FROM event WHERE id=?;",
+                           (eid,)).fetchone()
+        if row is None:
+            conn.commit()
+            return MutationResult.NOT_FOUND
+        slot_ex, sk = row
+        # v5.1: guard if the moved row will be an exclusive blocker with a start.
+        guard = is_blocker(slot_ex, new_start)
+        cee = _cand_eff_end(new_start, new_end, open_ended)
+        res = _cas_slot_update(
+            conn, eid, version,
+            "start_at=?, end_at=?, open_ended=?",
+            [new_start, new_end, open_ended],
+            new_start, cee, guard)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def event_transition_schedule_kind(conn, eid, version, new_schedule_kind,
+                                   new_start=None, new_end=None, open_ended=0):
+    """Transition schedule_kind (e.g. untimed->timed). owning_agent gate is the
+    caller's responsibility; here we enforce version CAS + slot predicate when
+    the target is an exclusive blocker.
+
+    grill-5 (MAJOR-1) untimed guard: transitioning TO 'untimed' must leave NO
+    time instants behind. A stale start_at would keep the row in the occupancy
+    predicate (start_at IS NOT NULL) and phantom-block its slot. We REJECT (loud,
+    not silent-clear) any non-NULL time argument on an untimed target -- the
+    caller must not pass start/end/open_ended for an untimed transition. This
+    pairs with the schema belt CHECK (untimed -> start/end NULL). To CLEAR a
+    timed row's instants, call this with new_schedule_kind='untimed' and all time
+    args left at their defaults (NULL / 0); this forces start_at/end_at to NULL
+    and open_ended to 0 in the UPDATE below.
+    """
+    if new_schedule_kind == "untimed" and (
+            new_start is not None or new_end is not None or open_ended):
+        raise ValueError(
+            "untimed transition must not carry time args "
+            "(new_start=%r new_end=%r open_ended=%r); untimed rows hold no instant"
+            % (new_start, new_end, open_ended))
+    canonical(new_start)
+    canonical(new_end)
+    validate_interval(new_start, new_end)   # grill-5: reject reversed interval
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        row = conn.execute("SELECT slot_exclusive FROM event WHERE id=?;",
+                           (eid,)).fetchone()
+        if row is None:
+            conn.commit()
+            return MutationResult.NOT_FOUND
+        slot_ex = row[0]
+        # v5.1: guard for any exclusive transition target that has a start
+        # instant (timed OR all_day). untimed target has NULL start -> no slot.
+        guard = is_blocker(slot_ex, new_start)
+        cee = _cand_eff_end(new_start, new_end, open_ended) if new_start else None
+        res = _cas_slot_update(
+            conn, eid, version,
+            "schedule_kind=?, start_at=?, end_at=?, open_ended=?",
+            [new_schedule_kind, new_start, new_end, open_ended],
+            new_start, cee, guard)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def event_promote_exclusive(conn, eid, version):
+    """Promote slot_exclusive 0->1 on a timed event. Must pass the slot predicate
+    (against currently-live exclusive rows), self excluded. Returns MutationResult.
+    """
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        row = conn.execute(
+            "SELECT schedule_kind, start_at, end_at, open_ended, slot_exclusive "
+            "FROM event WHERE id=?;", (eid,)).fetchone()
+        if row is None:
+            conn.commit()
+            return MutationResult.NOT_FOUND
+        sk, sa, ea, oe, cur_ex = row
+        # v5.1: after promotion the row is exclusive; guard the slot if it has a
+        # start instant (timed OR all_day). untimed has NULL start -> no slot.
+        guard = is_blocker(1, sa)
+        cee = _cand_eff_end(sa, ea, oe) if sa else None
+        res = _cas_slot_update(
+            conn, eid, version,
+            "slot_exclusive=1",
+            [],
+            sa, cee, guard)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ── settle family: cancel (abandoned) / force_settle (done). owner + CAS. ──
+def _settle(conn, eid, version, outcome, settled_by):
+    """Shared settle path. Sets settled_at/by/outcome + recompute (returns the
+    stored outcome verbatim). CAS guarded. Returns MutationResult."""
+    now = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE event SET settled_at=?, settled_by=?, settled_outcome=?, "
+            "version=version+1, updated_at=? WHERE id=? AND version=? "
+            "AND settled_at IS NULL;",
+            (now, settled_by, outcome, now, eid, version))
+        if cur.rowcount == 1:
+            _recompute_and_store(conn, eid, now=now)
+            conn.commit()
+            return MutationResult.APPLIED
+        row = conn.execute("SELECT version, settled_at FROM event WHERE id=?;",
+                          (eid,)).fetchone()
+        conn.commit()
+        if row is None:
+            return MutationResult.NOT_FOUND
+        # already settled or version moved -> CAS fail (idempotent-ish).
+        return MutationResult.CAS_FAIL
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def cancel(conn, eid, version, settled_by):
+    """Cancel verb = force-settle with outcome 'abandoned'. Frees the slot
+    (settled_at set -> drops out of the liveness filter)."""
+    return _settle(conn, eid, version, "abandoned", settled_by)
+
+
+def force_settle(conn, eid, version, settled_by):
+    """Force-settle with outcome 'done' (the only legal path to complete a
+    zero-sub / manual event)."""
+    return _settle(conn, eid, version, "done", settled_by)
+
+
+# ── sub_event lifecycle: add / done / reopen / tombstone. ──────────────────
+# Each = sub write + in-txn bubble-up recompute under parent version CAS.
+def _cas_sub_txn(conn, eid, mutate, now=None):
+    """Parent version CAS + sub mutation + in-txn recompute. Caller supplies an
+    OPEN write txn. mutate(conn, eid) does the sub-row change. Returns
+    MutationResult (APPLIED / CAS_FAIL / NOT_FOUND)."""
+    row = conn.execute("SELECT version FROM event WHERE id=?;", (eid,)).fetchone()
+    if row is None:
+        return MutationResult.NOT_FOUND
+    version = row[0]
+    cur = conn.execute("UPDATE event SET version=version+1 WHERE id=? AND version=?;",
+                      (eid, version))
+    if cur.rowcount != 1:
+        return MutationResult.CAS_FAIL
+    mutate(conn, eid)
+    _recompute_and_store(conn, eid, now=now)
+    return MutationResult.APPLIED
+
+
+def sub_add(conn, eid, owning_agent, kind=None, ref=None):
+    """Add a sub_event under a parent, bubble-up recompute in same txn."""
+    ulid = new_ulid()
+    now = now_utc()
+    def mut(c, e):
+        c.execute("INSERT INTO sub_event (ulid, event_id, owning_agent, kind, ref, "
+                  "done, tombstone, created_at) VALUES (?,?,?,?,?,0,0,?);",
+                  (ulid, e, owning_agent, kind, ref, now))
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        res = _cas_sub_txn(conn, eid, mut, now=now)
+        conn.commit()
+        return res, ulid
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def sub_done(conn, eid, sub_ulid):
+    """Mark a sub done=1. Bubble-up recompute."""
+    now = now_utc()
+    def mut(c, e):
+        c.execute("UPDATE sub_event SET done=1, settled_at=? WHERE ulid=? AND event_id=?;",
+                  (now, sub_ulid, e))
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        res = _cas_sub_txn(conn, eid, mut, now=now)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def sub_reopen(conn, eid, sub_ulid):
+    """Reopen a sub (done 1->0). NO direct parent flip: the parent status is
+    re-derived by recompute in the same txn (settled parent stays settled --
+    outcome preserved)."""
+    def mut(c, e):
+        c.execute("UPDATE sub_event SET done=0, settled_at=NULL WHERE ulid=? AND event_id=?;",
+                  (sub_ulid, e))
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        res = _cas_sub_txn(conn, eid, mut)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def sub_tombstone(conn, eid, sub_ulid):
+    """Tombstone a sub (delete != complete). Invisible to derivation. Recompute."""
+    now = now_utc()
+    def mut(c, e):
+        c.execute("UPDATE sub_event SET tombstone=1, settled_at=? WHERE ulid=? AND event_id=?;",
+                  (now, sub_ulid, e))
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        res = _cas_sub_txn(conn, eid, mut, now=now)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def uninstall(conn, agent):
+    """Owning-agent uninstall: tombstone ALL subs owned by `agent` across ALL
+    events, recompute EVERY affected parent, in ONE txn (m1 orphan-free)."""
+    now = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        affected = [r[0] for r in conn.execute(
+            "SELECT DISTINCT event_id FROM sub_event "
+            "WHERE owning_agent=? AND tombstone=0;", (agent,)).fetchall()]
+        conn.execute("UPDATE sub_event SET tombstone=1, settled_at=? "
+                    "WHERE owning_agent=? AND tombstone=0;", (now, agent))
+        for eid in affected:
+            conn.execute("UPDATE event SET version=version+1 WHERE id=?;", (eid,))
+            _recompute_and_store(conn, eid, now=now)
+        conn.commit()
+        return len(affected)
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ── reschedule queue primitives (M1): enqueue / claim / apply. ─────────────
+# apply on CAS-fail re-queries -> applied if target already at proposed, else rejected.
+def reschedule_enqueue(conn, event_ulid, requester_agent, proposed_start,
+                       proposed_end, reason=None):
+    """Enqueue a durable reschedule request."""
+    canonical(proposed_start)
+    canonical(proposed_end)
+    validate_interval(proposed_start, proposed_end)   # grill-5: reject reversed
+    ulid = new_ulid()
+    now = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT INTO reschedule_requests (ulid, event_ulid, requester_agent, "
+            "proposed_start, proposed_end, reason, status, created_at) "
+            "VALUES (?,?,?,?,?,?, 'queued', ?);",
+            (ulid, event_ulid, requester_agent, proposed_start, proposed_end, reason, now))
+        conn.commit()
+        return ulid
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def reschedule_claim(conn, req_ulid):
+    """Claim a queued request (queued->claimed) under CAS. Returns True iff
+    THIS claim landed (lease). Prevents double-apply on drainer crash."""
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE reschedule_requests SET status='claimed' "
+            "WHERE ulid=? AND status='queued';", (req_ulid,))
+        conn.commit()
+        return cur.rowcount == 1
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def reschedule_apply(conn, req_ulid):
+    """Apply a claimed request: move the target event via the slot predicate.
+    On event CAS-fail, re-query the event: if it is already at the proposed
+    slot, mark applied (idempotent completion); else mark rejected.
+    Returns final request status string.
+    """
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        req = conn.execute(
+            "SELECT event_ulid, proposed_start, proposed_end FROM reschedule_requests "
+            "WHERE ulid=? AND status='claimed';", (req_ulid,)).fetchone()
+        if req is None:
+            conn.commit()
+            return None  # not claimed / not found
+        ev_ulid, ps, pe = req
+        ev = conn.execute(
+            "SELECT id, version, slot_exclusive, schedule_kind FROM event WHERE ulid=?;",
+            (ev_ulid,)).fetchone()
+        if ev is None:
+            conn.execute("UPDATE reschedule_requests SET status='rejected', resolved_at=? "
+                        "WHERE ulid=?;", (now_utc(), req_ulid))
+            conn.commit()
+            return "rejected"
+        eid, version, slot_ex, sk = ev
+        # v5.1: guard if the target is an exclusive blocker with a start instant.
+        guard = is_blocker(slot_ex, ps)
+        cee = _cand_eff_end(ps, pe, 0)
+        res = _cas_slot_update(
+            conn, eid, version, "start_at=?, end_at=?", [ps, pe], ps, cee, guard)
+        if res == MutationResult.APPLIED:
+            final = "applied"
+        else:
+            # re-query: idempotent completion if already at proposed slot.
+            cur_row = conn.execute(
+                "SELECT start_at, end_at FROM event WHERE id=?;", (eid,)).fetchone()
+            if cur_row is not None and cur_row[0] == ps and cur_row[1] == pe:
+                final = "applied"
+            else:
+                final = "rejected"
+        conn.execute("UPDATE reschedule_requests SET status=?, resolved_at=? WHERE ulid=?;",
+                    (final, now_utc(), req_ulid))
+        conn.commit()
+        return final
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ── CLI (lifekit.sh 서브커맨드 100% 동일 재현) ───────────────────
 USAGE = ("사용법: lifekit.sh meal-add|meal-find|meal-day|meal-del|meal-upd|"
-         "workout-add|workout-find|workout-del|agg-day|agg-week|"
-         "task-add|task-find|task-done|task-undone|task-reschedule|"
-         "task-archive|task-overdue ...\n"
+         "workout-add|workout-find|workout-del|agg-day|agg-week ...\n"
          "  workout-add <date> <category> <subtype> [minutes kcal note avg_hr]\n"
          "    (category=대분류, subtype=세부. 인자 순서는 옛 <type> <name>와 동일 위치.)")
 
@@ -1458,80 +2096,6 @@ def cli_appt_show(argv):
         conn.close()
 
 
-def _task_print(row):
-    # TSV contract: id<TAB>title<TAB>due<TAB>done|todo
-    tid, name, due, done = row
-    print(f"{tid}\t{name}\t{due}\t{'done' if done else 'todo'}")
-
-
-def cli_task_add(argv):
-    # task-add <title> [due_date] [note]
-    if not argv or not argv[0]:
-        _err("사용법: lifekit.sh task-add <title> [due_date] [note]")
-    due = argv[1] if len(argv) > 1 and argv[1] else None
-    if due is not None and not _is_iso_date(due):
-        _err(f"날짜 형식 아님(YYYY-MM-DD): {due}")
-    note = argv[2] if len(argv) > 2 else None
-    conn = get_conn()
-    try:
-        tid = task_add(argv[0], due=due, note=note, conn=conn)
-        _task_print(task_get(conn, tid))
-    finally:
-        conn.close()
-
-
-def cli_task_find(argv):
-    # task-find [date|all|keyword] — 기본 all. 보관 제외.
-    q = argv[0] if argv and argv[0] else 'all'
-    for row in task_find(q):
-        _task_print(row)
-
-
-def cli_task_done(argv):
-    if not argv or not str(argv[0]).isdigit():
-        _err("사용법: lifekit.sh task-done <id>")
-    row = task_set_done(argv[0], True)
-    if row is None:
-        _err(f"해당 id 태스크 없음: {argv[0]}")
-    _task_print(row)
-
-
-def cli_task_undone(argv):
-    if not argv or not str(argv[0]).isdigit():
-        _err("사용법: lifekit.sh task-undone <id>")
-    row = task_set_done(argv[0], False)
-    if row is None:
-        _err(f"해당 id 태스크 없음: {argv[0]}")
-    _task_print(row)
-
-
-def cli_task_reschedule(argv):
-    # task-reschedule <id> <YYYY-MM-DD>
-    if len(argv) < 2 or not str(argv[0]).isdigit():
-        _err("사용법: lifekit.sh task-reschedule <id> <YYYY-MM-DD>")
-    if not _is_iso_date(argv[1]):
-        _err(f"날짜 형식 아님(YYYY-MM-DD): {argv[1]}")
-    row = task_reschedule(argv[0], argv[1])
-    if row is None:
-        _err(f"해당 id 태스크 없음: {argv[0]}")
-    _task_print(row)
-
-
-def cli_task_archive(argv):
-    if not argv or not str(argv[0]).isdigit():
-        _err("사용법: lifekit.sh task-archive <id>")
-    row = task_archive(argv[0])
-    if row is None:
-        _err(f"해당 id 태스크 없음: {argv[0]}")
-    _task_print(row)
-
-
-def cli_task_overdue(argv):
-    # task-overdue — 기한 지난 미완료(보관 제외) TSV.
-    for row in task_overdue():
-        _task_print(row)
-
-
 def cli_migrate_body_stats(argv):
     """body_stats.json 의 모든 키를 config 테이블로 복사(멱등, v2).
 
@@ -1651,13 +2215,6 @@ _DISPATCH = {
     'appt-upd': cli_appt_upd,
     'appt-person': cli_appt_person,
     'appt-show': cli_appt_show,
-    'task-add': cli_task_add,
-    'task-find': cli_task_find,
-    'task-done': cli_task_done,
-    'task-undone': cli_task_undone,
-    'task-reschedule': cli_task_reschedule,
-    'task-archive': cli_task_archive,
-    'task-overdue': cli_task_overdue,
 }
 
 
