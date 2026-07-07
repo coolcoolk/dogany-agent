@@ -3,9 +3,13 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] - v1.1
+## [1.1.0] - 2026-07-07
 
 ### Added
+- update.sh now refreshes the framework constitution (RULES.md) and core shared
+  services on every update, with the same user-edit detection and backup contract
+  as dogany-* skills. A services manifest controls the exact refresh list; your
+  AGENT.md and USER.md are never touched.
 - Browser automation skill (agent-browser, Vercel Labs) ships as a default-dormant
   bundle skill. The skill is inactive unless the user opts in during install.
 - Install wizard step 4c: optional browser automation opt-in. Discloses the
@@ -14,6 +18,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - When opted in, the skill is activated by creating a symlink from
   .claude/skills/agent-browser into the bundle directory after the agent is minted.
 - The DOGANY_BROWSER=1 env knob enables the opt-in in dry-run and scripted mode.
+- Cron/routine failure visibility: all scheduled routines now run through a
+  cron-guard wrapper. When a job exits with a non-zero code, a push notification
+  is sent with the label, exit code, and log tail (one notification per label per
+  day; repeats are suppressed).
+- Skill display-name layer: skills can now declare a user-facing display name in
+  their SKILL.md frontmatter, which the agent uses in menus and confirmations
+  instead of the raw skill directory name.
+- task-update skill gains three new verbs: reschedule, archive, and overdue.
+  Tasks are now owned by lifekit.py (no direct SQL in the skill script). A
+  schema migration adds the archived_at column for soft-delete support.
+- Installer now seeds BRIDGE_MODELS into the instance .env based on your Claude
+  subscription tier, so the /model picker shows the correct model options from
+  the first session.
+- Opt-in remote version check: set DOGANY_VERSION_CHECK=1 in your instance .env
+  to receive a one-line notice when a newer Dogany version is available. Off by
+  default; no data is sent beyond a plain version fetch.
+
+### Fixed
+- Bridge turn-death safety net: when a conversation turn ends abnormally (e.g.
+  laptop sleep mid-turn), the agent now sends a user-visible notice instead of
+  silently discarding the message. Includes inbound download retry for interrupted
+  file transfers.
 
 ## [1.0.5] - 2026-07-06
 
