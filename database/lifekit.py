@@ -990,11 +990,17 @@ def load_card_data(iso_date, conn=None):
             'fat': {'current': float(_f0(a['fat_g']))},
         }
 
-        # 운동: 있으면 burn_kcal 채움 (detail = "유형 (이름)" 합침)
+        # 운동: 항상 workout_find 실행 → workouts 배열 + burn_kcal detail 공용
+        wo_rows = workout_find(iso_date, conn=conn)
+        res['workouts'] = [
+            {'id': r[0], 'type': r[1], 'name': r[2], 'minutes': r[3], 'kcal': r[4]}
+            for r in wo_rows
+        ]
+
         burn = float(_f0(a['burn_kcal']))
         if burn > 0:
             labels = []
-            for _id, wtype, wname, _min, _kc in workout_find(iso_date, conn=conn):
+            for _id, wtype, wname, _min, _kc in wo_rows:
                 if wtype and wname:
                     labels.append(f"{wtype} ({wname})")
                 elif wtype:

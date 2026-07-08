@@ -183,8 +183,18 @@ def draw_card(d: dict, out_path: str):
     protein = d.get('protein', {})
     carbs   = d.get('carbs', {})
     fat     = d.get('fat', {})
-    burn    = d.get('burn_kcal', None)
-    meals   = d.get('meals', [])
+    burn     = d.get('burn_kcal', None)
+    workouts = d.get('workouts', [])
+    meals    = d.get('meals', [])
+    # prepend workout rows (type='운동') at top of meal list for display
+    if workouts:
+        wo_entries = []
+        for w in workouts:
+            wtype = w.get('type', '')
+            wname = w.get('name', '')
+            label = f"{wtype} ({wname})" if wtype and wname else (wtype or wname or '운동')
+            wo_entries.append({'type': '운동', 'name': label})
+        meals = wo_entries + meals
 
     # -- daily total target = BMR + NEAT - deficit + exercise burn --
     has_burn = bool(burn and burn.get('current', 0) > 0)

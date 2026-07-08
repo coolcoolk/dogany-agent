@@ -2308,7 +2308,10 @@ def _hook_body_state_line():
         if not n:
             return None  # empty config -> new user -> no body-state line
         stats = _lk.load_body_stats()
-        t = _lk.compute_targets(stats, exercise_kcal=0)
+        today = datetime.date.today().isoformat()
+        a = _lk.agg_day(today)
+        burn_kcal = a.get('burn_kcal', 0) or 0
+        t = _lk.compute_targets(stats, exercise_kcal=burn_kcal)
         g = _lk.compute_macro_goals(t["eff_goal"], stats)
         gm = stats.get("goal_mode", "")
         wt = stats.get("weight_kg", "")
