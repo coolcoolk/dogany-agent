@@ -174,6 +174,11 @@ STRINGS = {
         "Sorry, an error occurred while processing your message.\nError: {error}"
     ),
     "network_timeout": "Network connection timed out. Please try again shortly.",
+    # --- File send failure (send_file:: retry exhausted) ---
+    "send_file_failed": (
+        "Warning: failed to send file '{filename}' (network error). "
+        "Please try again in a moment."
+    ),
     # --- Outage / failure notices ---
     "outage_recovered": (
         "Reconnected to Telegram after about {minutes} min offline. "

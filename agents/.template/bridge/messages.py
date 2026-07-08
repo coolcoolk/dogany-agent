@@ -128,6 +128,9 @@ PROCESSING_FAILED = t("processing_failed")
 GENERIC_ERROR = t("generic_error")
 NETWORK_TIMEOUT = t("network_timeout")
 
+# --- File send failure (send_file:: retry exhausted) ---
+SEND_FILE_FAILED = t("send_file_failed")
+
 # --- Outage / failure notices ---
 OUTAGE_RECOVERED = t("outage_recovered")
 PROACTIVE_TURN_FAILED = t("proactive_turn_failed")

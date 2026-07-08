@@ -1914,15 +1914,35 @@ class TelegramBot:
     async def _send_file_paths(self, chat_id: int, paths: List[Path]) -> None:
         bot = self.application.bot
         for p in paths:
-            try:
-                if p.suffix.lower() in IMAGE_EXTS:
+            is_image = p.suffix.lower() in IMAGE_EXTS
+            last_err = None
+            for attempt in range(2):  # initial try + one retry (transient network)
+                try:
                     with open(p, "rb") as f:
-                        await bot.send_photo(chat_id, photo=f)
-                else:
-                    with open(p, "rb") as f:
-                        await bot.send_document(chat_id, document=f)
-            except Exception as e:
-                logger.warning("Failed to send file %s: %s", p, e)
+                        if is_image:
+                            await bot.send_photo(chat_id, photo=f)
+                        else:
+                            await bot.send_document(chat_id, document=f)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    logger.warning(
+                        "Failed to send file %s (attempt %d/2): %s", p, attempt + 1, e
+                    )
+                    if attempt == 0:
+                        await asyncio.sleep(1.5)
+            if last_err is not None:
+                # Do not let a file silently vanish -- notify the user.
+                try:
+                    await bot.send_message(
+                        chat_id,
+                        messages.SEND_FILE_FAILED.format(filename=p.name),
+                    )
+                except Exception as notify_err:
+                    logger.warning(
+                        "Failed to notify send failure for %s: %s", p, notify_err
+                    )
 
     async def _prompt_outside_file_confirmation(
         self, chat_id: int, user_id: int, paths: List[Path]

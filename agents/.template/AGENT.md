@@ -60,8 +60,16 @@ You are the user's personal agent.
 <!-- Agent-specific workflows accrete here (user-approved edits).
 Framework-wide behavior belongs in RULES, not here. -->
 
+### Framework code boundary
+- Framework code (bridge / memory-engine / routines core / cron units / input handlers) is
+  managed upstream. Do NOT hand-patch it locally -- local patches are overwritten by
+  update.sh at the next self-update and break the canonical propagation path.
+- Correct path: consume framework updates via self-update (see below). If you find a bug,
+  report it upstream; do not patch in place.
+- "Restart" instructions are restart-only -- they are not approval to modify code.
+
 ### Self-restart notice (self-restart)
-- When restarting after a bridge fix or self-update, do not finish silently. Restart via
+- When restarting after a framework update or upstream-delivered fix, do not finish silently. Restart via
   `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>" --prefix <__AGENT_EMOJI__> --label <__LAUNCHD_LABEL__>`.
   This does: nohup detach -> delayed SIGTERM (KeepAlive brings up new code) -> poll for
   marker ("Bot is running") -> Telegram completion notice. The user should not have to ask
