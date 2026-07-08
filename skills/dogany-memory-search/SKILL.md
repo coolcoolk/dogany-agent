@@ -1,6 +1,6 @@
 ---
 name: dogany-memory-search
-description: Use to recall past facts, records, preferences, or context about the user. Fires on "what did I say before", "what did I tell you about X", recall of the user's workout/diet/investment/budget records, personal details, schedule, relationships, or past decisions - any long-term memory lookup. Search with this BEFORE answering such a question. Semantic cross-lingual search finds by meaning even when keywords do not overlap (also catches non-English utterances), and the search itself costs zero tokens.
+description: Use to recall past facts, records, preferences, or context about the user. Fires on "what did I say before", "what did I tell you about X", recall of the user's workout/diet/investment/budget records, personal details, schedule, relationships, or past decisions - any long-term memory lookup. Search with this BEFORE answering such a question. Semantic cross-lingual search finds by meaning even when keywords do not overlap (also catches non-English utterances), and the search itself costs zero tokens. MUST also search before claiming any user data/preference/record/guide is absent or unknown -- fires whenever the agent is about to say "기록에 없다", "안 정해져 있다", "저장돼 있지 않다", "모른다 -- 알려주세요", "다시 알려주시면", "not recorded", "no saved value", "I don't have that", or any equivalent absence claim about user data. Only after a 0-hit search may the agent state the fact is absent.
 ---
 
 # dogany-memory-search — long-term memory recall
@@ -13,6 +13,12 @@ Hybrid search (FTS + vector, RRF fusion) -> finds by meaning even without keywor
 - need to reference user's past utterances, records, preferences, profile, relations, schedule, decisions
 - uncertain fact -> search before guessing (recall = 0 tokens, no cost concern)
 - "do I already know this about the user?" -> search first
+
+## absence claim gate
+before saying user data is missing, unknown, or not recorded -> run this search FIRST.
+only after 0-hit search may you say "not in memory (searched)".
+never ask user to re-provide a fact without running the search.
+applies to cron/proactive outputs (briefings, daily summaries) too -- recall hook does not cover those paths; the skill call is the only gate.
 
 ## usage
 ```bash
