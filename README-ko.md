@@ -120,11 +120,13 @@ AUTO 갈래(위 도식의 `memories/` 박스)를 확대하면: 두 가지 스케
   구조이며 `*.db` 데이터는 미포함.
 - **`service/`** — lifekit 코어 위의 안정적 SDK 파사드(`service.lifekit`).
   스킬은 raw 데이터 레이어 대신 이를 임포트합니다.
-- **`scripts/`** — `agents/.template`과 공유 루트에서 독립 에이전트를 생성하는
-  `mint.sh`.
+- **`scripts/`** — `agents/.template`과 공유 루트에서 독립 에이전트를 생성하고
+  인스턴스 `.env`를 작성하는 `mint.sh` (단일 생성기; 비밀값은 argv가 아니라
+  `DOGANY_BOT_TOKEN` / `DOGANY_EMAIL_PW` 환경변수로 전달).
 - **`install.sh`** — 이중 언어(ko/en) 설치 마법사. 사전 요구사항 확인, 봇 토큰
-  + 소유자 id 수집(born-locked), `scripts/mint.sh` 호출로 자립형 인스턴스 민팅,
-  선택적 자동시작 서비스 설치를 수행합니다.
+  + 소유자 id 수집(born-locked), `scripts/mint.sh` 호출로 자립형 인스턴스 민팅
+  (수집한 값으로 mint가 전체 `.env` 작성), 선택적 자동시작 서비스 설치를
+  수행합니다.
 
 각 에이전트의 `bridge/`는 공식 `claude-agent-sdk`(in-tree 벤더링, `bridge/UPSTREAM.md`
 참조)를 기반으로 하는 자립형 Telegram <-> Claude 브릿지입니다.

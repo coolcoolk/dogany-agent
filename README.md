@@ -137,11 +137,13 @@ root, and each agent lives under `agents/`.
 - **`service/`** -- a stable SDK facade (`service.lifekit`) over the lifekit
   core; skills import this rather than the raw data layer.
 - **`scripts/`** -- `mint.sh`, which instantiates a standalone agent from
-  `agents/.template` + the shared roots.
+  `agents/.template` + the shared roots and writes the instance `.env`
+  (single generator; secrets arrive via the `DOGANY_BOT_TOKEN` /
+  `DOGANY_EMAIL_PW` environment variables, never argv).
 - **`install.sh`** -- a bilingual (ko/en) setup wizard: checks prerequisites,
   collects a bot token + owner id (born-locked), and calls `scripts/mint.sh` to
-  mint a single self-contained instance, then optionally installs an autostart
-  service.
+  mint a single self-contained instance (mint writes the full `.env` from the
+  collected values), then optionally installs an autostart service.
 
 Each agent's `bridge/` is a self-contained Telegram <-> Claude bridge built on
 the official `claude-agent-sdk` (vendored in-tree; see `bridge/UPSTREAM.md`; the
