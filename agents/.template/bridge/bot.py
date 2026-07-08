@@ -135,6 +135,18 @@ def _known_models() -> List[str]:
     return list(dict.fromkeys([*_model_whitelist(), *_MODEL_LABELS.keys()]))
 
 
+def _fmt_error(e: Exception) -> str:
+    """Friendly string for user-visible error messages.
+
+    telegram.error.TimedOut is a transient network blip -- replace the raw
+    'Timed out' string with a short friendly message instead of leaking the
+    library exception text.
+    """
+    if isinstance(e, telegram.error.TimedOut):
+        return messages.NETWORK_TIMEOUT
+    return str(e)
+
+
 class TelegramBot:
     def __init__(self) -> None:
         self.application: Optional[Application] = None
@@ -1132,7 +1144,7 @@ class TelegramBot:
                 )
             except Exception as e:
                 logger.error("Skill execution failed: %s", e, exc_info=True)
-                await message.reply_text(messages.PROCESSING_FAILED.format(error=e))
+                await message.reply_text(messages.PROCESSING_FAILED.format(error=_fmt_error(e)))
 
         async def on_overflow() -> None:
             await message.reply_text(messages.QUEUE_BUSY)
@@ -1659,7 +1671,7 @@ class TelegramBot:
             raise
         except Exception as e:
             logger.error("Error in chat for user %s: %s", user_id, e, exc_info=True)
-            await message.reply_text(messages.GENERIC_ERROR.format(error=e))
+            await message.reply_text(messages.GENERIC_ERROR.format(error=_fmt_error(e)))
 
     @staticmethod
     def _message_ts(message) -> datetime:
@@ -1999,7 +2011,7 @@ class TelegramBot:
                     )
                 except Exception as e:
                     logger.error("Option reply failed: %s", e, exc_info=True)
-                    await app.bot.send_message(chat_id, messages.PROCESSING_FAILED.format(error=e))
+                    await app.bot.send_message(chat_id, messages.PROCESSING_FAILED.format(error=_fmt_error(e)))
 
             async def on_overflow() -> None:
                 await app.bot.send_message(chat_id, messages.QUEUE_BUSY)
@@ -2100,7 +2112,7 @@ class TelegramBot:
                 )
             except Exception as e:
                 logger.error("Resume continuation failed: %s", e, exc_info=True)
-                await app.bot.send_message(chat_id, messages.RESUME_FAILED.format(error=e))
+                await app.bot.send_message(chat_id, messages.RESUME_FAILED.format(error=_fmt_error(e)))
 
         async def on_overflow() -> None:
             await app.bot.send_message(chat_id, messages.QUEUE_BUSY)

@@ -173,6 +173,7 @@ STRINGS = {
     "generic_error": (
         "Sorry, an error occurred while processing your message.\nError: {error}"
     ),
+    "network_timeout": "Network connection timed out. Please try again shortly.",
     # --- Outage / failure notices ---
     "outage_recovered": (
         "Reconnected to Telegram after about {minutes} min offline. "

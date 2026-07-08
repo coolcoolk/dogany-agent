@@ -172,6 +172,7 @@ STRINGS = {
     "generic_error": (
         "죄송합니다. 메시지를 처리하는 중 오류가 발생했습니다.\n오류: {error}"
     ),
+    "network_timeout": "네트워크 연결이 잠시 불안정했습니다. 잠시 후 다시 시도해 주세요.",
     # --- Outage / failure notices ---
     "outage_recovered": (
         "약 {minutes}분간 오프라인이었다가 텔레그램에 다시 연결되었습니다. "

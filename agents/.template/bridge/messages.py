@@ -126,6 +126,7 @@ VOICE_TRANSCRIBE_FAILED = t("voice_transcribe_failed")
 INTERNAL_ERROR = t("internal_error")
 PROCESSING_FAILED = t("processing_failed")
 GENERIC_ERROR = t("generic_error")
+NETWORK_TIMEOUT = t("network_timeout")
 
 # --- Outage / failure notices ---
 OUTAGE_RECOVERED = t("outage_recovered")
