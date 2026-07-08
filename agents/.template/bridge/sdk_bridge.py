@@ -541,7 +541,13 @@ class SdkBridge:
         # DGN-217: an injected background turn may decide there is nothing
         # worth telling the owner (no-op review). The agent signals that by
         # ending the turn with the bare sentinel; suppress the push entirely.
-        if content.strip() == "NO_PUSH":
+        # Tolerant match: harness machinery (a Stop-hook footer) may append
+        # lines AFTER the sentinel; strict equality then leaks the raw
+        # sentinel body to the owner chat. The sentinel is the turn's bare
+        # final output, so trailing decoration after a leading NO_PUSH line
+        # is still a suppressed turn.
+        stripped = content.strip()
+        if stripped == "NO_PUSH" or stripped.startswith("NO_PUSH\n"):
             return
         if content == state.last_proactive_sent:
             return

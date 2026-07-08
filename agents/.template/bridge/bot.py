@@ -760,6 +760,18 @@ class TelegramBot:
             self._user_queue_locks[user_id] = lock
         return lock
 
+    def _user_turn_active(self, user_id: int) -> bool:
+        """True while ANY turn task for this user is in flight.
+
+        Gate for background work (session-inbox injection, deferred pinned
+        edits): source is _user_run_tasks (the full in-flight set), NOT
+        _active_tasks -- that dict holds a single slot per user, so with
+        concurrent turns a short turn overwrites a long turn's registration
+        and pops it on completion, opening the gate while the long turn is
+        still streaming.
+        """
+        return bool(self._prune_user_tasks(user_id))
+
     def _prune_user_tasks(self, user_id: int) -> set[asyncio.Task]:
         tasks = self._user_run_tasks.setdefault(user_id, set())
         tasks.difference_update({t for t in tasks if t.done()})
