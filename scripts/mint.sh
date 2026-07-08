@@ -38,10 +38,11 @@ mint.sh -- instantiate a standalone dogany-agent
 
   Options:
     --root  <path>    instance dir (becomes PROJECT_ROOT). REQUIRED.
-    --name  <text>    agent name / launchd slug        (default: basename of --root)
-    --label <text>    assistant speaker label          (default: <name>)
-    --user  <text>    user honorific label             (default: you)
-    --lang  <en|ko>   working language                 (default: en)
+    --name   <text>    agent name / launchd slug        (default: basename of --root)
+    --label  <text>    assistant speaker label          (default: <name>)
+    --user   <text>    user honorific label             (default: you)
+    --prefix <text>    notify prefix emoji/tag          (default: [agent])
+    --lang   <en|ko>   working language                 (default: en)
     --token <token>   Telegram bot token for .env      (default: placeholder)
     --no-venv         skip building the bridge venv
     --core-only       build venv with core deps only (skip faster-whisper/voice)
@@ -57,6 +58,7 @@ TARGET=""
 AGENT_NAME=""
 AGENT_LABEL=""
 USER_LABEL="you"
+AGENT_PREFIX="[agent]"
 AGENT_LANG="en"
 BOT_TOKEN="your_bot_token_here"
 BUILD_VENV=1
@@ -65,12 +67,13 @@ FORCE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)  TARGET="$2"; shift 2 ;;
-    --name)  AGENT_NAME="$2"; shift 2 ;;
-    --label) AGENT_LABEL="$2"; shift 2 ;;
-    --user)  USER_LABEL="$2"; shift 2 ;;
-    --lang)  AGENT_LANG="$2"; shift 2 ;;
-    --token) BOT_TOKEN="$2"; shift 2 ;;
+    --root)   TARGET="$2"; shift 2 ;;
+    --name)   AGENT_NAME="$2"; shift 2 ;;
+    --label)  AGENT_LABEL="$2"; shift 2 ;;
+    --user)   USER_LABEL="$2"; shift 2 ;;
+    --prefix) AGENT_PREFIX="$2"; shift 2 ;;
+    --lang)   AGENT_LANG="$2"; shift 2 ;;
+    --token)  BOT_TOKEN="$2"; shift 2 ;;
     --no-venv) BUILD_VENV=0; shift ;;
     --core-only) CORE_ONLY=1; shift ;;
     --force) FORCE=1; shift ;;
@@ -211,6 +214,7 @@ substitute() {
     -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
     -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
     -e "s#__USER_LABEL__#${USER_LABEL}#g" \
+    -e "s#__AGENT_PREFIX__#${AGENT_PREFIX}#g" \
     -e "s#__HOME__#${HOME_DIR}#g" \
     -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
 }
@@ -243,6 +247,15 @@ MINTED_AT="${MINTED_AT:-$(date -u +%Y-%m-%d)}"
 # (fail-closed). Enum stays lite/basic/pro; marketing names = HAND/CRAFT/MASTER.
 TIER="$(grep -E '^DOGANY_TIER=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
 TIER="${TIER:-lite}"
+# Agent prefix: preserved across re-mints (the instance's baked notify prefix).
+# Fresh mint -> the value of --prefix (default [agent]). update.sh reads this
+# field to re-substitute __AGENT_PREFIX__ after a framework refresh.
+SAVED_PREFIX="$(grep -E '^DOGANY_AGENT_PREFIX=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+# --prefix flag wins on a new mint; on re-mint keep the existing baked value
+# unless the operator explicitly passes --prefix again (AGENT_PREFIX != default).
+if [ -n "$SAVED_PREFIX" ] && [ "$AGENT_PREFIX" = "[agent]" ]; then
+  AGENT_PREFIX="$SAVED_PREFIX"
+fi
 cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
 # .instance.conf -- non-secret instance manifest written by mint.sh.
 # Consumed by update.sh to re-substitute placeholders on framework refresh.
@@ -250,6 +263,7 @@ cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
 DOGANY_AGENT_NAME=${AGENT_NAME}
 DOGANY_AGENT_LABEL=${AGENT_LABEL}
 DOGANY_USER_LABEL=${USER_LABEL}
+DOGANY_AGENT_PREFIX=${AGENT_PREFIX}
 DOGANY_FW_VERSION=${FW_VERSION}
 DOGANY_REPO_ROOT=${REPO_ROOT}
 DOGANY_MINTED_AT=${MINTED_AT}
@@ -342,7 +356,7 @@ fi
 # 7) sanity: no placeholder survivors.
 #    (a) __X__ framework tokens across code + markdown (any survivor = a real
 #        substitution miss).
-LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME|AGENT_LANG)__' \
+LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME|AGENT_LANG)__' \
           --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' --include='*.md' \
           "$PROJECT_ROOT" 2>/dev/null || true)"
 if [ -n "$LEFT" ]; then

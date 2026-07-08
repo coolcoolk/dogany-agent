@@ -20,7 +20,7 @@
 #   --delay N       (optional) seconds before SIGTERM, lets the current turn flush (default 6)
 #   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.<agent-name>)
 #   --env PATH      (optional) agent bot .env for push.sh (default workspace .telegram_bot/.env)
-#   --prefix EMOJI  (optional) emoji prefix in notify messages (default: [agent])
+#   --prefix EMOJI  (optional) emoji prefix in notify messages (default: instance prefix, fallback [agent])
 #   --dry-run       (optional) skip the kill; test the wait+notify wiring
 #
 # Exit codes: 0 restarted+polling up / 2 came back but polling marker missing / 3 setup error
@@ -35,7 +35,7 @@ ENV_FILE="__PROJECT_ROOT__/.telegram_bot/.env"
 PUSH="__PROJECT_ROOT__/routines/push.sh"
 MARKER_LOG="__PROJECT_ROOT__/.telegram_bot/logs/bot.log"
 POLL_MARKER="Bot is running"
-PREFIX="[agent]"
+PREFIX="__AGENT_PREFIX__"
 DRY_RUN=""
 WORKER=""
 

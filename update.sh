@@ -250,7 +250,7 @@ msg "[update] 프레임워크 버전 = $REPO_VERSION" "[update] framework versio
 # 2) Recover instance identity (for placeholder re-substitution).
 #    Prefer the manifest written by mint.sh; fall back to plist-derived name.
 # ---------------------------------------------------------------------------
-AGENT_NAME=""; AGENT_LABEL=""; USER_LABEL=""
+AGENT_NAME=""; AGENT_LABEL=""; USER_LABEL=""; AGENT_PREFIX=""
 AGENT_LANG="$(grep -E "^AGENT_LANG=" "$INSTANCE/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
 AGENT_LANG="${AGENT_LANG:-en}"
 if [ -f "$INSTANCE/.instance.conf" ]; then
@@ -259,6 +259,10 @@ if [ -f "$INSTANCE/.instance.conf" ]; then
   AGENT_NAME="${DOGANY_AGENT_NAME:-}"
   AGENT_LABEL="${DOGANY_AGENT_LABEL:-}"
   USER_LABEL="${DOGANY_USER_LABEL:-}"
+  # DOGANY_AGENT_PREFIX: optional field (absent on pre-DGN-213 instances).
+  # Fall back to generic "[agent]" so old installs without the field get a safe
+  # substitution rather than an empty string or a crash.
+  AGENT_PREFIX="${DOGANY_AGENT_PREFIX:-[agent]}"
 fi
 if [ -z "$AGENT_NAME" ]; then
   # Fallback: recover the agent name slug from a bridge plist filename.
@@ -452,6 +456,7 @@ subst_one() {
       -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
       -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
       -e "s#__USER_LABEL__#${USER_LABEL}#g" \
+      -e "s#__AGENT_PREFIX__#${AGENT_PREFIX}#g" \
       -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
   fi
 }
@@ -813,7 +818,7 @@ if [ "$DRY_RUN" = "0" ]; then
   fi
 
   # Sanity: warn on any surviving placeholders in active code.
-  LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|HOME)__' \
+  LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME)__' \
             --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
             "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
             "$INSTANCE/config" "$INSTANCE/.claude" 2>/dev/null || true)"
