@@ -49,11 +49,18 @@ load_card_data = _core.load_card_data
 person_find = _core.person_find
 person_add = _core.person_add
 person_alias_add = _core.person_alias_add
+
+# DGN-179 verb-delta (grill-final M-1): the legacy appointments-table verbs
+# (appt_add / appt_upd / appt_person_add / appt_persons) were deleted from the
+# core -- re-exporting them made this package die on import. The event-backed
+# surface replaces them: appt_find / appt_show_row are the read verbs; writes
+# go through the event SDK (event_set_meta for metadata, event_person_add /
+# event_persons for participants).
 appt_find = _core.appt_find
-appt_add = _core.appt_add
-appt_upd = _core.appt_upd
-appt_person_add = _core.appt_person_add
-appt_persons = _core.appt_persons
+appt_show_row = _core.appt_show_row
+event_set_meta = _core.event_set_meta
+event_person_add = _core.event_person_add
+event_persons = _core.event_persons
 
 # Body stats / target model.
 load_body_stats = _core.load_body_stats
@@ -79,7 +86,8 @@ __all__ = [
     'workout_add_classification',
     'agg_day', 'agg_week', 'load_card_data',
     'person_find', 'person_add', 'person_alias_add',
-    'appt_find', 'appt_add', 'appt_upd', 'appt_person_add', 'appt_persons',
+    'appt_find', 'appt_show_row',
+    'event_set_meta', 'event_person_add', 'event_persons',
     'load_body_stats', 'compute_targets', 'compute_macro_goals',
     'set_stats', 'set_config', 'get_config',
     'log_metric', 'get_series', 'latest_metric',

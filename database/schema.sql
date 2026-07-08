@@ -1,4 +1,4 @@
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -155,7 +155,8 @@ CREATE TABLE config (
 -- reschedule_requests (M1). All time columns are canonical UTC
 -- 'YYYY-MM-DDThh:mm:ssZ' (fixed 20 chars). Identical to migrations/
 -- 003_event_schema.sql (IF NOT EXISTS -> idempotent). Fresh DBs are born at
--- user_version 3 (this file's PRAGMA above).
+-- user_version 4 (this file's PRAGMA above; the verb-delta added event_persons
+-- as migration 004).
 -- ===========================================================================
 
 -- event (L1) -- unified task + appointment
@@ -256,6 +257,16 @@ CREATE TABLE IF NOT EXISTS event (
     -- class at the root.
     CHECK (NOT (schedule_kind = 'untimed'
                 AND (start_at IS NOT NULL OR end_at IS NOT NULL))),
+    -- verb-delta v2 MIN-5 belt CHECK: an all_day row must carry BOTH instants.
+    -- all_day is stored as a display_tz midnight..next-midnight UTC instant
+    -- range; a NULL-instant all_day is schema-legal under v5 but silently
+    -- vanishes from appt_find's range compare. Forbid it for fresh DBs. Migrated
+    -- DBs cannot receive this CHECK (SQLite has no ALTER ADD CONSTRAINT) -- the
+    -- app validator (validate_all_day_instants) enforces it on the live path;
+    -- the SDK never emits a NULL-instant all_day (all_day flows through
+    -- all_day_instants).
+    CHECK (schedule_kind != 'all_day'
+           OR (start_at IS NOT NULL AND end_at IS NOT NULL)),
     CHECK (status IN ('open','done','expired','abandoned')),
     -- grill-5 enum shrink (OQ-2/MAJOR-2): only 'all' and 'manual' have defined
     -- derivation.
@@ -307,3 +318,18 @@ CREATE TABLE IF NOT EXISTS reschedule_requests (
     CHECK (status IN ('queued','claimed','applied','rejected','expired'))
 );
 CREATE INDEX IF NOT EXISTS idx_reschedule_status ON reschedule_requests(status);
+
+-- ===========================================================================
+-- DGN-179 verb-delta (D2, folded migration 004; spec v2). event_persons
+-- junction -- appointment participants for the unified event table (successor
+-- of appointment_persons). Same-DB FK is INTEGER id. Identical to migrations/
+-- 004_event_persons.sql (IF NOT EXISTS -> idempotent). Fresh DBs are born at
+-- user_version 4 (this file's PRAGMA above).
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS event_persons (
+    event_id  INTEGER NOT NULL REFERENCES event(id)   ON DELETE CASCADE,
+    person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    PRIMARY KEY (event_id, person_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_persons_person
+    ON event_persons(person_id);

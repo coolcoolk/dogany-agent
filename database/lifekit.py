@@ -600,113 +600,78 @@ def person_alias_add(pid, alias, conn=None):
             conn.close()
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# DGN-179 verb-delta (spec v2): event-backed appt_find / appt_show render.
+# The legacy appointments-table appt_* functions are rewritten over the unified
+# event table. Forward references (all_day_instants / ZoneInfo / event_conn /
+# MutationResult / event_persons) resolve at call time -- they are defined later
+# in the event SDK block at module scope.
+# ══════════════════════════════════════════════════════════════════════════
+
+def _render_local_col(start_or_end, schedule_kind, display_tz):
+    """M-3/D4 rendering rule for a stored canonical-UTC instant:
+      timed   -> local ISO w/ offset  '2026-07-10T07:00:00+09:00'
+      all_day -> local bare date      '2026-07-10' (no 'T'; awk omits time)
+      NULL    -> '' (caller decides padding).
+    The awk consumers (morning-brief / daily-retro) extract HH:MM via
+    substr($col, index($col,'T')+1, 5); a 'T'-less all_day value therefore
+    prints date-only, byte-identical to the legacy behavior."""
+    if start_or_end is None:
+        return ""
+    local = (datetime.datetime.strptime(start_or_end, "%Y-%m-%dT%H:%M:%SZ")
+             .replace(tzinfo=timezone.utc)
+             .astimezone(ZoneInfo(display_tz)))
+    if schedule_kind == "all_day":
+        return local.strftime("%Y-%m-%d")
+    return local.isoformat()
+
+
 def appt_find(date_from, date_to=None, conn=None):
-    """기간 내 약속 목록(start_at 날짜 기준). (id, start_at, title, location) 리스트."""
+    """D4: appointments whose START instant falls in the LOCAL date window
+    [date_from, date_to] inclusive (KST scope). Returns
+    [(id, col2, title, location)]:
+      timed   -> col2 = local ISO w/ offset
+      all_day -> col2 = local bare date (no 'T')
+    Bucketing = start-instant in [win_start, win_end) on canonical UTC (legacy
+    date(start_at) semantics incl. multi-day showing only on its start day).
+    kind='appointment' only. settled_outcome='abandoned' excluded (a cancelled
+    meeting must not reappear in the brief); done/expired stay visible."""
+    win_start, win_end = all_day_instants(date_from, date_to or date_from)
     own = conn is None
     if own:
-        conn = get_conn()
+        conn = event_conn()          # asserts user_version==4, actionable error
     try:
-        to = date_to or date_from
-        return conn.execute(
-            "SELECT id, start_at, title, location FROM appointments "
-            "WHERE date(start_at) >= ? AND date(start_at) <= ? "
-            "ORDER BY start_at;", (date_from, to)).fetchall()
+        rows = conn.execute(
+            "SELECT id, start_at, schedule_kind, display_tz, title, location "
+            "FROM event "
+            "WHERE kind = 'appointment' "
+            "AND start_at >= ? AND start_at < ? "
+            "AND (settled_outcome IS NULL OR settled_outcome <> 'abandoned') "
+            "ORDER BY start_at;", (win_start, win_end)).fetchall()
+        out = []
+        for eid, sa, sk, tz, title, loc in rows:
+            out.append((eid, _render_local_col(sa, sk, tz), title, loc))
+        return out
     finally:
         if own:
             conn.close()
 
 
-def appt_add(title, start_at, end_at=None, location=None,
-             purpose=None, summary=None, conn=None):
-    """약속 한 건 신규 등록. 새 id 반환. end_at 미지정시 시작+3시간 디폴트."""
-    if end_at is None and start_at:
-        try:
-            end_at = (datetime.datetime.fromisoformat(start_at)
-                      + datetime.timedelta(hours=3)).isoformat()
-        except ValueError:
-            end_at = None
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        cur = conn.execute(
-            "INSERT INTO appointments "
-            "(title, start_at, end_at, location, purpose, summary) "
-            "VALUES (?,?,?,?,?,?);",
-            (title, _txt(start_at), _txt(end_at), _txt(location),
-             _txt(purpose), _txt(summary)))
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        if own:
-            conn.close()
-
-
-_APPT_UPD_COLS = {
-    'title': _txt, 'start_at': _txt, 'end_at': _txt,
-    'location': _txt, 'location_url': _txt, 'purpose': _txt, 'summary': _txt,
-}
-
-
-def appt_upd(aid, fields, conn=None):
-    """약속 한 건의 지정 필드만 갱신(부분 수정). 갱신 후 행 반환(없으면 None)."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        sets, vals = [], []
-        for col, raw in fields.items():
-            if col not in _APPT_UPD_COLS:
-                raise ValueError(f"수정 불가 컬럼: {col}")
-            sets.append(f"{col}=?")
-            vals.append(_APPT_UPD_COLS[col](raw))
-        if not sets:
-            raise ValueError("갱신할 필드가 없음")
-        vals.append(int(aid))
-        cur = conn.execute(
-            f"UPDATE appointments SET {', '.join(sets)} WHERE id=?;", vals)
-        conn.commit()
-        if cur.rowcount == 0:
-            return None
-        return conn.execute(
-            "SELECT id, title, location, purpose, summary "
-            "FROM appointments WHERE id=?;", (int(aid),)).fetchone()
-    finally:
-        if own:
-            conn.close()
-
-
-def appt_person_add(aid, pid, conn=None):
-    """약속에 참가자(사람) 연결. 이미 있으면 무시. 연결 후 참가자 수 반환."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        conn.execute(
-            "INSERT OR IGNORE INTO appointment_persons "
-            "(appointment_id, person_id) VALUES (?,?);", (int(aid), int(pid)))
-        conn.commit()
-        return conn.execute(
-            "SELECT COUNT(*) FROM appointment_persons WHERE appointment_id=?;",
-            (int(aid),)).fetchone()[0]
-    finally:
-        if own:
-            conn.close()
-
-
-def appt_persons(aid, conn=None):
-    """약속의 참가자 목록. (id, name, aliases, relation) 리스트."""
-    own = conn is None
-    if own:
-        conn = get_conn()
-    try:
-        return conn.execute(
-            "SELECT p.id, p.name, p.aliases, p.relation FROM appointment_persons ap "
-            "JOIN persons p ON p.id=ap.person_id WHERE ap.appointment_id=? "
-            "ORDER BY p.id;", (int(aid),)).fetchall()
-    finally:
-        if own:
-            conn.close()
+def appt_show_row(conn, eid):
+    """M-3: event-backed appt-show. Returns
+    (id, title, start_local, end_local, location, purpose, summary) or None.
+    start_local/end_local rendered per the M-3 rule (timed -> local ISO offset,
+    all_day -> local date, NULL -> '')."""
+    row = conn.execute(
+        "SELECT id, title, start_at, end_at, schedule_kind, display_tz, "
+        "location, purpose, summary FROM event "
+        "WHERE id=? AND kind='appointment';", (int(eid),)).fetchone()
+    if row is None:
+        return None
+    eid_, title, sa, ea, sk, tz, loc, purpose, summary = row
+    return (eid_, title,
+            _render_local_col(sa, sk, tz), _render_local_col(ea, sk, tz),
+            loc, purpose, summary)
 
 
 # ── 신체 스탯 / 목표 칼로리 모델 (card.py에서 이전, 공식 동일) ──
@@ -1077,10 +1042,15 @@ def load_card_data(iso_date, conn=None):
 #
 # NOTE ON user_version: the event schema is framework migration 003 (DGN-180
 # D180-0 renumber -- 002_tasks_archived_at already owns user_version=2, so the
-# event schema is 3). SDK asserts 3.
+# event schema is 3). The DGN-179 verb-delta adds migration 004 (event_persons
+# junction, D2), so the SDK now asserts 4.
 # ═══════════════════════════════════════════════════════════════════════════
 
-EXPECTED_USER_VERSION = 3
+# MIN-7a (spec v2): ZoneInfo imported at module scope (used by appt_find + the
+# facade time parser). datetime/timezone are already imported at file top.
+from zoneinfo import ZoneInfo
+
+EXPECTED_USER_VERSION = 4
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
@@ -1114,7 +1084,7 @@ class MigrationRequired(Exception):
 
 def event_conn(db_path=None, assert_version=True):
     """Open a hardened connection for the event SDK. WAL + busy_timeout=5000.
-    Asserts user_version==3 unless told otherwise (migration tooling opens with
+    Asserts user_version==4 unless told otherwise (migration tooling opens with
     assert_version=False). Defaults to the module DB_PATH; a path override lets
     tests / migration point at a copy.
 
@@ -1130,7 +1100,8 @@ def event_conn(db_path=None, assert_version=True):
             conn.close()
             raise MigrationRequired(
                 "event schema user_version=%d, expected %d. "
-                "run migration: sqlite3 <db> < migrations/003_event_schema.sql"
+                "run: update.sh (applies pending migrations under "
+                "database/migrations/)"
                 % (v, EXPECTED_USER_VERSION))
     return conn
 
@@ -1158,6 +1129,20 @@ def validate_interval(start_at, end_at):
     if end_at < start_at:
         raise ValueError(
             "reversed interval refused: end_at %r < start_at %r" % (end_at, start_at))
+    return None
+
+
+def validate_all_day_instants(schedule_kind, start_at, end_at):
+    """spec v2 MIN-5 app-side belt: an all_day row must carry BOTH instants.
+    A fresh DB enforces this with a schema CHECK; a MIGRATED DB cannot (SQLite
+    has no ALTER ADD CONSTRAINT), so this validator closes the live SDK path on
+    every DB regardless of when it was minted. The SDK never emits a
+    NULL-instant all_day (all_day always flows through all_day_instants), so this
+    is belt-and-suspenders. Returns None; raises ValueError on violation."""
+    if schedule_kind == "all_day" and (start_at is None or end_at is None):
+        raise ValueError(
+            "all_day row must carry both start_at and end_at "
+            "(got start=%r end=%r)" % (start_at, end_at))
     return None
 
 
@@ -1232,17 +1217,23 @@ TIME_OCCUPYING_TASK_KINDS = set()  # e.g. {'workout_session', 'focus_block'}
 
 
 def resolve_slot_exclusive(kind, schedule_kind, task_kind=None, day_block=False):
-    """Decide slot_exclusive per kind-policy (N5/D8 locus):
-      - appointment: always 1.
-      - task with a declared time-occupying kind: 1 (born exclusive).
-      - all_day: default 0 (containing context: trip/travel), 1 only if the
-        caller explicitly marks a full-day block (exam day, etc).
-      - general task: 0.
+    """Decide slot_exclusive per kind-policy (N5/D8 locus).
+
+    F-1 (grill-1 FATAL, spec v2): the all_day branch is evaluated BEFORE the
+    appointment-kind branch. all_day is a CONTAINING context (trip/travel):
+    default 0, exclusive 1 ONLY on an explicit full-day block (exam day, etc.),
+    regardless of kind. Putting the appointment branch first minted a "day
+    brick" -- every date-only appointment born exclusive, physically blocking
+    its whole day under the v5.1 occupancy predicate. v5 kind-policy cells:
+      - all_day  -> 0 default, 1 iff day_block (containing context; kind-blind).
+      - appointment (timed)          -> 1 (a point-in-time meeting occupies).
+      - task with declared time-occupying kind -> 1 (born exclusive).
+      - general task (timed/untimed) -> 0.
     """
-    if kind == "appointment":
-        return 1
     if schedule_kind == "all_day":
         return 1 if day_block else 0
+    if kind == "appointment":
+        return 1
     if task_kind is not None and task_kind in TIME_OCCUPYING_TASK_KINDS:
         return 1
     return 0
@@ -1339,29 +1330,48 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
               open_ended=0, owning_agent=None, created_by=None,
               completion_rule="all", note=None, area_id=None,
               display_tz="Asia/Seoul", task_kind=None, day_block=False,
-              notion_id=None, extra=None):
+              notion_id=None, meta=None):
     """Insert a new event. For slot_exclusive events with a start instant, the
     insert is atomic INSERT..WHERE NOT EXISTS(overlap): returns event id on win,
     None on slot loss. For non-exclusive/no-start, always inserts (no slot guard).
 
     Time validation is enforced here (canonical) and by table CHECKs.
+
+    meta (spec v2 DEV-1 verdict): optional {col: value} of KIND-SPECIFIC
+    metadata columns carried in the SAME INSERT (single txn -- no crash window
+    between insert and a follow-up event_set_meta, and no version bump at
+    birth). Validated against META_COLS_BY_KIND[kind] with the same rule as
+    event_set_meta: a kind-illegal column raises ValueError. title/note have
+    first-class params and are NOT accepted through meta.
     """
     canonical(start_at)
     canonical(end_at)
     validate_interval(start_at, end_at)   # grill-5: reject reversed interval
+    validate_all_day_instants(schedule_kind, start_at, end_at)  # v2 MIN-5 belt
     if owning_agent is None or created_by is None:
         raise ValueError("owning_agent and created_by are required")
+    meta = dict(meta) if meta else {}
+    allowed = set(META_COLS_BY_KIND.get(kind, ()))
+    for col in meta:
+        if col not in allowed:
+            raise ValueError(
+                "event_add: meta column %r not allowed for kind %r "
+                "(allowed: %s; title/note are first-class params)"
+                % (col, kind, sorted(allowed)))
     slot_exclusive = resolve_slot_exclusive(kind, schedule_kind, task_kind, day_block)
     now = now_utc()
     ulid = new_ulid()
-    extra = extra or {}
 
+    meta_cols = sorted(meta.keys())       # deterministic column order
     cols = ("ulid, kind, title, note, area_id, schedule_kind, start_at, end_at, "
             "display_tz, open_ended, slot_exclusive, completion_rule, "
             "owning_agent, created_by, notion_id, created_at, updated_at")
+    if meta_cols:
+        cols += ", " + ", ".join(meta_cols)
     base_vals = [ulid, kind, title, note, area_id, schedule_kind, start_at, end_at,
                  display_tz, open_ended, slot_exclusive, completion_rule,
                  owning_agent, created_by, notion_id, now, now]
+    base_vals += [meta[c] for c in meta_cols]
 
     conn.execute("BEGIN IMMEDIATE;")
     try:
@@ -1431,7 +1441,12 @@ def _cas_slot_update(conn, eid, version, set_clause, set_params,
 
 def event_move(conn, eid, version, new_start, new_end, open_ended=0):
     """Move a timed event to a new [start,end). Passes the atomic slot predicate
-    (self excluded). Returns MutationResult."""
+    (self excluded). Returns MutationResult.
+
+    grill-final M-2: the all_day validator runs against the row's CURRENT
+    schedule_kind, so moving an all_day row to NULL instants raises ValueError
+    on EVERY DB (fresh AND migrated -- consistent error class; migrated DBs lack
+    the schema CHECK)."""
     canonical(new_start)
     canonical(new_end)
     validate_interval(new_start, new_end)   # grill-5: reject reversed interval
@@ -1443,6 +1458,8 @@ def event_move(conn, eid, version, new_start, new_end, open_ended=0):
             conn.commit()
             return MutationResult.NOT_FOUND
         slot_ex, sk = row
+        # grill-final M-2: all_day rows must keep BOTH instants through a move.
+        validate_all_day_instants(sk, new_start, new_end)
         # v5.1: guard if the moved row will be an exclusive blocker with a start.
         guard = is_blocker(slot_ex, new_start)
         cee = _cand_eff_end(new_start, new_end, open_ended)
@@ -1473,6 +1490,19 @@ def event_transition_schedule_kind(conn, eid, version, new_schedule_kind,
     timed row's instants, call this with new_schedule_kind='untimed' and all time
     args left at their defaults (NULL / 0); this forces start_at/end_at to NULL
     and open_ended to 0 in the UPDATE below.
+
+    grill-final M-3: slot_exclusive is RE-RESOLVED from the kind-policy against
+    the NEW schedule_kind inside the same CAS UPDATE (resolve_slot_exclusive
+    with day_block=False). Without this, a timed appointment carried its
+    exclusive=1 into all_day (minting a day brick), and an all_day appointment
+    carried its 0 into timed (a non-occupying meeting, double-bookable). An
+    EXPLICIT day-block is NOT expressible through this verb: transition first,
+    then re-acquire exclusivity via event_promote_exclusive (which passes the
+    slot predicate).
+
+    grill-final M-2: the all_day validator runs against the NEW schedule_kind,
+    so a transition to all_day with a missing instant raises ValueError on
+    every DB (fresh AND migrated).
     """
     if new_schedule_kind == "untimed" and (
             new_start is not None or new_end is not None or open_ended):
@@ -1483,22 +1513,29 @@ def event_transition_schedule_kind(conn, eid, version, new_schedule_kind,
     canonical(new_start)
     canonical(new_end)
     validate_interval(new_start, new_end)   # grill-5: reject reversed interval
+    # grill-final M-2: validate against the TARGET schedule_kind.
+    validate_all_day_instants(new_schedule_kind, new_start, new_end)
     conn.execute("BEGIN IMMEDIATE;")
     try:
-        row = conn.execute("SELECT slot_exclusive FROM event WHERE id=?;",
+        row = conn.execute("SELECT kind FROM event WHERE id=?;",
                            (eid,)).fetchone()
         if row is None:
             conn.commit()
             return MutationResult.NOT_FOUND
-        slot_ex = row[0]
+        kind = row[0]
+        # grill-final M-3: exclusivity follows the kind-policy of the TARGET
+        # schedule_kind (day_block=False -- explicit day-blocks re-acquire via
+        # event_promote_exclusive after the transition).
+        new_exclusive = resolve_slot_exclusive(kind, new_schedule_kind,
+                                               task_kind=None, day_block=False)
         # v5.1: guard for any exclusive transition target that has a start
         # instant (timed OR all_day). untimed target has NULL start -> no slot.
-        guard = is_blocker(slot_ex, new_start)
+        guard = is_blocker(new_exclusive, new_start)
         cee = _cand_eff_end(new_start, new_end, open_ended) if new_start else None
         res = _cas_slot_update(
             conn, eid, version,
-            "schedule_kind=?, start_at=?, end_at=?, open_ended=?",
-            [new_schedule_kind, new_start, new_end, open_ended],
+            "schedule_kind=?, start_at=?, end_at=?, open_ended=?, slot_exclusive=?",
+            [new_schedule_kind, new_start, new_end, open_ended, new_exclusive],
             new_start, cee, guard)
         conn.commit()
         return res
@@ -1534,6 +1571,102 @@ def event_promote_exclusive(conn, eid, version):
     except Exception:
         conn.rollback()
         raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DGN-179 verb-delta (spec v2): D1 metadata verb + D2 participant junction.
+# ══════════════════════════════════════════════════════════════════════════
+
+# D1 -- metadata columns per kind. Structurally excludes every slot field
+# (start_at/end_at/open_ended/slot_exclusive/schedule_kind) and every derivation
+# input -> event_set_meta needs no overlap guard and no recompute dependency.
+META_COLS_COMMON = ("title", "note")
+META_COLS_BY_KIND = {
+    "appointment": ("location", "location_url", "purpose", "summary"),
+    "task": (),  # extended when the task CLI is built (no caller today)
+}
+
+
+def _meta_allowed_cols(kind):
+    return set(META_COLS_COMMON) | set(META_COLS_BY_KIND.get(kind, ()))
+
+
+def event_set_meta(conn, eid, version, fields):
+    """D1: metadata-only update under version CAS. fields: {col: value}.
+    Allowed cols = META_COLS_COMMON + META_COLS_BY_KIND[row.kind]. No slot field
+    is reachable (allowlist excludes them structurally) -> no overlap guard, no
+    recompute dependency. Legal on settled rows (summary is written post-meeting;
+    safe under the F-A seal -- meta columns feed no derivation).
+
+    Bumps version + updated_at. Returns MutationResult:
+      APPLIED / CAS_FAIL / NOT_FOUND. OVERLAP_REJECT unreachable (no guard).
+    Raises ValueError on: empty fields; unknown/kind-illegal column; title
+    present but empty/None (NOT NULL contract).
+
+    MIN-7b (spec v2): the NOT_FOUND path commits the open txn before returning
+    (mirrors event_move's NOT_FOUND commit) -- no dangling BEGIN IMMEDIATE.
+    """
+    if not fields:
+        raise ValueError("event_set_meta: empty fields")
+    if "title" in fields and (fields["title"] is None or fields["title"] == ""):
+        raise ValueError("event_set_meta: title is NOT NULL, cannot be empty")
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        row = conn.execute("SELECT kind FROM event WHERE id=?;", (eid,)).fetchone()
+        if row is None:
+            conn.commit()                       # MIN-7b: commit before NOT_FOUND
+            return MutationResult.NOT_FOUND
+        kind = row[0]
+        allowed = _meta_allowed_cols(kind)
+        for col in fields:
+            if col not in allowed:
+                # roll back the open txn before raising (no partial state).
+                conn.rollback()
+                raise ValueError(
+                    "event_set_meta: column %r not allowed for kind %r "
+                    "(allowed: %s)" % (col, kind, sorted(allowed)))
+        cols = sorted(fields.keys())            # deterministic SET order
+        set_clause = ", ".join("%s=?" % c for c in cols)
+        params = [fields[c] for c in cols]
+        # reuse the CAS update machinery with NO slot guard.
+        res = _cas_slot_update(
+            conn, eid, version, set_clause, params,
+            None, None, will_be_exclusive_timed=False)
+        conn.commit()
+        return res
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def event_person_add(conn, eid, person_id):
+    """D2: link a person to an event. INSERT OR IGNORE INTO event_persons
+    (idempotent via PK). NO parent version bump (self-atomic, no slot, no
+    derivation input; legal on settled rows). FK violations raise
+    sqlite3.IntegrityError (loud; foreign_keys=ON on every connection). Returns
+    the participant count for eid."""
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO event_persons (event_id, person_id) "
+            "VALUES (?,?);", (int(eid), int(person_id)))
+        n = conn.execute(
+            "SELECT COUNT(*) FROM event_persons WHERE event_id=?;",
+            (int(eid),)).fetchone()[0]
+        conn.commit()
+        return n
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def event_persons(conn, eid):
+    """D2: [(person_id, name, aliases, relation)] via JOIN persons, ORDER BY
+    p.id -- same shape as legacy appt_persons."""
+    return conn.execute(
+        "SELECT p.id, p.name, p.aliases, p.relation FROM event_persons ep "
+        "JOIN persons p ON p.id = ep.person_id WHERE ep.event_id=? "
+        "ORDER BY p.id;", (int(eid),)).fetchall()
 
 
 # ── settle family: cancel (abandoned) / force_settle (done). owner + CAS. ──
@@ -2026,13 +2159,98 @@ def cli_person_alias(argv):
     print(f"{row[0]}\t{row[1]}\t{row[2] or ''}")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# DGN-179 verb-delta (spec v2): appt CLI facade -- kind gate (M-1), shape-regex
+# parsing (MIN-1), mixed-shape loud error (MIN-2), retry loop with full-row
+# re-read (M-2), +3h deletion, zero-length default. Signatures preserved.
+# ══════════════════════════════════════════════════════════════════════════
+
+# MIN-1: shape detection is regex-FIRST (py3.9 fromisoformat("YYYY-MM-DD")
+# succeeds as midnight, so a naive-datetime-first order would silently turn an
+# all_day intent into a timed-midnight appt).
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# grill-final M-5: (\.\d+)? accepts fractional seconds (live Ag Notion shape
+# '...07:00:00.000+09:00'); the fraction is stripped during normalization so
+# canonical output stays 20-char GLOB-legal. grill-final M-4: this regex and
+# _to_canonical_utc (after normalization) accept exactly the same set --
+# normalization handles space sep, trailing Z, colon-less offset, fraction.
+_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$")
+
+_APPT_UPD_FIELDS = ("title", "start_at", "end_at",
+                    "location", "location_url", "purpose", "summary")
+_TIME_FIELDS = ("start_at", "end_at")
+_META_FIELDS = ("title", "location", "location_url", "purpose", "summary")
+_UPD_RETRY_MAX = 3
+
+
+def _facade_agent():
+    """owning_agent/created_by for the facade: LIFEKIT_AGENT env if set, else the
+    lowercased basename of the instance root (the dir containing database/)."""
+    env = os.environ.get("LIFEKIT_AGENT")
+    if env:
+        return env.strip().lower()
+    # SCRIPT_DIR is <root>/database; the root basename is the agent id.
+    return os.path.basename(os.path.dirname(SCRIPT_DIR)).lower()
+
+
+def _shape_of(val):
+    """Classify a time token: 'date' / 'datetime' / 'bad' (MIN-1 regex-first)."""
+    if val is None:
+        return None
+    if _DATE_RE.match(val):
+        return "date"
+    if _DATETIME_RE.match(val):
+        return "datetime"
+    return "bad"
+
+
+def _to_canonical_utc(val):
+    """Facade datetime -> canonical UTC 'YYYY-MM-DDThh:mm:ssZ'.
+      - trailing-'Z' 20-char canonical -> passthrough (validated by canonical()).
+      - ISO with offset -> convert to UTC.
+      - naive datetime -> interpret in Asia/Seoul (default display_tz) -> UTC.
+    grill-final M-4: NORMALIZE BEFORE PARSING so py3.9 fromisoformat accepts
+    exactly what _DATETIME_RE accepts: space sep -> 'T'; fractional seconds
+    stripped (M-5: output is whole-second canonical anyway); trailing 'Z' ->
+    '+00:00' (py3.9 fromisoformat rejects 'Z'); colon inserted into a 4-digit
+    offset ('+0900' -> '+09:00'). A calendar-impossible date (e.g. 02-30) still
+    raises ValueError from fromisoformat -- callers wrap it into a loud one-line
+    error (facade error contract). Raises ValueError with a clean message."""
+    if CANON_RE.match(val):
+        return val
+    s = val.replace(" ", "T")
+    s = re.sub(r"\.\d+", "", s)                    # strip fraction (M-5)
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"                       # Z -> explicit offset
+    s = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", s)  # +0900 -> +09:00
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        raise ValueError("bad time format: %s" % val)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _read_appt_kind(conn, eid):
+    """Return the event kind for eid, or None if the row is absent."""
+    row = conn.execute("SELECT kind FROM event WHERE id=?;", (int(eid),)).fetchone()
+    return row[0] if row else None
+
+
 def cli_appt_find(argv):
     # appt-find <date_from> [date_to]
     if not argv or not argv[0]:
         _err("사용법: lifekit.sh appt-find <date_from> [date_to]")
     g = lambda i: argv[i] if i < len(argv) else None
-    for aid, start_at, title, location in appt_find(argv[0], g(1)):
-        print(f"{aid}\t{start_at or ''}\t{title}\t{location or ''}")
+    # grill-final M-4: a malformed date (e.g. '2026-7-8') must be a loud
+    # one-liner, not a strptime traceback. Regex-first, same as appt-add.
+    for d in (argv[0], g(1)):
+        if d is not None and not _DATE_RE.match(d):
+            _err(f"bad date format (want YYYY-MM-DD): {d}")   # E-find-badfmt
+    for aid, col2, title, location in appt_find(argv[0], g(1)):
+        print(f"{aid}\t{col2 or ''}\t{title}\t{location or ''}")
 
 
 def cli_appt_add(argv):
@@ -2041,9 +2259,151 @@ def cli_appt_add(argv):
         _err("사용법: lifekit.sh appt-add <title> <start_at> "
              "[end_at location purpose summary]")
     g = lambda i: argv[i] if i < len(argv) else None
-    aid = appt_add(argv[0], argv[1], end_at=g(2), location=g(3),
-                   purpose=g(4), summary=g(5))
-    print(f"{aid}\t{argv[0]}")
+    title, start_raw = argv[0], argv[1]
+    end_raw = g(2)
+    location, purpose, summary = g(3), g(4), g(5)
+
+    s_shape = _shape_of(start_raw)
+    if s_shape == "bad":
+        _err(f"bad time format: {start_raw}")          # E-add-badfmt (A8)
+    e_shape = _shape_of(end_raw) if end_raw else None
+    if e_shape == "bad":
+        _err(f"bad time format: {end_raw}")            # E-add-badfmt (A8)
+    # MIN-2: mixed shape (datetime start + date-only end, or reverse) -> loud.
+    if e_shape is not None and e_shape != s_shape:
+        _err("start and end must be the same shape "
+             "(both datetime or both date)")           # E-add-mixed (A5/A6)
+
+    agent = _facade_agent()
+    # grill-final M-4: every SDK ValueError becomes a loud one-liner (no
+    # traceback): impossible calendar dates from _to_canonical_utc, reversed
+    # intervals from validate_interval, etc.
+    try:
+        if s_shape == "date":
+            # all_day (A3 single / A4 multi-day). E-add-reversed: date-only
+            # reversed range is refused before instant derivation.
+            if end_raw and end_raw < start_raw:
+                raise ValueError(
+                    "reversed interval refused: end %s < start %s"
+                    % (end_raw, start_raw))
+            schedule_kind = "all_day"
+            start_at, end_at = all_day_instants(start_raw, end_raw)
+        else:
+            # timed (A1 zero-length / A2 explicit end).
+            schedule_kind = "timed"
+            start_at = _to_canonical_utc(start_raw)
+            end_at = _to_canonical_utc(end_raw) if end_raw else start_at  # A1
+    except ValueError as e:
+        _err(str(e))                                   # E-add-badfmt / reversed
+
+    # DEV-1 verdict: metadata rides the event_add INSERT itself (single txn,
+    # no crash window, no version bump at birth).
+    meta = {}
+    if location is not None and location != "":
+        meta["location"] = location
+    if purpose is not None and purpose != "":
+        meta["purpose"] = purpose
+    if summary is not None and summary != "":
+        meta["summary"] = summary
+
+    conn = event_conn()
+    try:
+        try:
+            eid = event_add(conn, kind="appointment", title=title,
+                            schedule_kind=schedule_kind, start_at=start_at,
+                            end_at=end_at, open_ended=0,
+                            owning_agent=agent, created_by=agent,
+                            completion_rule="manual", meta=meta)
+        except ValueError as e:
+            _err(str(e))                               # M-4 loud, no traceback
+        if eid is None:
+            _err("slot occupied")                      # E-add-slot (A7)
+    finally:
+        conn.close()
+    print(f"{eid}\t{title}")
+
+
+def _local_date_of(instant, tz_name):
+    """Local calendar date of a stored canonical-UTC instant."""
+    return (datetime.datetime.strptime(instant, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .astimezone(ZoneInfo(tz_name)).date())
+
+
+def _upd_overlay_time(cur_row, fields):
+    """Overlay the given time endpoints onto the CURRENT row (M-2: called with
+    a FRESHLY re-read row on every retry). cur_row = (schedule_kind, start_at,
+    end_at, open_ended, display_tz). Returns (new_start, new_end, open_ended)
+    canonical, or raises ValueError (shape mismatch E-upd-shape / bad format /
+    reversed range). schedule_kind transitions are NOT reachable here.
+
+    grill-final F-1 (Metal verdict) all_day semantics -- an all_day row is a
+    [start_day 00:00 local, end_day+1 00:00 local) instant RANGE, so a
+    single-endpoint date update must never overlay ONE instant (that minted
+    zero-length / reversed all_day rows and collapsed day-block occupancy):
+      - start_at only  = DURATION-PRESERVING SHIFT: the whole range moves so it
+        starts on the given date; the length in whole days is preserved
+        (multi-day trips stay multi-day).
+      - end_at only    = keep start; end re-derived from the given INCLUSIVE
+        end date (next-midnight instant). end date < start date -> ValueError.
+      - both given     = each endpoint derived from its own date;
+        end < start -> ValueError.
+    """
+    sk, cur_start, cur_end, oe, tz = cur_row
+    if sk == "all_day":
+        for f in _TIME_FIELDS:
+            if f in fields:
+                shape = _shape_of(fields[f])
+                if shape == "bad":
+                    raise ValueError("bad time format: %s" % fields[f])
+                if shape != "date":
+                    raise ValueError(
+                        "shape mismatch: use the SDK schedule_kind transition "
+                        "verb to change timed<->all_day")
+        # current inclusive local date range
+        sd = _local_date_of(cur_start, tz)
+        ed_incl = _local_date_of(cur_end, tz) - timedelta(days=1)
+        duration_days = (ed_incl - sd).days + 1          # >= 1
+        s_raw = fields.get("start_at")
+        e_raw = fields.get("end_at")
+        if s_raw is not None and e_raw is not None:
+            new_sd = datetime.date.fromisoformat(s_raw)
+            new_ed = datetime.date.fromisoformat(e_raw)
+        elif s_raw is not None:
+            # duration-preserving shift
+            new_sd = datetime.date.fromisoformat(s_raw)
+            new_ed = new_sd + timedelta(days=duration_days - 1)
+        else:
+            # end-only: keep start, shrink/extend to the given inclusive end
+            new_sd = sd
+            new_ed = datetime.date.fromisoformat(e_raw)
+        if new_ed < new_sd:
+            raise ValueError(
+                "reversed all_day range refused: end %s < start %s"
+                % (new_ed.isoformat(), new_sd.isoformat()))
+        ns, ne = all_day_instants(new_sd.isoformat(), new_ed.isoformat(),
+                                  tz_name=tz)
+        return ns, ne, oe
+
+    # timed row
+    new_start, new_end = cur_start, cur_end
+    for f in _TIME_FIELDS:
+        if f not in fields:
+            continue
+        raw = fields[f]
+        shape = _shape_of(raw)
+        if shape == "bad":
+            raise ValueError("bad time format: %s" % raw)
+        if shape != "datetime":
+            raise ValueError(
+                "shape mismatch: use the SDK schedule_kind transition verb "
+                "to change timed<->all_day")
+        val = _to_canonical_utc(raw)
+        if f == "start_at":
+            new_start = val
+        else:
+            new_end = val
+    return new_start, new_end, oe
 
 
 def cli_appt_upd(argv):
@@ -2052,45 +2412,140 @@ def cli_appt_upd(argv):
           "  field: title start_at end_at location location_url purpose summary")
     if len(argv) < 2 or not str(argv[0]).isdigit():
         _err(_u)
+    eid = int(argv[0])
     fields = {}
     for tok in argv[1:]:
         if '=' not in tok:
             _err(f"field=value 형식이 아님: {tok}\n{_u}")
         col, val = tok.split('=', 1)
         col = col.strip()
-        if col not in _APPT_UPD_COLS:
+        if col not in _APPT_UPD_FIELDS:
             _err(f"수정 불가 컬럼: {col}\n{_u}")
         fields[col] = val
     if not fields:
         _err(_u)
-    row = appt_upd(argv[0], fields)
-    if row is None:
-        _err(f"해당 id 약속 없음: {argv[0]}")
-    print(f"{row[0]}\t{row[1]}\t{row[2] or ''}")
+
+    conn = event_conn()
+    try:
+        # M-1 kind gate: read kind ONCE; task / not-found -> legacy loud reject.
+        kind = _read_appt_kind(conn, eid)
+        if kind != "appointment":
+            _err(f"해당 id 약속 없음: {eid}")            # E-upd-kind / E-upd-notfound
+
+        time_fields = {k: v for k, v in fields.items() if k in _TIME_FIELDS}
+        # grill-final m-4 (Metal verdict): an empty field value (field=) maps to
+        # NULL, matching legacy _txt semantics. title= stays a loud error (the
+        # NOT NULL contract lives in event_set_meta).
+        meta_fields = {k: (None if (v == "" and k != "title") else v)
+                       for k, v in fields.items() if k in _META_FIELDS}
+
+        time_applied = False
+        # ---- time edit (event_move) with M-2 full-row re-read retry loop ----
+        if time_fields:
+            for attempt in range(_UPD_RETRY_MAX):
+                cur = conn.execute(
+                    "SELECT version, schedule_kind, start_at, end_at, "
+                    "open_ended, display_tz FROM event WHERE id=?;",
+                    (eid,)).fetchone()
+                if cur is None:
+                    _err(f"해당 id 약속 없음: {eid}")
+                version = cur[0]
+                try:
+                    ns, ne, oe = _upd_overlay_time(cur[1:], time_fields)
+                    res = event_move(conn, eid, version, ns, ne, open_ended=oe)
+                except ValueError as e:
+                    # M-4: overlay errors AND event_move validator errors
+                    # (reversed interval, all_day belt) -> loud one-liner.
+                    _err(str(e))            # E-upd-shape / badfmt / reversed
+                if res == MutationResult.APPLIED:
+                    time_applied = True
+                    break
+                if res == MutationResult.OVERLAP_REJECT:
+                    _err("slot occupied")                 # E-upd-slot (U7)
+                if res == MutationResult.NOT_FOUND:
+                    _err(f"해당 id 약속 없음: {eid}")
+                # CAS_FAIL -> re-read full row and retry.
+            else:
+                _err("conflict, please retry")            # E-upd-cas (U8)
+
+        # ---- meta edit (event_set_meta) retry loop -- m-3: uniform full-row
+        # re-read (same discipline as the time loop; meta values are absolute
+        # so the re-read is for uniformity, the version is what matters). ----
+        if meta_fields:
+            meta_ok = False
+            fail_reason = "conflict"
+            for attempt in range(_UPD_RETRY_MAX):
+                cur = conn.execute(
+                    "SELECT version, schedule_kind, start_at, end_at, "
+                    "open_ended, display_tz FROM event WHERE id=?;",
+                    (eid,)).fetchone()
+                if cur is None:
+                    fail_reason = f"해당 id 약속 없음: {eid}"
+                    break
+                version = cur[0]
+                try:
+                    res = event_set_meta(conn, eid, version, dict(meta_fields))
+                except ValueError as e:
+                    # M-4: kind-illegal column / empty title -> loud one-liner
+                    # (or partial report if time already landed).
+                    fail_reason = str(e)
+                    break
+                if res == MutationResult.APPLIED:
+                    meta_ok = True
+                    break
+                if res == MutationResult.NOT_FOUND:
+                    fail_reason = f"해당 id 약속 없음: {eid}"
+                    break
+                # CAS_FAIL -> re-read full row and retry.
+            if not meta_ok:
+                if time_applied:
+                    # U4 partial (spec 4.4 E-upd-partial wording): time landed,
+                    # metadata did not, with the concrete reason.
+                    _err(f"time applied, metadata NOT applied: {fail_reason}")
+                _err(fail_reason if fail_reason != "conflict"
+                     else "conflict, please retry")       # E-upd-cas / loud
+        # success line (legacy shape: id, title, location).
+        row = conn.execute(
+            "SELECT id, title, location FROM event WHERE id=?;", (eid,)).fetchone()
+        print(f"{row[0]}\t{row[1]}\t{row[2] or ''}")
+    finally:
+        conn.close()
 
 
 def cli_appt_person(argv):
     # appt-person <appt_id> <person_id>
     if len(argv) < 2 or not str(argv[0]).isdigit() or not str(argv[1]).isdigit():
         _err("사용법: lifekit.sh appt-person <appt_id> <person_id>")
-    n = appt_person_add(argv[0], argv[1])
-    print(f"appt {argv[0]} 참가자 {n}명")
+    eid, pid = int(argv[0]), int(argv[1])
+    conn = event_conn()
+    try:
+        # M-1 kind gate.
+        kind = _read_appt_kind(conn, eid)
+        if kind != "appointment":
+            _err(f"해당 id 약속 없음: {eid}")            # E-person-kind
+        try:
+            n = event_person_add(conn, eid, pid)
+        except sqlite3.IntegrityError:
+            _err(f"no such person {pid}")                 # E-person-fk
+        print(f"appt {eid} 참가자 {n}명")
+    finally:
+        conn.close()
 
 
 def cli_appt_show(argv):
     # appt-show <id> — 약속 1건 + 참가자
     if not argv or not str(argv[0]).isdigit():
         _err("사용법: lifekit.sh appt-show <id>")
-    conn = get_conn()
+    eid = int(argv[0])
+    conn = event_conn()
     try:
-        a = conn.execute(
-            "SELECT id, title, start_at, end_at, location, purpose, summary "
-            "FROM appointments WHERE id=?;", (int(argv[0]),)).fetchone()
+        a = appt_show_row(conn, eid)                      # M-1: None if not appt
         if a is None:
-            _err(f"해당 id 약속 없음: {argv[0]}")
+            _err(f"해당 id 약속 없음: {eid}")            # E-show-kind
+        # a = (id, title, start_local, end_local, location, purpose, summary)
         print(f"{a[0]}\t{a[1]}\t{a[2] or ''}\t{a[3] or ''}\t"
               f"{a[4] or ''}\t{a[5] or ''}\t{a[6] or ''}")
-        for pid, name, aliases, relation in appt_persons(argv[0], conn=conn):
+        for pid, name, aliases, relation in event_persons(conn, eid):
             print(f"  {pid}\t{name}\t{aliases or ''}\t{relation or ''}")
     finally:
         conn.close()
