@@ -186,7 +186,7 @@ PYEOF2
   _access_token=""  # clear from memory after use
 else
   echo "=================================================="
-  echo "  Live Rate-Limit] live lookup failed (${_live_err})"
+  echo "  [Live Rate-Limit] live lookup failed (${_live_err})"
   echo "=================================================="
   _access_token=""
 fi
