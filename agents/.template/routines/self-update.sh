@@ -16,10 +16,13 @@
 #      workspace move and does not depend on where it is invoked from.
 #   2. Refuse if that root has no .instance.conf (mirrors update.sh's gate:
 #      a real minted instance always carries one).
-#   3. Read DOGANY_REPO_ROOT from .instance.conf and `git pull --ff-only`
-#      the framework repo FIRST, so the newest framework AND the newest
-#      update.sh are present before we invoke update.sh (a stale instance
-#      must not run the old, un-gated update.sh against itself).
+#   3. Read DOGANY_REPO_ROOT from .instance.conf and sync the framework repo
+#      FIRST, so the newest framework AND the newest update.sh are present
+#      before we invoke update.sh (a stale instance must not run the old,
+#      un-gated update.sh against itself). Sync = latest RELEASE TAG (v*)
+#      by default (DGN-221: instances consume releases, never main HEAD);
+#      DOGANY_UPDATE_CHANNEL=main (env or .instance.conf) restores
+#      `git pull --ff-only` for development checkouts that dogfood main.
 #   4. exec update.sh --root <self> --yes  (self-targeted, non-interactive).
 #
 # No owner data, no machine paths, no identity placeholders: every path is
@@ -53,13 +56,32 @@ REPO_ROOT="$(sed -n 's/^DOGANY_REPO_ROOT=//p' "$CONF" | head -n1)"
 [ -d "$REPO_ROOT" ] || die "framework repo not found: $REPO_ROOT"
 [ -f "$REPO_ROOT/update.sh" ] || die "update.sh not found in repo: $REPO_ROOT"
 
-# 3b) Pull the newest framework + update.sh FIRST, so we run the current,
+# 3b) Sync the newest framework + update.sh FIRST, so we run the current,
 #     gated update.sh -- not the stale copy this instance may have shipped with.
+#     Default channel "release": fetch tags and pin to the highest v* tag
+#     (works from a detached-at-tag state, where `git pull` would fail).
+#     Channel "main": old pull --ff-only behaviour for dev checkouts.
+UPDATE_CHANNEL="${DOGANY_UPDATE_CHANNEL:-$(sed -n 's/^DOGANY_UPDATE_CHANNEL=//p' "$CONF" | head -n1)}"
+UPDATE_CHANNEL="${UPDATE_CHANNEL:-release}"
 if [ -d "$REPO_ROOT/.git" ]; then
-  msg "[self-update] 프레임워크 최신화: git pull --ff-only ($REPO_ROOT)" \
-      "[self-update] fetching latest framework: git pull --ff-only ($REPO_ROOT)"
-  git -C "$REPO_ROOT" pull --ff-only \
-    || die "git pull --ff-only failed in $REPO_ROOT (resolve manually, then re-run)"
+  if [ "$UPDATE_CHANNEL" = "main" ]; then
+    msg "[self-update] 프레임워크 최신화: git pull --ff-only ($REPO_ROOT, channel=main)" \
+        "[self-update] fetching latest framework: git pull --ff-only ($REPO_ROOT, channel=main)"
+    git -C "$REPO_ROOT" pull --ff-only \
+      || die "git pull --ff-only failed in $REPO_ROOT (resolve manually, then re-run)"
+  else
+    msg "[self-update] 프레임워크 최신화: 최신 릴리스 태그 ($REPO_ROOT)" \
+        "[self-update] fetching latest framework: latest release tag ($REPO_ROOT)"
+    git -C "$REPO_ROOT" fetch --tags origin \
+      || die "git fetch failed in $REPO_ROOT (resolve manually, then re-run)"
+    LATEST_TAG="$(git -C "$REPO_ROOT" tag --list 'v*' --sort=-v:refname | head -n1)"
+    [ -n "$LATEST_TAG" ] || die "no release tag (v*) found in $REPO_ROOT"
+    if [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" != "$(git -C "$REPO_ROOT" rev-parse "${LATEST_TAG}^{commit}")" ]; then
+      git -C "$REPO_ROOT" checkout --quiet "$LATEST_TAG" \
+        || die "checkout $LATEST_TAG failed in $REPO_ROOT (local changes? resolve manually, then re-run)"
+    fi
+    msg "[self-update] 릴리스 고정: $LATEST_TAG" "[self-update] pinned to release: $LATEST_TAG"
+  fi
 else
   msg "[self-update] .git 없음 -> pull 건너뜀 (로컬 체크아웃 사용)" \
       "[self-update] no .git -> skipping pull (using local checkout)"

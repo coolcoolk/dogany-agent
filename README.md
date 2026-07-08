@@ -206,8 +206,11 @@ that instead of editing a `dogany-*` skill directly.
 Telling the agent to "update yourself" means CONSUME the latest framework into
 this instance -- it is not cutting a release. The agent runs
 `routines/self-update.sh`, a zero-argument wrapper that resolves its own
-instance root, `git pull`s the framework repo, then runs `update.sh` against
-itself. You never have to point it at a directory.
+instance root, pins the framework repo to the latest PUBLISHED RELEASE tag
+(never main HEAD -- you only ever receive versioned releases with release
+notes), then runs `update.sh` against itself. You never have to point it at
+a directory. Developers dogfooding unreleased main can opt out with
+`DOGANY_UPDATE_CHANNEL=main` in `.instance.conf`.
 
 Recommended: create a dedicated Gmail/Apple account for the agent instead of
 reusing your personal one -- isolation from personal data and a clean agent

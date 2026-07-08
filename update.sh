@@ -226,16 +226,42 @@ msg "[update] 레포   = $REPO_ROOT" "[update] repo     = $REPO_ROOT"
 msg "[update] 인스턴스 = $INSTANCE" "[update] instance = $INSTANCE"
 
 # ---------------------------------------------------------------------------
-# 1) git pull -- fast-forward to the latest published framework.
+# 1) Sync the repo to the latest PUBLISHED RELEASE (DGN-221).
+#    Instances consume release tags (v*), never main HEAD -- pushing dev
+#    commits to main must not stealth-patch users whose VERSION still shows
+#    the last release. Escape hatch for development checkouts:
+#    DOGANY_UPDATE_CHANNEL=main restores the old `git pull --ff-only`.
 # ---------------------------------------------------------------------------
 if [ "$DO_PULL" = "1" ]; then
   if [ -d "$REPO_ROOT/.git" ]; then
-    msg "[update] git pull ..." "[update] git pull ..."
-    if [ "$DRY_RUN" = "1" ]; then
-      msg "  [dry-run] git pull 생략" "  [dry-run] skipping git pull"
+    if [ "${DOGANY_UPDATE_CHANNEL:-release}" = "main" ]; then
+      msg "[update] git pull (channel=main) ..." "[update] git pull (channel=main) ..."
+      if [ "$DRY_RUN" = "1" ]; then
+        msg "  [dry-run] git pull 생략" "  [dry-run] skipping git pull"
+      else
+        git -C "$REPO_ROOT" pull --ff-only \
+          || die "git pull failed (resolve manually, or re-run with --no-pull)"
+      fi
     else
-      git -C "$REPO_ROOT" pull --ff-only \
-        || die "git pull failed (resolve manually, or re-run with --no-pull)"
+      msg "[update] 최신 릴리스 태그 확인 ..." "[update] resolving latest release tag ..."
+      if [ "$DRY_RUN" = "1" ]; then
+        msg "  [dry-run] git fetch/checkout 생략" "  [dry-run] skipping git fetch/checkout"
+      else
+        git -C "$REPO_ROOT" fetch --tags origin \
+          || die "git fetch failed (resolve manually, or re-run with --no-pull)"
+        # Highest semver release tag. --sort=-v:refname handles v1.2.0 vs v1.10.0.
+        LATEST_TAG="$(git -C "$REPO_ROOT" tag --list 'v*' --sort=-v:refname | head -n1)"
+        if [ -z "$LATEST_TAG" ]; then
+          die "no release tag (v*) found -- cannot resolve a published release"
+        fi
+        if [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" = "$(git -C "$REPO_ROOT" rev-parse "${LATEST_TAG}^{commit}")" ]; then
+          msg "[update] 이미 최신 릴리스 ($LATEST_TAG)" "[update] already at latest release ($LATEST_TAG)"
+        else
+          git -C "$REPO_ROOT" checkout --quiet "$LATEST_TAG" \
+            || die "checkout $LATEST_TAG failed (local changes? resolve manually, or re-run with --no-pull)"
+          msg "[update] 릴리스 체크아웃: $LATEST_TAG" "[update] checked out release: $LATEST_TAG"
+        fi
+      fi
     fi
   else
     msg "[update] .git 없음 -> pull 건너뜀" "[update] no .git -> skipping pull"
