@@ -36,6 +36,32 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_PATH"
 MINT_SH="$REPO_ROOT/scripts/mint.sh"
 
+# ---------------------------------------------------------------------------
+# 0a. Pin the fresh clone to the latest PUBLISHED RELEASE tag (DGN-221).
+#     `git clone` lands on main HEAD, which may carry unreleased commits; a
+#     first install must consume the same versioned release that update.sh
+#     serves later. We checkout the highest v* tag and RE-EXEC this script so
+#     the running installer is the tagged one (never mutate the tree under a
+#     running bash). Skips: no .git / no tags / DOGANY_UPDATE_CHANNEL=main
+#     (dev checkouts) / already re-execed (DOGANY_INSTALL_PINNED=1).
+# ---------------------------------------------------------------------------
+if [ "${DOGANY_INSTALL_PINNED:-0}" != "1" ] \
+   && [ "${DOGANY_UPDATE_CHANNEL:-release}" != "main" ] \
+   && [ -d "$REPO_ROOT/.git" ]; then
+  _PIN_TAG="$(git -C "$REPO_ROOT" tag --list 'v*' --sort=-v:refname | head -n1 || true)"
+  if [ -n "$_PIN_TAG" ]; then
+    if [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" != "$(git -C "$REPO_ROOT" rev-parse "${_PIN_TAG}^{commit}")" ]; then
+      echo "[install] pinning to latest release: $_PIN_TAG (was main HEAD)"
+      if git -C "$REPO_ROOT" checkout --quiet "$_PIN_TAG" 2>/dev/null; then
+        DOGANY_INSTALL_PINNED=1 exec bash "$REPO_ROOT/install.sh" "$@"
+      else
+        # Fail-open: a dirty tree (edited checkout) must not brick the install.
+        echo "[install] WARN: checkout $_PIN_TAG failed (local changes?) -- continuing on current checkout"
+      fi
+    fi
+  fi
+fi
+
 # Populated as the flow proceeds.
 DOGANY_LANG="${DOGANY_LANG:-}"        # ko | en
 # Set to 1 when --lang was passed explicitly: skips the language confirm step
