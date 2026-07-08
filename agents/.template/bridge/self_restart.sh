@@ -18,7 +18,7 @@
 #   --verify PROMPT (optional) headless claude -p after restart; output appended to notify
 #   --model NAME    (optional) model for --verify (default haiku)
 #   --delay N       (optional) seconds before SIGTERM, lets the current turn flush (default 6)
-#   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.telegram-claude)
+#   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.<agent-name>)
 #   --env PATH      (optional) agent bot .env for push.sh (default workspace .telegram_bot/.env)
 #   --prefix EMOJI  (optional) emoji prefix in notify messages (default: [agent])
 #   --dry-run       (optional) skip the kill; test the wait+notify wiring
@@ -26,7 +26,7 @@
 # Exit codes: 0 restarted+polling up / 2 came back but polling marker missing / 3 setup error
 set -euo pipefail
 
-LABEL="com.telegram-skill-bot.telegram-agent"
+LABEL="com.telegram-skill-bot.__AGENT_NAME__"
 REASON=""
 VERIFY=""
 MODEL="haiku"
