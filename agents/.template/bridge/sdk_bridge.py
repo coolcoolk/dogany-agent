@@ -538,6 +538,11 @@ class SdkBridge:
         content = self._clean_response("\n".join(texts))
         if not content:
             return
+        # DGN-217: an injected background turn may decide there is nothing
+        # worth telling the owner (no-op review). The agent signals that by
+        # ending the turn with the bare sentinel; suppress the push entirely.
+        if content.strip() == "NO_PUSH":
+            return
         if content == state.last_proactive_sent:
             return
         if state.last_chat_id is None or state.proactive_push is None:
@@ -606,6 +611,37 @@ class SdkBridge:
                     draft_message_ids=draft_ids,
                 )
             )
+
+    async def inject_background_turn(self, user_id: int, text: str) -> bool:
+        """DGN-217: inject a background/cron notification as a turn into the
+        user's LIVE session, with no pending request attached.
+
+        The turn's output flows through the existing no-pending path
+        (_handle_proactive_message -> proactive push), so the agent both
+        SEES the notification in-session and controls what (if anything)
+        reaches the owner -- ending the turn with the bare sentinel NO_PUSH
+        suppresses the push.
+
+        Returns False (caller retries later) when:
+        - no live stream exists for this user yet (bot just started), or
+        - a real request is pending/in flight. Injecting then would race the
+          reader loop, which attributes ALL output to pending[0] -- the
+          injected turn's answer would masquerade as the user's answer.
+        """
+        state = self._streams.get(user_id)
+        if state is None:
+            return False
+        if state.pending:
+            return False
+        async with state.send_lock:
+            # Re-check under the lock: a user message may have arrived while
+            # we were waiting for the lock.
+            if state.pending:
+                return False
+            await state.client.query(
+                text, session_id=state.last_session_id or "default"
+            )
+        return True
 
     async def process_message(
         self,

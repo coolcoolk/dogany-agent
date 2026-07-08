@@ -249,6 +249,7 @@ class TelegramBot:
 
             await self._on_ready()
             watchdog_task = None
+            inbox_task = None
             try:
                 await self.application.start()
                 await self.application.updater.start_polling(
@@ -269,6 +270,10 @@ class TelegramBot:
                         on_recovery=self._notify_outage_recovered,
                     )
                 )
+                # DGN-217: session-inbox watcher -- external crons drop a
+                # summary file, we inject it as a background turn into the
+                # owner's live session. Same lifecycle as the watchdog task.
+                inbox_task = asyncio.create_task(self._session_inbox_loop())
                 await self._wait_for_polling_exit(stop_event)
             except PollingConflict:
                 # PTB swallows Conflict in its retry loop (bot stays alive but
@@ -324,6 +329,12 @@ class TelegramBot:
                     try:
                         await watchdog_task
                     except (asyncio.CancelledError, PollingRestart):
+                        pass
+                if inbox_task and not inbox_task.done():
+                    inbox_task.cancel()
+                    try:
+                        await inbox_task
+                    except asyncio.CancelledError:
                         pass
                 await self._graceful_shutdown()
         logger.info("Bot stopped")
@@ -387,6 +398,55 @@ class TelegramBot:
                 "heartbeat wiring suspect: %d consecutive stall restarts",
                 self._stall_restart_count,
             )
+
+    async def _session_inbox_loop(self) -> None:
+        """DGN-217: poll <bot_data_dir>/session-inbox/ and inject each file as
+        a background turn into the owner's live session.
+
+        Contract with writers (cron scripts): write to a temp name, then
+        mv/rename to *.md in this dir -- rename is atomic, so a half-written
+        file is never picked up. One file per tick keeps injected turns
+        serialized. Injection is refused (file kept, retried next tick) while
+        the owner has a turn in flight or the stream does not exist yet.
+        Delivery of the turn's OUTPUT rides the existing no-pending proactive
+        path; a turn ending in bare NO_PUSH reaches the session but not the
+        owner chat.
+        """
+        inbox_dir = config.bot_data_dir / "session-inbox"
+        poll_secs = 20
+        while True:
+            await asyncio.sleep(poll_secs)
+            try:
+                if not inbox_dir.is_dir():
+                    continue
+                files = sorted(p for p in inbox_dir.glob("*.md") if p.is_file())
+                if not files:
+                    continue
+                owner_ids = config.allowed_user_ids
+                if not owner_ids:
+                    continue  # claim mode, owner unknown yet
+                owner_id = owner_ids[0]
+                if self._user_turn_active(owner_id):
+                    continue  # defer: never race a live turn
+                path = files[0]
+                try:
+                    text = path.read_text(encoding="utf-8").strip()
+                except Exception as e:
+                    logger.error("session-inbox read failed for %s: %s", path, e)
+                    continue
+                if not text:
+                    path.unlink(missing_ok=True)
+                    continue
+                ok = await sdk_bridge.inject_background_turn(owner_id, text)
+                if ok:
+                    path.unlink(missing_ok=True)
+                    logger.info("session-inbox injected: %s", path.name)
+                # not ok -> stream missing or busy; keep the file, retry next tick
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # The watcher must never die silently on a transient error.
+                logger.error("session-inbox loop error: %s", e)
 
     async def _graceful_shutdown(self, force: bool = False) -> None:
         if not self.application:

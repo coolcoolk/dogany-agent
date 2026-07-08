@@ -1,16 +1,21 @@
 #!/bin/bash
-# self_restart.sh -- safe self-restart of the metal bridge with auto Telegram notify.
+# self_restart.sh -- safe self-restart of the bridge with auto Telegram notify.
 #
 # Why: restarting the bridge severs the live claude session, so nobody is left
-# to tell 사용자 "it came back". This detaches from the caller, SIGTERMs the bridge
-# (launchd KeepAlive revives it with new code), waits until polling is REALLY up
-# (log marker, not just a live pid -> catches zombie-poll B2), then pushes a
-# Telegram message via push.sh on the metal bot. Optional --verify runs a
-# headless claude check after restart and includes its result in the notify.
+# to tell the user "it came back". This detaches from the caller, SIGTERMs the
+# bridge (launchd KeepAlive revives it with new code), waits until polling is
+# REALLY up (log marker, not just a live pid -> catches zombie-poll B2), then
+# pushes a Telegram message. Optional --verify runs a headless claude check
+# after restart and includes its result in the notify.
+#
+# DGN-226: on a successful (non-dry-run) restart the worker also drops a
+# verification instruction into the session-inbox spool (DGN-217), so the
+# RESUMED live session verifies real state itself -- silent (NO_PUSH) when
+# healthy, warns the owner when broken. The owner no longer has to check.
 #
 # Usage:
 #   self_restart.sh --reason "download timeout fix"
-#   self_restart.sh --reason "..." --verify "방금 적용한 read_timeout이 라이브 코드에 있는지 한 줄로 확인"
+#   self_restart.sh --reason "..." --verify "check that fix landed in running code"
 #   self_restart.sh --reason "..." --dry-run        # no kill; exercises notify path only
 #
 # Flags:
@@ -18,7 +23,7 @@
 #   --verify PROMPT (optional) headless claude -p after restart; output appended to notify
 #   --model NAME    (optional) model for --verify (default haiku)
 #   --delay N       (optional) seconds before SIGTERM, lets the current turn flush (default 6)
-#   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.<agent-name>)
+#   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.__AGENT_NAME__)
 #   --env PATH      (optional) agent bot .env for push.sh (default workspace .telegram_bot/.env)
 #   --prefix EMOJI  (optional) emoji prefix in notify messages (default: instance prefix, fallback [agent])
 #   --dry-run       (optional) skip the kill; test the wait+notify wiring
@@ -59,6 +64,38 @@ done
 
 notify() { "$PUSH" --env "$ENV_FILE" --text "$1" || echo "[self_restart] push failed" >&2; }
 cur_pid() { launchctl list | awk -v l="$LABEL" '$3==l && $1 ~ /^[0-9]+$/ {print $1}'; }
+
+SPOOL_DIR="__PROJECT_ROOT__/.telegram_bot/session-inbox"
+
+# DGN-226: hand post-restart verification to the resumed live session via the
+# DGN-217 session-inbox spool. Writer contract: temp write, then atomic rename
+# to *.md so a half-written file is never picked up.
+drop_verify_spool() {
+  mkdir -p "$SPOOL_DIR" || { echo "[self_restart] spool dir unavailable" >&2; return 0; }
+  local ts name tmp
+  ts="$(date '+%Y%m%d-%H%M%S')"
+  name="restart-verify-${ts}.md"
+  tmp="${SPOOL_DIR}/.${name}.tmp"
+  cat >"$tmp" <<EOF
+[cron-inject] post-restart self-verification (DGN-226)
+
+The bridge just self-restarted. Reason: ${REASON}
+pid ${OLD_PID:-?} -> ${NEW_PID:-?}. The completion notice was already pushed
+to the owner; do NOT repeat it.
+
+Verify the real state yourself now:
+1. Bridge process alive for label ${LABEL}; pid matches ${NEW_PID:-?}.
+2. Tail ${MARKER_LOG}: no ERROR burst after the restart.
+3. Spot-check that the restart reason above actually landed in running code.
+
+If everything is healthy: append one line (self-verify OK + timestamp) to the
+worklog ticket this restart belongs to, and end your output with the bare
+word NO_PUSH. If anything is broken: warn the owner immediately (no NO_PUSH).
+EOF
+  mv "$tmp" "${SPOOL_DIR}/${name}" \
+    && echo "[$(date '+%F %T')] verify spool dropped: ${name}" \
+    || echo "[self_restart] spool drop failed" >&2
+}
 
 # ---- Detach: re-exec ourselves in a new session so killing the bridge does not
 # take this worker (or the caller's claude session) down with it. ----
@@ -127,6 +164,7 @@ pid ${OLD_PID:-?} → ${NEW_PID:-?}, 폴링 정상."
   [[ -n "$DRY_RUN" ]] && MSG="${PREFIX} [DRY-RUN] 재기동 통보 경로 정상: ${REASON}"
   [[ -n "$VERIFY_OUT" ]] && MSG="${MSG}
 검증: ${VERIFY_OUT}"
+  [[ -z "$DRY_RUN" ]] && drop_verify_spool
   notify "$MSG"
   echo "[$(date '+%F %T')] done OK new_pid=${NEW_PID}"
   exit 0
