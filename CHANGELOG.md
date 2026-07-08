@@ -3,6 +3,65 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-07-09
+
+### Added
+- Agents now receive the results of background autonomous-loop runs as live
+  session turns, so the agent knows what happened without waiting for you to
+  ask. Quiet runs (nothing actionable) are suppressed and do not generate a
+  notification. (DGN-217)
+- After a bridge restart completes, the newly resumed session automatically
+  verifies that the bridge is healthy and reports back only if something looks
+  wrong. Routine restarts are now silent end-to-end. (DGN-226)
+- Release preflight tool: before any release ships, a diff of the live agent
+  against the canonical template is run and every divergence must receive an
+  explicit verdict. Unreviewed live fixes can no longer be silently overwritten
+  by an update. (DGN-225)
+
+### Fixed
+- /usage fallback display had a missing opening bracket in the Live Rate-Limit
+  label; restored. (DGN-203)
+- update.sh and self-update.sh now consume published release tags instead of
+  pulling from main HEAD. Installing an update can no longer silently deliver
+  unreleased development commits. A DOGANY_UPDATE_CHANNEL=main escape hatch is
+  available for development instances. (DGN-221)
+- install.sh now pins a fresh clone to the latest release tag before the setup
+  wizard runs, so new installations start from a stable baseline rather than
+  an arbitrary main HEAD. (DGN-221)
+- Appointments whose start time falls between midnight and 09:00 local time
+  (KST) no longer appear one day early in the morning briefing. The root cause
+  was a date-bucketing query that applied UTC date() to locally-stored
+  timestamps; the unified event schema (shipped in this release) resolves it
+  structurally. (DGN-179 / DGN-220)
+- Event schema upgraded to user_version 4: the event_persons junction table
+  (appointment participants) and the appt_find/appt_show facade are now fully
+  rewritten over the unified event table. Appointment queries are timezone-aware
+  end-to-end. Migration 004 applies automatically on the next update run.
+  (DGN-179 verb-delta v2)
+- Framework updates no longer revert the bridge's launchd label and agent
+  prefix back to generic placeholders, which previously caused self-restart to
+  target the wrong service. Both values are now mint-time placeholders that
+  survive update.sh. (DGN-213)
+- Outgoing file transfers that time out now retry twice and send a user-visible
+  notice on final failure, instead of silently discarding the file. (DGN-218)
+- The memory-search skill now enforces a gate before the agent may claim that a
+  value is not recorded: the agent must search first. This closes a gap where
+  the agent would ask the user for data that was already in its own consolidated
+  memory. (DGN-223)
+- lifekit: workout sessions are now returned correctly from load_card_data, and
+  the hook-effective burn macro is applied so morning brief calorie targets
+  reflect actual workout output. (DGN-193)
+- Transient Telegram send timeouts (ReadTimeout from the Telegram API) now show
+  a friendly retry message instead of a raw "Error: Timed out" error string.
+  (DGN-063)
+- Single .env generator: secrets (bot token, email password) now travel only
+  via environment variables, never through process arguments, closing a
+  potential credential exposure in process listings. (DGN-096)
+
+### Changed
+- DGN-220 (appt_find UTC date-shift hotfix) is closed as superseded: the
+  structural fix in DGN-179 covers the same bug for all users on this release.
+
 ## [1.2.0] - 2026-07-08
 
 ### Added
