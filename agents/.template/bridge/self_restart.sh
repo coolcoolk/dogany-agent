@@ -19,7 +19,14 @@
 #   self_restart.sh --reason "..." --dry-run        # no kill; exercises notify path only
 #
 # Flags:
-#   --reason TEXT   (required) shown in the notify message
+#   --reason TEXT   (required) technical reason; shown in the notify message
+#                   only when --notice is absent, always kept in the worker log
+#   --notice TEXT   (optional) user-facing notify body in the agent's persona
+#                   voice (DGN-233). When set, the success notify is
+#                   "PREFIX NOTICE" -- no pid, no technical reason. For a
+#                   version-update restart, compose it release-note style
+#                   (what changed for the user, not dev jargon). Failure
+#                   notify always stays technical.
 #   --verify PROMPT (optional) headless claude -p after restart; output appended to notify
 #   --model NAME    (optional) model for --verify (default haiku)
 #   --delay N       (optional) seconds before SIGTERM, lets the current turn flush (default 6)
@@ -33,6 +40,7 @@ set -euo pipefail
 
 LABEL="com.telegram-skill-bot.__AGENT_NAME__"
 REASON=""
+NOTICE=""
 VERIFY=""
 MODEL="haiku"
 DELAY=6
@@ -47,6 +55,7 @@ WORKER=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --reason)  REASON="$2"; shift 2 ;;
+    --notice)  NOTICE="$2"; shift 2 ;;
     --verify)  VERIFY="$2"; shift 2 ;;
     --model)   MODEL="$2"; shift 2 ;;
     --delay)   DELAY="$2"; shift 2 ;;
@@ -101,6 +110,7 @@ EOF
 # take this worker (or the caller's claude session) down with it. ----
 if [[ -z "$WORKER" ]]; then
   ARGS=(--_worker --reason "$REASON" --model "$MODEL" --delay "$DELAY" --label "$LABEL" --env "$ENV_FILE" --prefix "$PREFIX")
+  [[ -n "$NOTICE" ]]  && ARGS+=(--notice "$NOTICE")
   [[ -n "$VERIFY" ]]  && ARGS+=(--verify "$VERIFY")
   [[ -n "$DRY_RUN" ]] && ARGS+=(--dry-run)
   # Resolve $0 to an absolute path BEFORE re-exec. If invoked as a bare relative
@@ -159,8 +169,14 @@ fi
 
 # ---- Notify ----
 if [[ -n "$POLL_UP" ]]; then
-  MSG="${PREFIX} 재기동 완료: ${REASON}
+  if [[ -n "$NOTICE" ]]; then
+    # Persona notify (DGN-233): user-facing body only; pid/reason stay in
+    # this worker log (echoed at worker start + done lines).
+    MSG="${PREFIX} ${NOTICE}"
+  else
+    MSG="${PREFIX} 재기동 완료: ${REASON}
 pid ${OLD_PID:-?} → ${NEW_PID:-?}, 폴링 정상."
+  fi
   [[ -n "$DRY_RUN" ]] && MSG="${PREFIX} [DRY-RUN] 재기동 통보 경로 정상: ${REASON}"
   [[ -n "$VERIFY_OUT" ]] && MSG="${MSG}
 검증: ${VERIFY_OUT}"
