@@ -44,6 +44,13 @@
 #   lifekit.sh task-archive <id>                     보관(soft-delete) -- find/overdue에서 숨김
 #   lifekit.sh task-overdue                          기한 지난 미완료 목록 TSV (오늘 이전, 보관 제외)
 #
+# DGN-231 reconcile-before-write: meal-add / workout-add / person-add / appt-add 는
+#   등록 전 중복을 자체 대조한다. 매치가 있으면 등록하지 않고 첫 줄 "EXISTS n" +
+#   매치 행들(해당 find 포맷)을 출력한 뒤 종료코드 3으로 끝난다. 뒤에 --new 를
+#   붙이면 매치를 무시하고 강제로 신규 등록한다. 매치 0건이면 기존과 동일하게 등록.
+#   매치 키: meal-add=(date, 끼니) / workout-add=(date, 대분류) /
+#   person-add=(name 또는 alias 정확일치) / appt-add=(같은 로컬 날짜).
+#
 # 종료코드: lifekit.py 종료코드를 그대로 전달.
 set -euo pipefail
 

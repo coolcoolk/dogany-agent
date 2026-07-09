@@ -1921,8 +1921,26 @@ def _err(msg, code=1):
     sys.exit(code)
 
 
+# DGN-231: reconcile-before-write (doctrine D3). add verbs self-check for an
+# existing match before insert; on match they print "EXISTS n" + the matching
+# rows (reusing the verb's find/list format) and exit 3, registering nothing.
+# The --new flag forces the insert past a match. A --new-less 0-match call keeps
+# the pre-DGN-231 behavior byte-for-byte (existing callers unchanged).
+EXISTS_CODE = 3
+
+
+def _pop_flag(argv, flag):
+    """Return (argv_without_flag, present_bool), removing every occurrence of
+    flag. These CLIs are positional, so the flag may sit anywhere; stripping it
+    leaves the remaining positional args index-identical to the legacy call."""
+    if flag in argv:
+        return [a for a in argv if a != flag], True
+    return list(argv), False
+
+
 def cli_meal_add(argv):
-    # meal-add <date> <meal> <name> [carb protein fat fiber sugar alt_sugar grams alcohol]
+    # meal-add <date> <meal> <name> [carb protein fat fiber sugar alt_sugar grams alcohol] [--new]
+    argv, force_new = _pop_flag(argv, '--new')      # DGN-231
     if len(argv) < 3 or not argv[0] or not argv[2]:
         _err("사용법: lifekit.sh meal-add <date> <meal> <name> "
              "[carb protein fat fiber sugar alt_sugar grams alcohol]")
@@ -1930,6 +1948,17 @@ def cli_meal_add(argv):
     g = lambda i: argv[i] if i < len(argv) else None
     conn = get_conn()
     try:
+        if not force_new:
+            # DGN-231 match key = (date, meal slot). meal_find -> (id, name,
+            # meal, kcal); its meal col is COALESCE(meal,'') so '' <-> _txt None.
+            slot = _txt(meal)
+            matches = [r for r in meal_find(date, conn=conn)
+                       if (r[2] or None) == slot]
+            if matches:
+                print(f"EXISTS {len(matches)}")
+                for mid, nm, ml, kcal in matches:
+                    print(f"{mid}\t{nm}\t{ml}\t{_f0(kcal)}")
+                sys.exit(EXISTS_CODE)
         nid = meal_add(date, meal, name,
                        carb=g(3), protein=g(4), fat=g(5), fiber=g(6),
                        sugar=g(7), alt_sugar=g(8), grams=g(9), alcohol=g(10),
@@ -1990,8 +2019,9 @@ def cli_meal_upd(argv):
 
 
 def cli_workout_add(argv):
-    # workout-add <date> <category> <subtype> [minutes kcal note avg_hr]
+    # workout-add <date> <category> <subtype> [minutes kcal note avg_hr] [--new]
     # category/subtype 은 옛 <type>/<name> 위치 그대로 — 인자 순서 호환 보존.
+    argv, force_new = _pop_flag(argv, '--new')      # DGN-231
     if len(argv) < 2 or not argv[0] or not argv[1]:
         _err("사용법: lifekit.sh workout-add <date> <category> <subtype> "
              "[minutes kcal note avg_hr]")
@@ -1999,6 +2029,20 @@ def cli_workout_add(argv):
     g = lambda i: argv[i] if i < len(argv) else ''
     conn = get_conn()
     try:
+        if not force_new:
+            # DGN-231 match key = (date, category). workout_find -> (id,
+            # category_concat, subtype_concat, minutes, kcal); category_concat
+            # is group_concat(DISTINCT category), so split on comma and test
+            # membership (a workout may carry several categories).
+            cat = (wtype or '').strip()
+            matches = [r for r in workout_find(date, conn=conn)
+                       if cat and cat in
+                       [c.strip() for c in (r[1] or '').split(',') if c.strip()]]
+            if matches:
+                print(f"EXISTS {len(matches)}")
+                for wid, wt, nm, minutes, kcal in matches:
+                    print(f"{wid}\t{wt}\t{nm}\t{_f0(minutes)}\t{_f0(kcal)}")
+                sys.exit(EXISTS_CODE)
         nid = workout_add(date, wtype, name=g(2), minutes=g(3),
                           kcal=g(4), note=g(5), avg_hr=g(6), conn=conn)
         # 라벨(category/subtype)은 junction(workout_classifications) 경유로 복원.
@@ -2147,10 +2191,34 @@ def cli_person_find(argv):
 
 
 def cli_person_add(argv):
-    # person-add <name> [relation] [aliases]
+    # person-add <name> [relation] [aliases] [--new]
+    argv, force_new = _pop_flag(argv, '--new')      # DGN-231
     if not argv or not argv[0]:
         _err("사용법: lifekit.sh person-add <name> [relation] [aliases]")
     g = lambda i: argv[i] if i < len(argv) else None
+    name = argv[0]
+    if not force_new:
+        # DGN-231 match key = the new name EXACTLY equals an existing person's
+        # name or one of that person's comma-split aliases (person_find's LIKE
+        # substring match is too broad for a dedup gate). Output reuses the
+        # person-find format (id, name, relation, aliases).
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, name, relation, aliases FROM persons "
+                "ORDER BY id;").fetchall()
+        finally:
+            conn.close()
+        matches = []
+        for pid, pname, relation, aliases in rows:
+            alias_set = [a.strip() for a in (aliases or '').split(',') if a.strip()]
+            if name == pname or name in alias_set:
+                matches.append((pid, pname, relation, aliases))
+        if matches:
+            print(f"EXISTS {len(matches)}")
+            for pid, pname, relation, aliases in matches:
+                print(f"{pid}\t{pname}\t{relation or ''}\t{aliases or ''}")
+            sys.exit(EXISTS_CODE)
     pid = person_add(argv[0], relation=g(1), aliases=g(2))
     print(f"{pid}\t{argv[0]}")
 
@@ -2260,7 +2328,8 @@ def cli_appt_find(argv):
 
 
 def cli_appt_add(argv):
-    # appt-add <title> <start_at> [end_at location purpose summary]
+    # appt-add <title> <start_at> [end_at location purpose summary] [--new]
+    argv, force_new = _pop_flag(argv, '--new')      # DGN-231
     if len(argv) < 2 or not argv[0] or not argv[1]:
         _err("사용법: lifekit.sh appt-add <title> <start_at> "
              "[end_at location purpose summary]")
@@ -2314,6 +2383,17 @@ def cli_appt_add(argv):
 
     conn = event_conn()
     try:
+        if not force_new:
+            # DGN-231 match key = same LOCAL calendar date (+/-0 day). start_at
+            # is canonical UTC; convert to the display tz date and reuse
+            # appt_find (id, col2, title, location).
+            local_date = _local_date_of(start_at, "Asia/Seoul").isoformat()
+            matches = appt_find(local_date, conn=conn)
+            if matches:
+                print(f"EXISTS {len(matches)}")
+                for aid, col2, mtitle, mloc in matches:
+                    print(f"{aid}\t{col2 or ''}\t{mtitle}\t{mloc or ''}")
+                sys.exit(EXISTS_CODE)
         try:
             eid = event_add(conn, kind="appointment", title=title,
                             schedule_kind=schedule_kind, start_at=start_at,
