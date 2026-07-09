@@ -785,6 +785,125 @@ if [ -f "$TEMPLATE/RULES.md" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3l) .env backfill -- add missing keys to the instance .env (idempotent).
+#
+#     Pre-DGN-167 installs lack BRIDGE_MODELS; bot.py falls back to "sonnet"
+#     only, so /model shows a single entry. This step backfills any absent
+#     key WITHOUT touching existing lines (user customizations are preserved
+#     byte-for-byte; ordering is preserved; re-running is a no-op).
+#
+#     Design:
+#       BACKFILL_KEYS is a declarative list of "KEY:resolver_func" pairs.
+#       resolve_<KEY>() returns the default value string. Adding a new backfill
+#       key in future = add one entry to BACKFILL_KEYS and one resolver.
+#       Currently only BRIDGE_MODELS is wired (no speculative keys).
+#
+#     Placement: after all framework-file refreshes (sections 3a-3k), before
+#     placeholder substitution (section 4). The .env is excluded from rsync
+#     (COMMON_EXCLUDES) so it arrives here untouched by the refresh pass.
+#
+#     Provenance: each appended key gets a dated comment so operators can see
+#     which update run added it and why -- mirrors the .instance.conf
+#     DOGANY_FW_VERSION stamp convention.
+# ---------------------------------------------------------------------------
+
+# Probe $HOME/.claude.json for the subscription tier (same logic as
+# install.sh recommend_model / step_model). Returns the bridge model list
+# on stdout: "sonnet,opus,haiku" for max tier, "sonnet,haiku" otherwise.
+# Exits non-zero on any failure (no python3 / missing file / parse error).
+# This is a LOCAL read of the current machine's Claude CLI credential file;
+# it makes no network call. Conservative fallback when the probe fails is
+# handled by the caller.
+resolve_BRIDGE_MODELS() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "${HOME}/.claude.json" <<'PYEOF'
+import sys, json
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        data = json.load(f)
+    oa = data.get("oauthAccount") or {}
+    tier  = str(oa.get("organizationRateLimitTier") or "").lower()
+    otype = str(oa.get("organizationType") or "").lower()
+    if "max" in tier or "max" in otype:
+        print("sonnet,opus,haiku")
+    else:
+        print("sonnet,haiku")
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+# backfill_env KEY resolve_func -- append KEY=<value> to the .env when absent.
+# Never modifies, removes, or reorders existing lines. Idempotent: a second
+# run is a no-op because grep finds the key on the first pass.
+# Args: $1 = ENV_FILE path, $2 = key name, $3 = resolver function name.
+backfill_env_key() {
+  local env_file="$1" key="$2" resolver="$3"
+  [ -f "$env_file" ] || return 0
+
+  # Present means a non-commented line whose key matches exactly.
+  if grep -qE "^${key}=" "$env_file" 2>/dev/null; then
+    return 0  # key exists -- nothing to do
+  fi
+
+  # Resolve the default value; fall back conservatively on probe failure.
+  local value
+  if ! value="$("$resolver" 2>/dev/null)"; then
+    # Probe failed: use full model list so the user is never left with less
+    # than they would get from a fresh max-tier install.
+    value="sonnet,opus,haiku"
+  fi
+  # Guard: resolver returned empty.
+  [ -n "$value" ] || value="sonnet,opus,haiku"
+
+  if [ "$DRY_RUN" = "1" ]; then
+    msg "  [dry-run] .env 백필 예정: ${key}=${value}" \
+        "  [dry-run] would backfill .env: ${key}=${value}"
+    return 0
+  fi
+
+  # Append with a newline guard (some .env files lack a trailing newline) and
+  # a dated provenance comment so operators can trace the addition back to this
+  # update run.
+  local stamp
+  stamp="$(date +%Y-%m-%d)"
+  # Ensure the file ends with a newline before appending.
+  # wc -l returns leading-whitespace integers on macOS -- use -eq (arithmetic)
+  # rather than = (string) to avoid comparing "0" against "       0".
+  local last_char last_nl
+  last_char="$(tail -c1 "$env_file" 2>/dev/null | wc -c)"
+  if [ "$last_char" -gt 0 ]; then
+    # File is non-empty; check whether it already ends in a newline.
+    last_nl="$(tail -c1 "$env_file" | wc -l)"
+    if [ "$last_nl" -eq 0 ]; then
+      printf '\n' >> "$env_file"
+    fi
+  fi
+  printf '# added by update.sh v%s (env backfill, %s) -- DGN-246\n' "$REPO_VERSION" "$stamp" >> "$env_file"
+  printf '%s=%s\n' "$key" "$value" >> "$env_file"
+  msg "  [update] .env 백필: ${key}=${value}" \
+      "  [update] backfilled .env: ${key}=${value}"
+}
+
+# Declarative backfill key list: "KEY:resolver_func" entries.
+# Add future keys here as one additional line; add a resolve_KEY function.
+BACKFILL_KEYS=(
+  "BRIDGE_MODELS:resolve_BRIDGE_MODELS"
+)
+
+ENV_FILE="$INSTANCE/.telegram_bot/.env"
+if [ -f "$ENV_FILE" ]; then
+  for _bfentry in "${BACKFILL_KEYS[@]}"; do
+    _bfkey="${_bfentry%%:*}"
+    _bffn="${_bfentry##*:}"
+    backfill_env_key "$ENV_FILE" "$_bfkey" "$_bffn"
+  done
+elif [ "$DRY_RUN" = "1" ]; then
+  msg "  [dry-run] .env 없음 -- 백필 건너뜀 ($ENV_FILE)" \
+      "  [dry-run] .env absent -- skipping backfill ($ENV_FILE)"
+fi
+
+# ---------------------------------------------------------------------------
 # 4) Re-substitute the five mint placeholders on the refreshed files.
 #    Path placeholders (PROJECT_ROOT, HOME) are always safe to re-apply.
 #    Identity placeholders are applied only when recovered from the manifest.
