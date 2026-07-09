@@ -1056,7 +1056,7 @@ def load_card_data(iso_date, conn=None):
 # facade time parser). datetime/timezone are already imported at file top.
 from zoneinfo import ZoneInfo
 
-EXPECTED_USER_VERSION = 4
+EXPECTED_USER_VERSION = 5  # 005_mirror_bookkeeping (DGN-180 W6)
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
@@ -1676,17 +1676,24 @@ def event_persons(conn, eid):
 
 
 # ── settle family: cancel (abandoned) / force_settle (done). owner + CAS. ──
-def _settle(conn, eid, version, outcome, settled_by):
+def _settle(conn, eid, version, outcome, settled_by, settled_at_ts=None):
     """Shared settle path. Sets settled_at/by/outcome + recompute (returns the
-    stored outcome verbatim). CAS guarded. Returns MutationResult."""
+    stored outcome verbatim). CAS guarded. Returns MutationResult.
+
+    settled_at_ts (DGN-180, grill-4 finding 6(v) promotion): the surface
+    completion instant (canonical UTC) -- e.g. the GTasks 'completed'
+    timestamp -- lands verbatim in settled_at instead of the poll time.
+    None keeps the legacy behavior byte-for-byte (settled_at = now).
+    updated_at is ALWAYS now (audit truth of when we wrote)."""
     now = now_utc()
+    ts = canonical(settled_at_ts) if settled_at_ts else now
     conn.execute("BEGIN IMMEDIATE;")
     try:
         cur = conn.execute(
             "UPDATE event SET settled_at=?, settled_by=?, settled_outcome=?, "
             "version=version+1, updated_at=? WHERE id=? AND version=? "
             "AND settled_at IS NULL;",
-            (now, settled_by, outcome, now, eid, version))
+            (ts, settled_by, outcome, now, eid, version))
         if cur.rowcount == 1:
             _recompute_and_store(conn, eid, now=now)
             conn.commit()
@@ -1709,10 +1716,196 @@ def cancel(conn, eid, version, settled_by):
     return _settle(conn, eid, version, "abandoned", settled_by)
 
 
-def force_settle(conn, eid, version, settled_by):
+def force_settle(conn, eid, version, settled_by, settled_at_ts=None):
     """Force-settle with outcome 'done' (the only legal path to complete a
-    zero-sub / manual event)."""
-    return _settle(conn, eid, version, "done", settled_by)
+    zero-sub / manual event). settled_at_ts: optional surface completion
+    instant (DGN-180 mirror lane)."""
+    return _settle(conn, eid, version, "done", settled_by, settled_at_ts)
+
+
+# ── DGN-180 mirror-lane verbs (ulid-addressed; sandbox sdk_bridge port) ────
+# Ground truth: Metal sandbox dgn180-adapter/sdk_bridge.py, harness 108/108.
+# These are the inbound-mirror verbs: string results (not MutationResult) by
+# design -- the adapter's retry classifier consumes them.
+
+def _ulid_lookup(conn, ulid):
+    """(eid, version) for a ulid, or None."""
+    row = conn.execute(
+        "SELECT id, version FROM event WHERE ulid=?;", (ulid,)).fetchone()
+    return None if row is None else (row[0], row[1])
+
+
+def _mirror_overlap_post_check(conn, eid):
+    """After a bypass-lane apply, detect whether the row now overlaps a live
+    exclusive blocker (v3 MAJOR-5: apply anyway, notify once). Returns a
+    warning string or None."""
+    row = conn.execute(
+        "SELECT slot_exclusive, start_at, end_at, open_ended "
+        "FROM event WHERE id=?;", (eid,)).fetchone()
+    if row is None:
+        return None
+    slot_ex, sa, ea, oe = row
+    if not is_blocker(slot_ex, sa):
+        return None
+    cee = _cand_eff_end(sa, ea, oe)
+    sql = ("SELECT e.ulid FROM event e WHERE " + LIVE_FILTER +
+           " AND ? < " + EFF_END_SQL + " AND e.start_at < ? AND e.id != ? "
+           "LIMIT 1;")
+    hit = conn.execute(sql, (sa, cee, eid)).fetchone()
+    if hit:
+        return "overlap with event %s after bypass apply" % hit[0]
+    return None
+
+
+def unsettle(conn, ulid, by):
+    """DGN-180 verb (v3 N180-4): reopen done->open ONLY.
+    - settled_outcome must be 'done' (abandoned/expired revival refused).
+    - CAS on version; clears settled_at/by/outcome; version+1; updated_at;
+      recompute (past deadline re-derives 'expired' -- OQ-2 ruling).
+    - Inbound lane = predicate bypass + overlap post-check (v3 MAJOR-5).
+    Returns (result, overlap_warning) with result in
+    'applied' | 'refused' | 'cas_fail' | 'not_found'."""
+    found = _ulid_lookup(conn, ulid)
+    if found is None:
+        return "not_found", None
+    eid, version = found
+    row = conn.execute(
+        "SELECT settled_outcome FROM event WHERE id=?;", (eid,)).fetchone()
+    if row is None:
+        return "not_found", None
+    if row[0] != "done":
+        return "refused", None  # abandoned/expired/never-settled: no revival
+    now = now_utc()
+
+    def run():
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = conn.execute(
+                "UPDATE event SET settled_at=NULL, settled_by=NULL, "
+                "settled_outcome=NULL, version=version+1, updated_at=? "
+                "WHERE id=? AND version=? AND settled_outcome='done';",
+                (now, eid, version))
+            if cur.rowcount == 1:
+                _recompute_and_store(conn, eid, now=now)
+                conn.commit()
+                return "applied"
+            conn.commit()
+            return "cas_fail"
+        except Exception:
+            conn.rollback()
+            raise
+
+    res = with_retry(run)
+    warning = _mirror_overlap_post_check(conn, eid) if res == "applied" else None
+    return res, warning
+
+
+def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
+    """v3 MAJOR-5 inbound ground-truth lane: the owner's surface schedule
+    edit is applied WITHOUT the FG-1 predicate (bypass), then overlap
+    post-check -> caller notifies. Invariants kept: canonical validation,
+    interval validation, schedule_kind re-derivation, untimed instants
+    cleared, version+1, updated_at, recompute.
+    open_ended coherence (v4 ruling 1 / grill-4 finding 10): a materialized
+    end clears open_ended; untimed clears it; a timed apply that PRESERVES
+    end NULL (open-ended placeholder rule, caller-side guard) preserves the
+    existing flag. Returns (result, overlap_warning)."""
+    if new_schedule_kind == "untimed":
+        new_start = None
+        new_end = None
+    canonical(new_start)
+    canonical(new_end)
+    validate_interval(new_start, new_end)
+    found = _ulid_lookup(conn, ulid)
+    if found is None:
+        return "not_found", None
+    eid, version = found
+    now = now_utc()
+
+    def run():
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = conn.execute(
+                "UPDATE event SET schedule_kind=?, start_at=?, end_at=?, "
+                "open_ended=CASE WHEN ? IS NOT NULL THEN 0 "
+                "WHEN ?='untimed' THEN 0 ELSE open_ended END, "
+                "version=version+1, updated_at=? WHERE id=? AND version=?;",
+                (new_schedule_kind, new_start, new_end,
+                 new_end, new_schedule_kind, now, eid, version))
+            if cur.rowcount == 1:
+                _recompute_and_store(conn, eid, now=now)
+                conn.commit()
+                return "applied"
+            conn.commit()
+            return "cas_fail"
+        except Exception:
+            conn.rollback()
+            raise
+
+    res = with_retry(run)
+    warning = _mirror_overlap_post_check(conn, eid) if res == "applied" else None
+    return res, warning
+
+
+def bypass_event_add(conn, kind, title, schedule_kind, start_at, end_at,
+                     owning_agent, created_by, note=None):
+    """dec-009 force-adopt lane (grill-6 F5): the owner's hand-made calendar
+    entry is reality -- insert WITHOUT the FG-1 overlap guard (canonical
+    validation, kind-policy slot_exclusive, recompute, stamps all intact;
+    only the overlap predicate is bypassed). Returns (eid, overlap_warning)."""
+    canonical(start_at)
+    canonical(end_at)
+    validate_interval(start_at, end_at)
+    slot_exclusive = resolve_slot_exclusive(kind, schedule_kind)
+    now = now_utc()
+    ulid = new_ulid()
+    cols = ("ulid, kind, title, note, schedule_kind, start_at, end_at, "
+            "display_tz, open_ended, slot_exclusive, completion_rule, "
+            "owning_agent, created_by, created_at, updated_at")
+    vals = [ulid, kind, title, note, schedule_kind, start_at, end_at,
+            "Asia/Seoul", 0, slot_exclusive, "all",
+            owning_agent, created_by, now, now]
+
+    def run():
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            conn.execute(
+                "INSERT INTO event (" + cols + ") VALUES (" +
+                ",".join("?" for _ in vals) + ")", vals)
+            eid = conn.execute("SELECT id FROM event WHERE ulid=?;",
+                               (ulid,)).fetchone()[0]
+            _recompute_and_store(conn, eid, now=now)
+            conn.commit()
+            return eid
+        except Exception:
+            conn.rollback()
+            raise
+
+    eid = with_retry(run)
+    warning = _mirror_overlap_post_check(conn, eid)
+    return eid, warning
+
+
+def recompute(conn, ulid):
+    """Sweep lane (DGN-180): refresh the derived status cache for one row
+    (status is a derived cache -- no version bump, no payload mutation).
+    Returns the stored status or None if the row is missing."""
+    found = _ulid_lookup(conn, ulid)
+    if found is None:
+        return None
+    eid, _version = found
+
+    def run():
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            st = _recompute_and_store(conn, eid)
+            conn.commit()
+            return st
+        except Exception:
+            conn.rollback()
+            raise
+
+    return with_retry(run)
 
 
 # ── sub_event lifecycle: add / done / reopen / tombstone. ──────────────────
@@ -1911,7 +2104,9 @@ def reschedule_apply(conn, req_ulid):
 
 # ── CLI (lifekit.sh 서브커맨드 100% 동일 재현) ───────────────────
 USAGE = ("사용법: lifekit.sh meal-add|meal-find|meal-day|meal-del|meal-upd|"
-         "workout-add|workout-find|workout-del|agg-day|agg-week ...\n"
+         "workout-add|workout-find|workout-del|agg-day|agg-week|"
+         "task-add|task-find|task-done|task-undone|task-reschedule|"
+         "task-archive|task-overdue|task-done-between|event-window ...\n"
          "  workout-add <date> <category> <subtype> [minutes kcal note avg_hr]\n"
          "    (category=대분류, subtype=세부. 인자 순서는 옛 <type> <name>와 동일 위치.)")
 
@@ -2730,6 +2925,227 @@ def cli_log_metric(argv):
     print(f"{mid}\t{date}\t{metric}\t{_f0(_num(value))}")
 
 
+# ── DGN-180 task CLI (event core, kind='task'; dec-001) ───────────────────
+# Output contract (task.sh 1:1): id<TAB>title<TAB>due<TAB>done|todo.
+# id = event integer id (same id space as the appt-* CLI).
+
+def _task_fetch(conn, eid):
+    return conn.execute(
+        "SELECT id, ulid, title, start_at, end_at, schedule_kind, display_tz, "
+        "settled_outcome, settled_at, version FROM event "
+        "WHERE id=? AND kind='task';", (eid,)).fetchone()
+
+
+def _resolve_task(conn, token):
+    """Accept integer id or ulid; must be a task row."""
+    row = None
+    if token.isdigit():
+        row = _task_fetch(conn, int(token))
+    if row is None:
+        r = conn.execute("SELECT id FROM event WHERE ulid=? AND kind='task';",
+                         (token,)).fetchone()
+        if r is not None:
+            row = _task_fetch(conn, r[0])
+    if row is None:
+        _err(f"task 없음: {token}")
+    return row
+
+
+def _task_line(row):
+    eid, _ulid, title, sa, _ea, _sk, tz, outcome, _sat, _v = row
+    due = str(_local_date_of(sa, tz or "Asia/Seoul")) if sa else ""
+    state = "done" if outcome == "done" else "todo"
+    return f"{eid}\t{title}\t{due}\t{state}"
+
+
+def cli_task_add(argv):
+    # task-add <title> [due_date] [note]  (dec-001: event_add kind='task')
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh task-add <title> [due_date] [note]")
+    title = argv[0]
+    due = argv[1] if len(argv) > 1 and argv[1] else None
+    note = argv[2] if len(argv) > 2 and argv[2] else None
+    if due is not None and not _DATE_RE.match(due):
+        _err(f"bad date format (want YYYY-MM-DD): {due}")
+    conn = event_conn()
+    try:
+        if due:
+            sa, ea = all_day_instants(due)
+            eid = event_add(conn, "task", title, "all_day", start_at=sa,
+                            end_at=ea, owning_agent=_facade_agent(),
+                            created_by=_facade_agent(), note=note)
+        else:
+            eid = event_add(conn, "task", title, "untimed",
+                            owning_agent=_facade_agent(),
+                            created_by=_facade_agent(), note=note)
+        print(_task_line(_task_fetch(conn, eid)))
+    finally:
+        conn.close()
+
+
+def cli_task_find(argv):
+    # task-find [date|all|keyword] -- archived(=abandoned, OQ-C1) excluded.
+    arg = argv[0] if argv and argv[0] else "all"
+    conn = event_conn()
+    try:
+        base = ("SELECT id, ulid, title, start_at, end_at, schedule_kind, "
+                "display_tz, settled_outcome, settled_at, version FROM event "
+                "WHERE kind='task' "
+                "AND (settled_outcome IS NULL OR settled_outcome <> 'abandoned') ")
+        if arg == "all":
+            rows = conn.execute(
+                base + "ORDER BY (start_at IS NULL), start_at DESC;").fetchall()
+        elif _DATE_RE.match(arg):
+            ws, we = all_day_instants(arg)
+            rows = conn.execute(
+                base + "AND start_at >= ? AND start_at < ? "
+                "ORDER BY start_at DESC;", (ws, we)).fetchall()
+        else:
+            rows = conn.execute(
+                base + "AND title LIKE ? "
+                "ORDER BY (start_at IS NULL), start_at DESC;",
+                (f"%{arg}%",)).fetchall()
+        for row in rows:
+            print(_task_line(row))
+    finally:
+        conn.close()
+
+
+def cli_task_done(argv):
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh task-done <id>")
+    conn = event_conn()
+    try:
+        row = _resolve_task(conn, argv[0])
+        res = force_settle(conn, row[0], row[9], _facade_agent())
+        if res != MutationResult.APPLIED:
+            _err(f"task-done 실패 ({res}): 이미 완료/취소되었거나 동시 변경")
+        print(_task_line(_task_fetch(conn, row[0])))
+    finally:
+        conn.close()
+
+
+def cli_task_undone(argv):
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh task-undone <id>")
+    conn = event_conn()
+    try:
+        row = _resolve_task(conn, argv[0])
+        res, _warn = unsettle(conn, row[1], _facade_agent())
+        if res != "applied":
+            _err(f"task-undone 실패 ({res}): done 상태가 아니면 재개 불가")
+        print(_task_line(_task_fetch(conn, row[0])))
+    finally:
+        conn.close()
+
+
+def cli_task_reschedule(argv):
+    if len(argv) < 2 or not argv[0] or not argv[1]:
+        _err("사용법: lifekit.sh task-reschedule <id> <YYYY-MM-DD>")
+    if not _DATE_RE.match(argv[1]):
+        _err(f"bad date format (want YYYY-MM-DD): {argv[1]}")
+    conn = event_conn()
+    try:
+        row = _resolve_task(conn, argv[0])
+        sa, ea = all_day_instants(argv[1])
+        res, warn = bypass_schedule_apply(conn, row[1], "all_day", sa, ea)
+        if res != "applied":
+            _err(f"task-reschedule 실패 ({res})")
+        if warn:
+            print(warn, file=sys.stderr)
+        print(_task_line(_task_fetch(conn, row[0])))
+    finally:
+        conn.close()
+
+
+def cli_task_archive(argv):
+    # OQ-C1 (LOUD, TEMPORARY): 179 task-archive semantics = archived_at
+    # visibility soft-delete, but the event table has NO archive home
+    # (archived_at lives on the legacy tasks table only). Per the OQ-C1
+    # ruling fallback we do NOT invent schema here: archive maps to
+    # cancel(abandoned) -- hidden from task-find/overdue and deleted from
+    # the mirror surface (X8). Divergence: an archived task shows as
+    # "cancelled" semantics, not neutral archive. Revisit when an event
+    # archive column is specced (OPEN QUESTION OQ-C1 in DGN-180).
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh task-archive <id>")
+    conn = event_conn()
+    try:
+        row = _resolve_task(conn, argv[0])
+        res = cancel(conn, row[0], row[9], _facade_agent())
+        if res != MutationResult.APPLIED:
+            _err(f"task-archive 실패 ({res}): 이미 종결되었거나 동시 변경")
+        print(f"{row[0]}\t{row[2]}\tarchived")
+    finally:
+        conn.close()
+
+
+def cli_task_overdue(argv):
+    # open tasks whose effective end passed before today's local midnight.
+    today = datetime.datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+    today_start, _ = all_day_instants(today)
+    conn = event_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, ulid, title, start_at, end_at, schedule_kind, "
+            "display_tz, settled_outcome, settled_at, version FROM event "
+            "WHERE kind='task' AND settled_at IS NULL "
+            "AND start_at IS NOT NULL "
+            "AND COALESCE(end_at, start_at) <= ? "
+            "ORDER BY start_at;", (today_start,)).fetchall()
+        for row in rows:
+            print(_task_line(row))
+    finally:
+        conn.close()
+
+
+def cli_task_done_between(argv):
+    # task-done-between <from> <to>  (to = EXCLUSIVE; weekly-review window)
+    if len(argv) < 2 or not _DATE_RE.match(argv[0]) or not _DATE_RE.match(argv[1]):
+        _err("사용법: lifekit.sh task-done-between <YYYY-MM-DD> <YYYY-MM-DD>")
+    ws, _ = all_day_instants(argv[0])
+    we, _ = all_day_instants(argv[1])
+    conn = event_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, ulid, title, start_at, end_at, schedule_kind, "
+            "display_tz, settled_outcome, settled_at, version FROM event "
+            "WHERE kind='task' AND settled_outcome='done' "
+            "AND settled_at >= ? AND settled_at < ? "
+            "ORDER BY settled_at;", (ws, we)).fetchall()
+        for row in rows:
+            done_d = str(_local_date_of(row[8], row[6] or "Asia/Seoul"))
+            print(f"{row[0]}\t{row[2]}\t{done_d}\tdone")
+    finally:
+        conn.close()
+
+
+def cli_event_window(argv):
+    # event-window <from_utc> <to_utc> [kind] -- remind.sh read lane (04b).
+    if len(argv) < 2:
+        _err("사용법: lifekit.sh event-window <from_utc> <to_utc> [kind]")
+    try:
+        canonical(argv[0])
+        canonical(argv[1])
+    except ValueError as e:
+        _err(str(e))
+    kind = argv[2] if len(argv) > 2 and argv[2] else None
+    conn = event_conn()
+    try:
+        q = ("SELECT ulid, kind, title, start_at, end_at, status FROM event "
+             "WHERE settled_at IS NULL AND schedule_kind='timed' "
+             "AND start_at >= ? AND start_at < ? ")
+        params = [argv[0], argv[1]]
+        if kind:
+            q += "AND kind=? "
+            params.append(kind)
+        for u, k, t, sa, ea, st in conn.execute(
+                q + "ORDER BY start_at;", params).fetchall():
+            print(f"{u}\t{k}\t{t}\t{sa}\t{ea or ''}\t{st}")
+    finally:
+        conn.close()
+
+
 _DISPATCH = {
     'meal-add': cli_meal_add,
     'meal-find': cli_meal_find,
@@ -2756,6 +3172,15 @@ _DISPATCH = {
     'appt-upd': cli_appt_upd,
     'appt-person': cli_appt_person,
     'appt-show': cli_appt_show,
+    'task-add': cli_task_add,
+    'task-find': cli_task_find,
+    'task-done': cli_task_done,
+    'task-undone': cli_task_undone,
+    'task-reschedule': cli_task_reschedule,
+    'task-archive': cli_task_archive,
+    'task-overdue': cli_task_overdue,
+    'task-done-between': cli_task_done_between,
+    'event-window': cli_event_window,
 }
 
 

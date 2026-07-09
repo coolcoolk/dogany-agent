@@ -43,6 +43,8 @@
 #   lifekit.sh task-reschedule <id> <YYYY-MM-DD>     예정일 변경. 갱신 행 TSV 출력
 #   lifekit.sh task-archive <id>                     보관(soft-delete) -- find/overdue에서 숨김
 #   lifekit.sh task-overdue                          기한 지난 미완료 목록 TSV (오늘 이전, 보관 제외)
+#   lifekit.sh task-done-between <from> <to>         기간 내 완료 태스크 TSV (to 미포함; 주간회고용)
+#   lifekit.sh event-window <from_utc> <to_utc> [kind]  시간창 내 timed 이벤트 TSV (remind용, 읽기전용)
 #
 # DGN-231 reconcile-before-write: meal-add / workout-add / person-add / appt-add 는
 #   등록 전 중복을 자체 대조한다. 매치가 있으면 등록하지 않고 첫 줄 "EXISTS n" +
