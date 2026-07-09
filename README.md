@@ -105,8 +105,9 @@ clean and auditable.
 The repo mirrors the proven multi-agent tree: shared code is hoisted to the
 root, and each agent lives under `agents/`.
 
-- **`agents/main/`** -- the default mint target, NOT repo content: it does not
-  exist in a fresh clone and is gitignored. `install.sh` creates it by minting
+- **`agents/main/`** -- the repo-internal scaffold mint target (dev-mode /
+  fallback; the end-user default install is `~/.dogany/main`), NOT repo content:
+  it does not exist in a fresh clone and is gitignored. `install.sh` creates it by minting
   from `agents/.template`, producing a self-contained instance whose `CLAUDE.md`
   (loader) imports `RULES.md` (immutable operating rules), `AGENT.md` (the
   agent's own identity -- a blank onboarding skeleton by default), and `USER.md`
@@ -178,9 +179,9 @@ Nothing assumes a fixed parent tree.
 
 2. The wizard walks you through language, timezone, bot token (from
    BotFather) + owner id, then mints a single self-contained agent (default
-   `./agents/main`, in-repo and gitignored). Installing an autostart service
-   and connecting an email account (a dedicated one is recommended; skippable)
-   are optional steps here.
+   `~/.dogany/main`, a hidden directory in your home folder). Installing an
+   autostart service and connecting an email account (a dedicated one is
+   recommended; skippable) are optional steps here.
 
 3. Open Telegram and greet your bot. The first conversation starts
    onboarding: the agent asks for its own name and tone.
@@ -352,7 +353,7 @@ The agent is the folder, not the bot. Telegram is just one door; a terminal
 session in the instance directory is the SAME agent -- same identity, memory,
 hooks, and skills:
 
-    cd agents/main && claude
+    cd ~/.dogany/main && claude
 
 Telegram and CLI conversations are separate threads but share one long-term
 memory: the nightly consolidate pass reads both, so tomorrow's Telegram chat

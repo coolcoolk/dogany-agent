@@ -80,7 +80,7 @@ ENABLE_VOICE="${DOGANY_VOICE:-0}"     # 0 core-only (default), 1 full
 # when voice is enabled. Chosen at the voice step (spec-aware reco preselected).
 # Empty = voice disabled (ENABLE_VOICE=0); config.py default "small" still applies.
 LOCAL_WHISPER_MODEL="${DOGANY_WHISPER_MODEL:-}"   # small | medium | large-v3
-INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$SCRIPT_PATH/agents/main}"
+INSTALL_ROOT="${DOGANY_INSTALL_ROOT:-$HOME/.dogany/main}"
 # Default 1 installed agent. A non-1 value (env or config) bypasses the single-agent refusal.
 DOGANY_MAX_AGENTS="${DOGANY_MAX_AGENTS:-1}"
 AGENT_NAME="${DOGANY_AGENT_NAME:-dogany}"
@@ -2882,9 +2882,12 @@ install.sh -- Dogany product first-run installer
                     never runs a full mint (mint.sh --print-env preview only)
                     and never installs a service.
     --lang ko|en    force the install language (skips auto-detect prompt).
-    --root DIR      instance install dir (default: ./agents/main in-repo, gitignored).
+    --root DIR      instance install dir (default: ~/.dogany/main; use --root to choose a visible path).
     --name NAME     agent name / launchd slug (default: dogany).
     -h, --help      this help.
+
+  Advanced env override:
+    DOGANY_INSTALL_ROOT=DIR  set the install dir via env (same effect as --root; --root wins if both given).
 
   Dry-run env knobs (mock inputs):
     DOGANY_MOCK_TOKEN_BLOB   pasted BotFather blob

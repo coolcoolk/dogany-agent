@@ -39,7 +39,7 @@
 # (written at mint time). The default ./agents/main is a repo SCAFFOLD, not a
 # minted instance, so a bare ./update.sh with no --root now errors out instead
 # of silently no-op'ing against the scaffold. Point --root at a real deployed
-# instance dir (e.g. ~/dogany/Metal), or pass --force to override the gate.
+# instance dir (e.g. ~/.dogany/main), or pass --force to override the gate.
 #
 # Usage:
 #   ./update.sh --root DIR      # update a specific minted instance dir (required)
@@ -155,7 +155,7 @@ INSTANCE="$(cd "$INSTANCE" && pwd)"
 # what used to be a silent no-op against the scaffold into an immediate error.
 if [ ! -f "$INSTANCE/.instance.conf" ] && [ "$FORCE" = "0" ]; then
   die "not a minted Dogany instance (no .instance.conf): $INSTANCE
-        pass --root DIR pointing at a real instance (e.g. ~/dogany/Metal),
+        pass --root DIR pointing at a real instance (e.g. ~/.dogany/main),
         or --force to override the gate."
 fi
 
