@@ -2021,56 +2021,47 @@ step_bot_token() {
   msg "이 숫자 ID 로 봇을 당신에게 잠급니다 -- 다른 사람은 봇과 대화할 수 없습니다." \
       "This numeric id locks the bot to you -- nobody else can talk to it."
   msg "당신의 숫자 텔레그램 ID 가져오기:" "Get your numeric Telegram id:"
-  msg "  1) 텔레그램에서 @userinfobot (당신의 ID 를 알려주는 봇) 를 엽니다." \
-      "  1) Open @userinfobot (a bot that tells you your id) in Telegram."
+  msg "  1) 텔레그램 검색에서 \"User Info • Get ID • IDbot\" (@userinfobot) 을 엽니다." \
+      "  1) In Telegram search, open \"User Info • Get ID • IDbot\" (@userinfobot)."
+  msg "     주의: 파란 인증 체크가 붙은 봇이 진짜입니다. 이름이 비슷한 사칭 봇이 여럿 뜹니다." \
+      "     Careful: the real one carries a blue verified badge -- several lookalike bots exist."
   msg "  2) 아무 메시지나 보내면 당신의 숫자 ID 를 답장으로 보냅니다." \
       "  2) Send it any message; it replies with your numeric id."
-  msg "  3) 답장에서 숫자 ID 만 입력하세요 (예: 12345678). 건너뛰려면 빈 줄." \
-      "  3) Enter just the numeric id from the reply (e.g. 12345678). Leave blank to skip."
-  # DGN-236: invalid (non-blank, no extractable id) input must NOT silently
-  # fall through to the /claim path -- reprompt with the @userinfobot guidance
-  # until a valid id or an explicit blank skip. 5 failed extractions switch to
-  # the /claim path EXPLICITLY (announced), mirroring the token retry cap but
-  # without aborting: /claim is a designed fallback, a dead token is not.
+  msg "  3) 답장에서 숫자 ID 만 입력하세요 (예: 12345678)." \
+      "  3) Enter just the numeric id from the reply (e.g. 12345678)."
+  # DGN-236 (owner directive 2026-07-09): the owner id is a SECURITY input.
+  # No skip, no silent /claim fallback -- reprompt until a valid id is
+  # extracted and confirmed. 5 failed extractions abort the install, same
+  # contract as the bot-token step above. (The bot-side /claim machinery
+  # still exists for hand-edited .env installs; this installer no longer
+  # produces an unlocked bot.)
   local id_blob="" id_tries=0
   OWNER_ID=""
   while :; do
     id_blob=""
-    ask id_blob "숫자 ID 만 입력 (예: 12345678, 건너뛰려면 빈 줄): " \
-                "Enter the numeric id only (e.g. 12345678, blank to skip): " \
+    ask id_blob "숫자 ID 만 입력 (예: 12345678): " \
+                "Enter the numeric id only (e.g. 12345678): " \
                 "${DOGANY_MOCK_ID_BLOB:-}"
-    if [ -z "$(printf '%s' "$id_blob" | tr -d '[:space:]')" ]; then
-      OWNER_ID=""  # explicit skip -> /claim path below
-      break
-    fi
     OWNER_ID="$(extract_user_id "$id_blob")"
     if [ -n "$OWNER_ID" ]; then
       msg "추출된 ID: $OWNER_ID" "Extracted id: $OWNER_ID"
       if confirm "이 ID 가 맞나요?" "Is this id correct?" "y"; then break; fi
       OWNER_ID=""
-      msg "다시 입력하세요. @userinfobot 답장의 숫자 ID 를 그대로 붙여넣으면 됩니다." \
-          "Try again. Paste the numeric id from the @userinfobot reply as-is."
+      msg "다시 입력하세요. \"User Info • Get ID • IDbot\" (@userinfobot) 답장의 숫자 ID 를 그대로 붙여넣으면 됩니다." \
+          "Try again. Paste the numeric id from the \"User Info • Get ID • IDbot\" (@userinfobot) reply as-is."
       continue
     fi
     id_tries=$((id_tries + 1))
     if [ "$id_tries" -ge 5 ]; then
-      msg "[에러] 5회 시도에도 숫자 ID 를 찾지 못했습니다. /claim 경로로 전환합니다." \
-          "[ERROR] No numeric id after 5 attempts. Falling back to the /claim path."
-      OWNER_ID=""
-      break
+      msg "[에러] 5회 시도에도 숫자 ID 를 받지 못했습니다. 봇을 잠글 수 없어 설치를 중단합니다. ID 를 준비한 뒤 다시 실행하세요." \
+          "[ERROR] No numeric id after 5 attempts. Cannot lock the bot; aborting install. Get your id and rerun." >&2
+      exit 1
     fi
-    msg "[에러] 입력에서 숫자 ID 를 찾지 못했습니다. 텔레그램 @userinfobot 에 아무 메시지나 보내고, 답장의 숫자 ID 를 입력하세요." \
-        "[ERROR] No numeric id found in that input. Message @userinfobot on Telegram and enter the numeric id from its reply."
+    msg "[에러] 입력에서 숫자 ID 를 찾지 못했습니다. \"User Info • Get ID • IDbot\" (@userinfobot) 에 아무 메시지나 보내고, 답장의 숫자 ID 를 입력하세요." \
+        "[ERROR] No numeric id found in that input. Message \"User Info • Get ID • IDbot\" (@userinfobot) and enter the numeric id from its reply."
   done
-  if [ -n "$OWNER_ID" ]; then
-    msg "봇이 이 ID 로 잠깁니다 (첫 부팅부터 오너 전용)." \
-        "Bot will be locked to this id (owner-only from first boot)."
-  else
-    msg "ID 를 건너뛰었습니다. 봇은 처음 시작 시 일회용 /claim 코드를 로그에 출력합니다." \
-        "Skipped id. On first start the bot prints a one-time /claim code to its log."
-    msg "텔레그램에서 그 코드로  /claim <코드>  를 보내 오너십을 확보하세요." \
-        "Send  /claim <code>  in Telegram to take ownership."
-  fi
+  msg "봇이 이 ID 로 잠깁니다 (첫 부팅부터 오너 전용)." \
+      "Bot will be locked to this id (owner-only from first boot)."
 }
 
 # DGN-147: token liveness gate. Calls Telegram getMe with the token (5s timeout)
