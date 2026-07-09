@@ -546,8 +546,17 @@ class SdkBridge:
         # sentinel body to the owner chat. The sentinel is the turn's bare
         # final output, so trailing decoration after a leading NO_PUSH line
         # is still a suppressed turn.
+        # DGN-234: the agent may also emit a report body and END with the
+        # sentinel line ("... details in the ticket.\nNO_PUSH") -- the
+        # instruction prose says "end your output with NO_PUSH", so accept
+        # a trailing sentinel line too. Intent is silence either way.
         stripped = content.strip()
-        if stripped == "NO_PUSH" or stripped.startswith("NO_PUSH\n"):
+        lines = [ln.strip() for ln in stripped.splitlines() if ln.strip()]
+        if (
+            stripped == "NO_PUSH"
+            or stripped.startswith("NO_PUSH\n")
+            or (lines and lines[-1] == "NO_PUSH")
+        ):
             return
         if content == state.last_proactive_sent:
             return

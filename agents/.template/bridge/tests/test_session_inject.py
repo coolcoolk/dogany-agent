@@ -75,6 +75,20 @@ class TestNoPushSentinel(unittest.TestCase):
         st = self._flush(["work done.\nNO_PUSH is not a bare sentinel here"])
         st.proactive_push.assert_awaited_once()
 
+    def test_leading_sentinel_with_trailing_footer_suppresses(self):
+        # DGN-217 leak case: Stop-hook footer appended AFTER the sentinel.
+        st = self._flush(["NO_PUSH\n[live] status footer line"])
+        st.proactive_push.assert_not_awaited()
+
+    def test_trailing_sentinel_after_report_suppresses(self):
+        # DGN-234 leak case: report body first, sentinel as the final line.
+        st = self._flush(["verify done, all healthy.\ndetails in ticket.\nNO_PUSH"])
+        st.proactive_push.assert_not_awaited()
+
+    def test_trailing_sentinel_with_whitespace_suppresses(self):
+        st = self._flush(["report body\n  NO_PUSH  \n\n"])
+        st.proactive_push.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()
