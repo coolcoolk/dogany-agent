@@ -3,6 +3,34 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-07-10
+
+### Added
+- lifekit task CLI verbs: task-add, task-find, task-done, task-undone,
+  task-reschedule, task-archive, task-overdue, task-done-between, and
+  event-window. Task mutations are now fully delegatable from the agent
+  to the SDK layer without direct SQL. (DGN-180)
+- Schema migration 005: nullable mirror-bookkeeping columns added to the
+  event table, user_version pinned to 5. Migration applies automatically
+  on the next update run and is additive-only (no existing data touched).
+  (DGN-180)
+
+### Fixed
+- Updating an existing installation no longer leaves BRIDGE_MODELS missing
+  from the instance .env. update.sh now backfills any absent keys
+  (idempotent, add-only -- existing values are never overwritten). This
+  closes a 3-release known issue where pre-v1.1 installs remained on
+  sonnet-only after update because the seeding added in v1.1 only applied
+  to fresh installs. (DGN-246)
+- Slash command list order in the Telegram command picker now reflects
+  usage frequency: new, stop, model, usage, skills, resume, history,
+  help. (DGN-248)
+
+### Notes
+- This release carries user_version 5 (schema 005) and the full task CLI
+  surface. It is the version-precondition for domain-agent minting: the
+  Warg pilot requires a tag that carries 005 / user_version 5.
+
 ## [1.2.1] - 2026-07-09
 
 ### Added
