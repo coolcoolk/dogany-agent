@@ -532,10 +532,10 @@ class TelegramBot:
             BotCommand("new", messages.CMD_DESC_NEW),
             BotCommand("stop", messages.CMD_DESC_STOP),
             BotCommand("model", messages.CMD_DESC_MODEL),
+            BotCommand("usage", messages.CMD_DESC_USAGE),
+            BotCommand("skills", messages.CMD_DESC_SKILLS),
             BotCommand("resume", messages.CMD_DESC_RESUME),
             BotCommand("history", messages.CMD_DESC_HISTORY),
-            BotCommand("skills", messages.CMD_DESC_SKILLS),
-            BotCommand("usage", messages.CMD_DESC_USAGE),
             BotCommand("help", messages.CMD_DESC_HELP),
         ]
         try:
