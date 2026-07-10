@@ -96,10 +96,15 @@ Verify the real state yourself now:
 1. Bridge process alive for label ${LABEL}; pid matches ${NEW_PID:-?}.
 2. Tail ${MARKER_LOG}: no ERROR burst after the restart.
 3. Spot-check that the restart reason above actually landed in running code.
+4. Resume interrupted work: check worklog/ tickets with status wip owned by
+   the agent, and any queued session-inbox items. If this restart cut off an
+   in-flight task, pick it up and continue autonomously.
 
-If everything is healthy: append one line (self-verify OK + timestamp) to the
-worklog ticket this restart belongs to, and end your output with the bare
-word NO_PUSH. If anything is broken: warn the owner immediately (no NO_PUSH).
+If everything is healthy AND nothing needs resuming: append one line
+(self-verify OK + timestamp) to the worklog ticket this restart belongs to,
+and end your output with the bare word NO_PUSH. If you resumed work, report
+what you resumed (no NO_PUSH). If anything is broken: warn the owner
+immediately (no NO_PUSH).
 EOF
   mv "$tmp" "${SPOOL_DIR}/${name}" \
     && echo "[$(date '+%F %T')] verify spool dropped: ${name}" \
