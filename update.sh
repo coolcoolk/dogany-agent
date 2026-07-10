@@ -226,6 +226,136 @@ msg "[update] 레포   = $REPO_ROOT" "[update] repo     = $REPO_ROOT"
 msg "[update] 인스턴스 = $INSTANCE" "[update] instance = $INSTANCE"
 
 # ---------------------------------------------------------------------------
+# REVERSE-DRIFT GUARD (DGN-249): prevent update.sh from overwriting an
+# instance file that is AHEAD of the framework source -- e.g. an instance
+# already running lifekit.py v6 (DGN-240 local patch) while canonical main
+# still carries v5. Overwriting in that direction reverts the pin, leaving
+# the live DB at v6 while the code expects v5 = all verbs fail-closed.
+#
+# Design:
+#   GUARDED_FILES is an ordered list of "relpath:extractor_key" pairs for
+#   every version-bearing file synced by update.sh. Adding a new guarded file
+#   requires:
+#     1. One entry in GUARDED_FILES below.
+#     2. A matching extract_ver_<extractor_key>() function.
+#
+#   drift_guard_file RELPATH FW_SRC INST_DEST extractor_key
+#     Extracts the integer version from both sides. Rules:
+#       - instance > framework -> SKIP + loud warning block.
+#       - instance <= framework -> return 0 (caller proceeds normally).
+#       - parse failure on either side -> return 0 (guard is best-effort;
+#         never blocks a normal update).
+#     Returns 1 when the file should be skipped, 0 when proceed.
+#
+#   db_drift_nag DB_PATH FW_LIFEKIT_PY
+#     Informational: if the instance DB's PRAGMA user_version > the framework
+#     lifekit.py pin, print a class-of-warning up front. Non-blocking.
+# ---------------------------------------------------------------------------
+
+# Extractor: parse EXPECTED_USER_VERSION = <N> from a lifekit.py file.
+# Prints the integer on stdout; exits non-zero on parse failure.
+extract_ver_lifekit_py() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  python3 -c "
+import re, sys
+txt = open(sys.argv[1]).read()
+m = re.search(r'^EXPECTED_USER_VERSION\s*=\s*([0-9]+)', txt, re.MULTILINE)
+if not m: sys.exit(1)
+print(m.group(1))
+" "$f" 2>/dev/null
+}
+
+# Extractor: parse max(ALLOWED_USER_VERSIONS = [...]) from an sdk_bridge.py.
+# Prints the integer on stdout; exits non-zero on parse failure.
+extract_ver_sdk_bridge_py() {
+  local f="$1"
+  [ -f "$f" ] || return 1
+  python3 -c "
+import re, sys, ast
+txt = open(sys.argv[1]).read()
+m = re.search(r'^ALLOWED_USER_VERSIONS\s*=\s*(\[[^\]]*\])', txt, re.MULTILINE)
+if not m: sys.exit(1)
+lst = ast.literal_eval(m.group(1))
+if not lst: sys.exit(1)
+print(max(int(x) for x in lst))
+" "$f" 2>/dev/null
+}
+
+# GUARDED_FILES: list of "relative/path/to/file:extractor_key" pairs.
+# Path is relative to REPO_ROOT (framework source). The instance copy is
+# resolved as $INSTANCE/<same-relative-path>.
+# To guard a new file: add one line here + a matching extract_ver_<key>()
+# function above.
+GUARDED_FILES=(
+  "database/lifekit.py:lifekit_py"
+  # "database/sdk_bridge.py:sdk_bridge_py"   # uncomment when sdk_bridge gets a version pin
+)
+
+# drift_guard_file RELPATH FW_SRC INST_DEST EXTRACTOR_KEY
+# Returns 1 (SKIP) when the instance file is ahead of the framework source.
+# Returns 0 (PROCEED) in all other cases (including parse errors).
+drift_guard_file() {
+  local relpath="$1" fw_src="$2" inst_dest="$3" extkey="$4"
+
+  # Both files must exist for the guard to engage.
+  [ -f "$fw_src" ]   || return 0
+  [ -f "$inst_dest" ] || return 0
+
+  # Dispatch to the correct extractor.
+  local fw_ver inst_ver
+  fw_ver="$(  "extract_ver_${extkey}" "$fw_src"   2>/dev/null)" || return 0
+  inst_ver="$("extract_ver_${extkey}" "$inst_dest" 2>/dev/null)" || return 0
+
+  # Validate: must be plain integers.
+  [[ "$fw_ver"   =~ ^[0-9]+$ ]] || return 0
+  [[ "$inst_ver" =~ ^[0-9]+$ ]] || return 0
+
+  if [ "$inst_ver" -gt "$fw_ver" ]; then
+    printf '%s\n' "============================================================" >&2
+    msg "[update][경고] 역주행 가드 발동 -- 파일 갱신 건너뜀" \
+        "[update][WARN] REVERSE-DRIFT GUARD triggered -- file skipped" >&2
+    msg "  파일: $relpath" \
+        "  file: $relpath" >&2
+    msg "  인스턴스 버전: $inst_ver  |  프레임워크 버전: $fw_ver (낮음)" \
+        "  instance version: $inst_ver  |  framework version: $fw_ver (older)" >&2
+    msg "  원인: 인스턴스 로컬 패치가 아직 canonical에 승격되지 않은 상태입니다." \
+        "  cause: local instance patch not yet promoted to canonical framework." >&2
+    msg "  조치: 해당 변경을 canonical에 승격(PR)한 뒤 다시 업데이트하세요." \
+        "  action: promote the change to canonical (PR), then re-update." >&2
+    printf '%s\n' "============================================================" >&2
+    return 1  # caller must skip the copy
+  fi
+
+  return 0  # safe to proceed
+}
+
+# db_drift_nag DB_PATH FW_LIFEKIT_PY
+# Informational: warn when instance DB is ahead of the framework pin.
+# Never blocks; never exits non-zero.
+db_drift_nag() {
+  local db="$1" fw_lifekit="$2"
+  [ -f "$db" ]           || return 0
+  [ -f "$fw_lifekit" ]  || return 0
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+
+  local db_ver fw_pin
+  db_ver="$(sqlite3 "$db" 'PRAGMA user_version;' 2>/dev/null)" || return 0
+  fw_pin="$(extract_ver_lifekit_py "$fw_lifekit" 2>/dev/null)"  || return 0
+  [[ "$db_ver"  =~ ^[0-9]+$ ]] || return 0
+  [[ "$fw_pin"  =~ ^[0-9]+$ ]] || return 0
+
+  if [ "$db_ver" -gt "$fw_pin" ]; then
+    printf '%s\n' "============================================================" >&2
+    msg "[update][경고] DB 스키마가 프레임워크 핀보다 앞서 있습니다 (DB v${db_ver} > 핀 v${fw_pin})." \
+        "[update][WARN] Instance DB schema is ahead of the framework pin (DB v${db_ver} > pin v${fw_pin})." >&2
+    msg "  lifekit.py 파일 가드가 덮어쓰기를 차단합니다 (아래 로그 확인)." \
+        "  The file-level drift guard will block the lifekit.py overwrite (see below)." >&2
+    printf '%s\n' "============================================================" >&2
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 1) Sync the repo to the latest PUBLISHED RELEASE (DGN-221).
 #    Instances consume release tags (v*), never main HEAD -- pushing dev
 #    commits to main must not stealth-patch users whose VERSION still shows
@@ -412,11 +542,54 @@ if [ -d "$REPO_ROOT/service" ]; then
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).
+#
+#     Before any copy, the DB drift nag checks PRAGMA user_version against the
+#     framework lifekit.py pin (informational). Then drift_guard_file() guards
+#     each file in GUARDED_FILES: if the instance copy carries a higher version
+#     pin than the framework source, the copy is skipped with a loud warning
+#     instead of silently reverting the instance to an older code version.
 ensure_dir "$INSTANCE/database"
+
+# DB version nag: informational, runs even under --dry-run (read-only check).
+db_drift_nag "$INSTANCE/database/lifekit.db" "$REPO_ROOT/database/lifekit.py"
+
 for f in schema.sql lifekit.py lifekit.sh README.md; do
   [ -f "$REPO_ROOT/database/$f" ] || continue
+
+  # Reverse-drift guard: check GUARDED_FILES for this filename.
+  _guarded_skip=0
+  for _gentry in "${GUARDED_FILES[@]}"; do
+    _grel="${_gentry%%:*}"
+    _gkey="${_gentry##*:}"
+    # Match by basename of the guarded relpath.
+    if [ "$(basename "$_grel")" = "$f" ]; then
+      _fw_src="$REPO_ROOT/$_grel"
+      _inst_dest="$INSTANCE/$_grel"
+      if [ "$DRY_RUN" = "1" ]; then
+        # In dry-run: run the check but report would-skip instead of actually skipping.
+        _fw_v="$(  "extract_ver_${_gkey}" "$_fw_src"   2>/dev/null)" || true
+        _in_v="$( "extract_ver_${_gkey}" "$_inst_dest" 2>/dev/null)" || true
+        if [[ "$_fw_v" =~ ^[0-9]+$ ]] && [[ "$_in_v" =~ ^[0-9]+$ ]] && [ "$_in_v" -gt "$_fw_v" ]; then
+          msg "  [dry-run][경고] 역주행 가드: database/$f 갱신 건너뜀 예정 (인스턴스 v${_in_v} > 프레임워크 v${_fw_v})" \
+              "  [dry-run][WARN] reverse-drift guard: would SKIP database/$f (instance v${_in_v} > framework v${_fw_v})"
+          _guarded_skip=1
+        else
+          msg "  [dry-run] database/$f 갱신 예정" "  [dry-run] would refresh database/$f"
+          _guarded_skip=2  # "proceed" marker -- suppress the default dry-run msg below
+        fi
+      else
+        drift_guard_file "$_grel" "$_fw_src" "$_inst_dest" "$_gkey" || { _guarded_skip=1; }
+      fi
+      break
+    fi
+  done
+
+  # _guarded_skip=1 -> blocked by guard; skip this file entirely.
+  [ "$_guarded_skip" = "1" ] && continue
+
   if [ "$DRY_RUN" = "1" ]; then
-    msg "  [dry-run] database/$f 갱신 예정" "  [dry-run] would refresh database/$f"
+    # _guarded_skip=2 means the guard already printed its dry-run line; skip default.
+    [ "$_guarded_skip" = "2" ] || msg "  [dry-run] database/$f 갱신 예정" "  [dry-run] would refresh database/$f"
   else
     cp -p "$REPO_ROOT/database/$f" "$INSTANCE/database/$f"
   fi
