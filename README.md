@@ -349,20 +349,38 @@ your instance folder before you ever run that yourself.
 
 ## Talk to it locally (no Telegram needed)
 
-The agent is the folder, not the bot. Telegram is just one door; a terminal
-session in the instance directory is the SAME agent -- same identity, memory,
-hooks, and skills:
+The agent is the folder, not the bot. Telegram is just one door; running
+`dogany` in any terminal opens a local session with the SAME agent -- same
+identity, memory, hooks, and skills:
 
-    cd ~/.dogany/main && claude
+    dogany
 
 Telegram and CLI conversations are separate threads but share one long-term
 memory: the nightly consolidate pass reads both, so tomorrow's Telegram chat
 remembers today's terminal session. Running both at once is safe.
 
+If you prefer to open the agent directory manually instead:
+
+    cd ~/.dogany/main && claude
+
 Tip for laptops: the agent runs only while the machine is awake. Keep it on
-AC power and disable system sleep (macOS: System Settings > Displays >
-Advanced > "Prevent automatic sleeping on power adapter", or
-`sudo pmset -c sleep 0`; display sleep is fine).
+AC power and prevent the machine from sleeping. On macOS: System Settings >
+Battery > Options > turn on "Prevent automatic sleeping on power adapter when
+the display is off" (exact label may vary slightly by macOS version); or run
+`sudo pmset -c sleep 0`. Do not close the lid unless you have an external
+display connected (clamshell mode keeps the machine awake with an external
+display, but without one, lid-close sleeps the machine). Display sleep is
+fine -- only system sleep stops the agent.
+
+## Keeping it up to date
+
+The agent framework updates periodically. To update:
+
+- Ask your agent in Telegram: "update yourself" (or "업데이트해줘")
+- Or run locally: `dogany update`
+
+The agent pins to the latest published release tag and refreshes its framework
+skills. Your memories, identity, and personal data are never touched.
 
 ## Data and privacy
 

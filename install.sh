@@ -2818,15 +2818,99 @@ step_launcher() {
 # ---------------------------------------------------------------------------
 # Step 10: final message
 # ---------------------------------------------------------------------------
+
+# Print a one-liner role description for a known routine short-name.
+routine_role_msg() {
+  local rn="$1"
+  case "$rn" in
+    consolidate-0430)
+      msg "야간 기억 공고화 -- 하루치 대화를 inbox.md 로 제련 (매일 04:30)" \
+          "nightly memory consolidation -- distills the day's chat into inbox.md (daily 04:30)"
+      ;;
+    classify-inbox-0500)
+      msg "주간 기억 분류 -- inbox.md 항목을 토픽 파일로 라우팅 (주 1회 05:00)" \
+          "weekly memory classification -- routes inbox.md items into topic files (weekly 05:00)"
+      ;;
+    cleanup-files)
+      msg "임시 파일 정리 -- files/tmp/ 스크래치 파일 일 1회 정리 (매일 04:30)" \
+          "daily file cleanup -- clears files/tmp/ scratch files once a day (daily 04:30)"
+      ;;
+    *)
+      msg "정기 루틴" "scheduled routine"
+      ;;
+  esac
+}
+
 step_final() {
   hr
   msg "[10/10] 완료" "[10/10] Done"
   hr
+
+  # --- sleep-prevention guidance ---
+  hr
+  msg "[ 잠자기 방지 설정 ]" "[ Sleep prevention ]"
+  msg "에이전트는 기기가 깨어 있는 동안만 동작합니다. 에이전트가 항상 대기하게 하려면:" \
+      "The agent runs only while the machine is awake. To keep it always available:"
+  if [ "$OS_KIND" = "macos" ]; then
+    msg "  1) 전원 어댑터(충전기)를 연결하고 유지하세요." \
+        "  1) Keep the machine connected to its power adapter."
+    msg "  2) 시스템 설정 > 배터리 > 옵션 > '디스플레이가 꺼져 있을 때 전원 어댑터" \
+        "  2) System Settings > Battery > Options > turn ON 'Prevent automatic sleeping"
+    msg "     연결 시 자동으로 잠자기 방지'를 켜세요." \
+        "     on power adapter when the display is off'."
+    msg "     (macOS 버전에 따라 메뉴 이름이 약간 다를 수 있습니다. 설정 검색창에" \
+        "     (The exact label may vary slightly across macOS versions. Search for"
+    msg "     '잠자기' 또는 '배터리'를 입력하면 바로 찾을 수 있습니다.)" \
+        "     'sleep' or 'battery' in System Settings to locate it quickly.)"
+    msg "     또는 터미널: sudo pmset -c sleep 0" \
+        "     Or from Terminal: sudo pmset -c sleep 0"
+    msg "  3) 노트북 덮개를 닫지 마세요. 외부 모니터 없이 덮개를 닫으면" \
+        "  3) Do not close the lid. Without an external display, closing the lid"
+    msg "     기기가 잠자기에 들어갑니다(클램셸 모드는 외부 모니터 필요)." \
+        "     sleeps the machine (clamshell mode requires an external display)."
+    msg "  화면 잠자기(화면만 꺼짐)는 무관합니다 -- 시스템 잠자기만 문제입니다." \
+        "  Display sleep (screen only) is fine -- only system sleep stops the agent."
+  elif is_wsl; then
+    msg "  - AC 전원 유지 + 절전 설정 안 함: 설정 > 시스템 > 전원" \
+        "  - Keep on AC power and set sleep to Never: Settings > System > Power"
+    msg "    또는: powercfg /change standby-timeout-ac 0" \
+        "    Or: powercfg /change standby-timeout-ac 0"
+  else
+    msg "  - AC 전원을 유지하고 시스템 잠자기를 비활성화하세요." \
+        "  - Keep on AC power and prevent the system from sleeping."
+    msg "    systemd-inhibit 사용: sudo systemd-inhibit --what=sleep --who=dogany --why='agent always-on' sleep infinity &" \
+        "    Using systemd-inhibit: sudo systemd-inhibit --what=sleep --who=dogany --why='agent always-on' sleep infinity &"
+    msg "    또는 /etc/systemd/sleep.conf 에서 AllowSuspend=no 를 설정하세요." \
+        "    Or set AllowSuspend=no in /etc/systemd/sleep.conf."
+  fi
+
+  # --- scheduled routines summary ---
+  hr
+  msg "[ 예약된 메모리 루틴 ]" "[ Scheduled memory routines ]"
+  msg "이번 설치에서 등록된 정기 루틴:" \
+      "Routines registered during this install:"
+  default_routine_set | while IFS="$(printf '\t')" read -r rn rs rc; do
+    [ -n "$rn" ] || continue
+    printf '  '
+    if [ "$OS_KIND" = "macos" ]; then
+      printf 'com.telegram-skill-bot.%s.%s  --  ' "$AGENT_NAME" "$rn"
+    else
+      printf 'dogany-%s.timer  --  ' "$rn"
+    fi
+    routine_role_msg "$rn"
+  done
+
+  # --- finale: greet your agent ---
+  hr
   local at="@your_bot"
   [ -n "$BOT_NAME" ] && at="@$BOT_NAME"
-  msg "설치가 완료되었습니다." "Setup complete."
-  msg "텔레그램을 열고 봇($at)에게 메시지를 보내세요." \
-      "Open Telegram and message your bot ($at)."
+  msg "설치 완료!" "Setup complete!"
+  msg "에이전트에게 인사하세요 -- 두 가지 방법 중 하나로:" \
+      "Say hello to your agent -- pick either door:"
+  msg "  텔레그램: 봇($at)에게 메시지를 보내세요." \
+      "  Telegram: message your bot ($at)."
+  msg "  로컬: 터미널에서 'dogany' 를 실행하세요." \
+      "  Local: run 'dogany' in any terminal."
   msg "봇이 먼저 인사하고, 짧은 설정(이름, 이모지, 말투)을 대화로 안내합니다." \
       "It will greet you and walk you through a short setup (name, emoji, tone)."
   msg "정체성 온보딩은 앱 설치가 아니라 채팅 안에서 이뤄집니다." \
@@ -2845,6 +2929,8 @@ step_final() {
   fi
   msg "로컬 명령: 'dogany' 로 에이전트를 열고, 'dogany status' 로 상태를, 'dogany logs -f' 로 로그를 봅니다." \
       "Local command: run 'dogany' to open your agent, 'dogany status' for health, 'dogany logs -f' for logs."
+  msg "업데이트: 텔레그램에서 '업데이트해줘' 또는 로컬에서 'dogany update' 로 최신 버전을 받으세요." \
+      "Updates: ask your agent 'update yourself' in Telegram, or run 'dogany update' locally."
   if is_wsl; then
     hr
     msg "Windows(WSL2) 참고:" "Windows (WSL2) note:"
