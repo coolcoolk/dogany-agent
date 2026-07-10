@@ -127,6 +127,8 @@ class Config(BaseSettings):
     local_whisper_model: str = Field(default="small")
     whisper_language: Optional[str] = Field(default="ko")
     voice_reply_enabled: bool = Field(default=False)
+    # Dashboard sync (pinned live-dashboard message, activated by file presence)
+    dashboard_enabled: bool = Field(default=True)
     max_voice_duration: int = Field(default=300)
     ffmpeg_path: Optional[str] = Field(default=None)
 

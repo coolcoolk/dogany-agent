@@ -72,6 +72,7 @@ from bridge.permissions import (
 )
 from bridge.sdk_bridge import ChatResponse, PROJECT_ROOT, sdk_bridge
 from bridge.session import session_manager
+from bridge.dashboard import DashboardSync
 
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
@@ -250,6 +251,7 @@ class TelegramBot:
             await self._on_ready()
             watchdog_task = None
             inbox_task = None
+            dashboard_task = None
             try:
                 await self.application.start()
                 await self.application.updater.start_polling(
@@ -274,6 +276,15 @@ class TelegramBot:
                 # summary file, we inject it as a background turn into the
                 # owner's live session. Same lifecycle as the watchdog task.
                 inbox_task = asyncio.create_task(self._session_inbox_loop())
+                # Pinned live-dashboard sync: polls dashboard.md and edits
+                # the owner's pinned message in place. Same lifecycle as the
+                # watchdog and inbox tasks (cancelled in the same finally).
+                dashboard_task = asyncio.create_task(
+                    DashboardSync(
+                        bot=self.application.bot,
+                        turn_active=self._user_turn_active,
+                    ).run()
+                )
                 await self._wait_for_polling_exit(stop_event)
             except PollingConflict:
                 # PTB swallows Conflict in its retry loop (bot stays alive but
@@ -334,6 +345,12 @@ class TelegramBot:
                     inbox_task.cancel()
                     try:
                         await inbox_task
+                    except asyncio.CancelledError:
+                        pass
+                if dashboard_task and not dashboard_task.done():
+                    dashboard_task.cancel()
+                    try:
+                        await dashboard_task
                     except asyncio.CancelledError:
                         pass
                 await self._graceful_shutdown()
