@@ -3,6 +3,61 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-07-11
+
+### Added
+- Agents now resume interrupted work automatically after a bridge restart.
+  The post-restart health check scans open wip tickets and the session inbox
+  and picks up where it left off without waiting for user input. (DGN-254)
+- lifekit project verbs: project-list, project-add, and project-upd are now
+  available as delegatable CLI verbs. Agents can read and update projects
+  through the SDK layer without direct SQL or live Notion API calls, removing
+  the last Notion runtime dependency from the weekly-review routine. (DGN-256)
+- lifekit v6: recurrence engine, routine_projection, and routine_roller land
+  on canonical. Schema migrates to user_version 6 via migration 006
+  (routine_recurrence tables). Migration applies automatically on the next
+  update run and is additive-only. (DGN-259)
+- Mirror engine ships as a flag-gated optional module (MIRROR_MODULE=off by
+  default). When off, the enqueue hook is a fully silent no-op -- no errors,
+  no output, no side effects. Agents that do not use the mirror feature are
+  unaffected. (DGN-259)
+- Live-dashboard sync (DashboardSync) ships in the agent template baseline.
+  New agents minted from the template now inherit dashboard.py and the bot
+  lifecycle wiring that keeps a pinned console dashboard current. The
+  dashboard_enabled flag activates on file presence; the feature is off until
+  you place the dashboard config file.
+- Install completion flow improved: the wizard now shows your bot handle,
+  explains how to start your agent with the dogany launcher, prompts you to
+  configure sleep-prevention (so the agent stays up when the laptop lid is
+  closed), and shows a cron schedule summary so you know when scheduled
+  routines will first fire. (DGN-250)
+
+### Fixed
+- project-add now checks for an existing same-title project before inserting (EXISTS/exit 3, --new to force); mirror-poll.sh and mirror-reconcile.sh now enforce the MIRROR_MODULE flag at runtime instead of comment-only. (DGN-260)
+- update.sh now refuses to overwrite instance files whose version marker is
+  ahead of the framework source. If you have applied a hotfix or run a
+  cutting-edge build that has not yet shipped in a release, the next update
+  will skip that file and warn you loudly instead of silently rolling it back.
+  The guard applies per-file; unguarded files update normally. There is no
+  --force override by design. (DGN-249)
+
+### Security
+- Vendored bridge re-pinned to a clean, reachable upstream SHA (feca63e).
+  The previous pin pointed to a dangling pre-history-rewrite commit authored
+  by a blocked identity; UPSTREAM.md was the only public pointer to that
+  object. The pointer has been removed.
+
+### Notes
+- This release carries user_version 6 (schema 006). Existing user_version 5
+  installs migrate automatically through the 006_routine_recurrence migration
+  on the next update run.
+- The mirror module is off by default and requires explicit opt-in
+  (MIRROR_MODULE=on in lifekit.conf) plus gws (Google Workspace) credentials.
+  No setup is required for agents that do not use it.
+- agents/main/database/ contains a stale 1685-line lifekit.py snapshot that
+  predates this release. It is not the canonical copy; the canonical is
+  database/lifekit.py at repository root. Cleanup is tracked separately.
+
 ## [1.3.0] - 2026-07-10
 
 ### Added

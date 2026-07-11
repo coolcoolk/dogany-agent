@@ -4163,7 +4163,8 @@ def cli_project_list(argv):
 
 
 def cli_project_add(argv):
-    # project-add --title <T> [--status <S>] [--start <d>] [--end <d>] [--note <N>]
+    # project-add --title <T> [--status <S>] [--start <d>] [--end <d>] [--note <N>] [--new]
+    argv, force_new = _pop_flag(argv, '--new')      # DGN-231 / DGN-260
     title = None
     status = None
     start = None
@@ -4183,9 +4184,23 @@ def cli_project_add(argv):
             note = argv[i + 1]; i += 2
         else:
             _err("사용법: lifekit.sh project-add --title <T> "
-                 "[--status <S>] [--start <d>] [--end <d>] [--note <N>]")
+                 "[--status <S>] [--start <d>] [--end <d>] [--note <N>] [--new]")
     if not title:
         _err("project-add: --title is required")
+    if not force_new:
+        # duplicate gate: any same-title project, any status (DGN-260 / D3 fix)
+        conn = get_conn()
+        try:
+            dups = conn.execute(
+                "SELECT id, title, status, start_date, end_date "
+                "FROM projects WHERE title=?;", (title,)).fetchall()
+        finally:
+            conn.close()
+        if dups:
+            print("EXISTS %d" % len(dups))
+            for d in dups:
+                print(_project_line(d))
+            sys.exit(EXISTS_CODE)
     if start and not _DATE_RE.match(start):
         _err("bad date format (want YYYY-MM-DD): " + start)
     if end and not _DATE_RE.match(end):

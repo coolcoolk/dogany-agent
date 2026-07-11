@@ -3,9 +3,16 @@
 # Optional module: only runs when mirror/ dir and config/lifekit.conf
 # MIRROR_MODULE=on are both present (flag gate, DGN-258/259).
 set -euo pipefail
+# Flag gate (DGN-260): exit 0 silently when mirror module is disabled or absent.
+_AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_CONF="$_AGENT_ROOT/config/lifekit.conf"
+if [ ! -d "$_AGENT_ROOT/mirror" ]; then exit 0; fi
+if [ ! -f "$_CONF" ]; then exit 0; fi
+_MODULE_VAL="$(grep '^MIRROR_MODULE=' "$_CONF" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
 # Install home: routines/ (plist convention); modules live in
 # mirror/ -- resolve relative, no absolute home paths.
-cd "$(dirname "${BASH_SOURCE[0]}")/../mirror"
+cd "$_AGENT_ROOT/mirror"
 if [ -x "/opt/homebrew/bin/python3" ]; then
     PY=/opt/homebrew/bin/python3
 else
