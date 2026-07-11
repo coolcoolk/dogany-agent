@@ -1056,7 +1056,7 @@ def load_card_data(iso_date, conn=None):
 # facade time parser). datetime/timezone are already imported at file top.
 from zoneinfo import ZoneInfo
 
-EXPECTED_USER_VERSION = 5  # 005_mirror_bookkeeping (DGN-180 W6)
+EXPECTED_USER_VERSION = 6  # 006_routine_recurrence (DGN-240 T7)
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
@@ -1330,13 +1330,17 @@ def _overlap_not_exists(exclude_id=False):
     return sql
 
 
+_REC_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")  # DGN-240 rec_date shape
+
+
 # ── event_add: atomic conditional insert for slot_exclusive events. ────────
 # non-exclusive events insert unconditionally (no slot to guard).
 def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
               open_ended=0, owning_agent=None, created_by=None,
               completion_rule="all", note=None, area_id=None,
               display_tz="Asia/Seoul", task_kind=None, day_block=False,
-              notion_id=None, meta=None):
+              notion_id=None, meta=None,
+              recurrence_id=None, rec_date=None, is_routine=0):
     """Insert a new event. For slot_exclusive events with a start instant, the
     insert is atomic INSERT..WHERE NOT EXISTS(overlap): returns event id on win,
     None on slot loss. For non-exclusive/no-start, always inserts (no slot guard).
@@ -1349,7 +1353,40 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
     birth). Validated against META_COLS_BY_KIND[kind] with the same rule as
     event_set_meta: a kind-illegal column raises ValueError. title/note have
     first-class params and are NOT accepted through meta.
+
+    DGN-240 (spec v3 1.6, T5) recurrence gate -- the SDK promotion of the
+    DGN-180 N1 gate (anchor-less routine writes stay impossible):
+      - recurrence_id given -> the anchor MUST resolve to a routine_def row
+        AND rec_date (YYYY-MM-DD) is required; violations raise ValueError.
+      - is_routine=1 without recurrence_id -> ValueError.
+      - a recurrence instance must be timed|all_day (1.4 invariant; untimed
+        entry is refused at the verb level).
+    sqlite ALTER cannot add CHECKs on the migrated columns, so this verb IS
+    the coherence enforcement point (spec 1.3).
     """
+    # DGN-240 recurrence gate (order: routine flag first, then anchor checks).
+    if is_routine and not recurrence_id:
+        raise ValueError(
+            "event_add: is_routine=1 requires recurrence_id (N1 gate -- "
+            "anchor-less routine writes are refused)")
+    if recurrence_id is not None:
+        anchor = conn.execute(
+            "SELECT 1 FROM routine_def WHERE recurrence_id=?;",
+            (recurrence_id,)).fetchone()
+        if anchor is None:
+            raise ValueError(
+                "event_add: recurrence_id %r does not resolve to a "
+                "routine_def anchor" % recurrence_id)
+        if rec_date is None or not _REC_DATE_RE.match(str(rec_date)):
+            raise ValueError(
+                "event_add: recurrence instance requires rec_date "
+                "YYYY-MM-DD, got %r" % rec_date)
+        if schedule_kind not in ("timed", "all_day"):
+            raise ValueError(
+                "event_add: recurrence instance schedule_kind must be "
+                "timed|all_day, got %r" % schedule_kind)
+    elif rec_date is not None:
+        raise ValueError("event_add: rec_date requires recurrence_id")
     canonical(start_at)
     canonical(end_at)
     validate_interval(start_at, end_at)   # grill-5: reject reversed interval
@@ -1371,12 +1408,14 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
     meta_cols = sorted(meta.keys())       # deterministic column order
     cols = ("ulid, kind, title, note, area_id, schedule_kind, start_at, end_at, "
             "display_tz, open_ended, slot_exclusive, completion_rule, "
-            "owning_agent, created_by, notion_id, created_at, updated_at")
+            "owning_agent, created_by, notion_id, "
+            "recurrence_id, rec_date, is_routine, created_at, updated_at")
     if meta_cols:
         cols += ", " + ", ".join(meta_cols)
     base_vals = [ulid, kind, title, note, area_id, schedule_kind, start_at, end_at,
                  display_tz, open_ended, slot_exclusive, completion_rule,
-                 owning_agent, created_by, notion_id, now, now]
+                 owning_agent, created_by, notion_id,
+                 recurrence_id, rec_date, 1 if is_routine else 0, now, now]
     base_vals += [meta[c] for c in meta_cols]
 
     conn.execute("BEGIN IMMEDIATE;")
@@ -1809,7 +1848,18 @@ def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
     open_ended coherence (v4 ruling 1 / grill-4 finding 10): a materialized
     end clears open_ended; untimed clears it; a timed apply that PRESERVES
     end NULL (open-ended placeholder rule, caller-side guard) preserves the
-    existing flag. Returns (result, overlap_warning)."""
+    existing flag. Returns (result, overlap_warning).
+
+    DGN-240 (spec v3 1.6, T3):
+      - untimed gate (M-C): a recurrence instance may NEVER transition to
+        untimed (identity/lapse would break). Classified terminal result
+        ('rejected_untimed', None), row unchanged -- not an exception, not
+        a retryable failure (adapter terminal handling = T12/S8).
+      - exception stamping (M-B: this verb is the SOLE stamping owner): a
+        schedule-shape edit on a recurrence row sets rec_exception=1 in the
+        SAME txn -- the row detaches from rule governance (GCal drag /
+        GTasks due edit / CLI move all pass through here). content_update
+        does NOT stamp (version-bump guard chain already protects it)."""
     if new_schedule_kind == "untimed":
         new_start = None
         new_end = None
@@ -1820,6 +1870,12 @@ def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
     if found is None:
         return "not_found", None
     eid, version = found
+    rec_row = conn.execute(
+        "SELECT recurrence_id FROM event WHERE id=?;", (eid,)).fetchone()
+    is_recurrence = rec_row is not None and rec_row[0] is not None
+    if is_recurrence and new_schedule_kind == "untimed":
+        return "rejected_untimed", None          # M-C: no change, terminal
+    stamp_sql = ", rec_exception=1" if is_recurrence else ""
     now = now_utc()
 
     def run():
@@ -1828,8 +1884,9 @@ def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
             cur = conn.execute(
                 "UPDATE event SET schedule_kind=?, start_at=?, end_at=?, "
                 "open_ended=CASE WHEN ? IS NOT NULL THEN 0 "
-                "WHEN ?='untimed' THEN 0 ELSE open_ended END, "
-                "version=version+1, updated_at=? WHERE id=? AND version=?;",
+                "WHEN ?='untimed' THEN 0 ELSE open_ended END"
+                + stamp_sql +
+                ", version=version+1, updated_at=? WHERE id=? AND version=?;",
                 (new_schedule_kind, new_start, new_end,
                  new_end, new_schedule_kind, now, eid, version))
             if cur.rowcount == 1:
@@ -2100,6 +2157,806 @@ def reschedule_apply(conn, req_ulid):
     except Exception:
         conn.rollback()
         raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DGN-240 routine verbs (spec v3 T6): routine_def lifecycle + health.
+# Instance machinery (materialize / regen / group-cancel / occupied) lives in
+# database/routine_roller.py (single implementation shared with the nightly
+# roller); these verbs lazily import it (roller imports lifekit at top level,
+# so the import must be deferred here to avoid a cycle).
+# English/ASCII only in this block.
+# ══════════════════════════════════════════════════════════════════════════
+
+ROUTINE_VALID_DAYS = 56          # autonomous renewal window (spec 1.3/2.5)
+_TOD_RE = re.compile(r"^\d{2}:\d{2}$")
+
+
+def _roller_mod():
+    """Deferred import of the shared instance engine (cycle guard)."""
+    if SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, SCRIPT_DIR)
+    import routine_roller
+    return routine_roller
+
+
+def _projection_mod():
+    if SCRIPT_DIR not in sys.path:
+        sys.path.insert(0, SCRIPT_DIR)
+    import routine_projection
+    return routine_projection
+
+
+def routine_today(tz_name="Asia/Seoul"):
+    """Local calendar date (ISO string) in the routine display tz."""
+    return datetime.datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d")
+
+
+def routine_def_get(conn, token):
+    """routine_def row (sqlite3.Row-like dict) by def ulid, recurrence_id or
+    integer id. None if absent."""
+    old_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT * FROM routine_def WHERE ulid=? OR recurrence_id=?;",
+            (token, token)).fetchone()
+        if row is None and str(token).isdigit():
+            row = conn.execute(
+                "SELECT * FROM routine_def WHERE id=?;", (int(token),)).fetchone()
+        return dict(row) if row is not None else None
+    finally:
+        conn.row_factory = old_factory
+
+
+def _routine_validate(cadence, schedule_kind, time_of_day, kind):
+    """Shared registration/update validation (spec 1.3/1.4/1.6)."""
+    if kind != "task":
+        # v1 scope: appointment routines (hard-blocker materialization) are a
+        # follow-up ticket (OQ-12). Schema keeps the column; the verb gates.
+        raise ValueError("routine_add: kind='appointment' is not supported "
+                         "in v1 (OQ-12); only kind='task'")
+    _projection_mod().parse_cadence(cadence)     # closed-grammar validation
+    if schedule_kind not in ("timed", "all_day"):
+        raise ValueError("routine schedule_kind must be timed|all_day, got %r"
+                         % schedule_kind)
+    if schedule_kind == "timed" and (
+            time_of_day is None or not _TOD_RE.match(time_of_day)):
+        raise ValueError("timed routine requires time_of_day HH:MM, got %r"
+                         % time_of_day)
+
+
+def _valid_until_for(end_date, today):
+    """Spec 1.3 initialization: autonomous -> today+56d; end_date defs carry
+    valid_until=end_date for shape consistency (it never binds upper())."""
+    if end_date is not None:
+        return end_date
+    d = datetime.date.fromisoformat(today) + timedelta(days=ROUTINE_VALID_DAYS)
+    return d.isoformat()
+
+
+def routine_add(conn, title, cadence, schedule_kind, time_of_day=None,
+                duration_min=None, area_id=None, project_id=None,
+                purpose=None, start_date=None, end_date=None, kind="task",
+                display_tz="Asia/Seoul", created_by=None, today=None,
+                materialize=True, state_conn=None, now=None):
+    """Register a routine_def + inline first materialization (spec 8.2).
+    Returns dict(def_id, ulid, recurrence_id, materialized_dates)."""
+    _routine_validate(cadence, schedule_kind, time_of_day, kind)
+    if not title or not str(title).strip():
+        raise ValueError("routine_add: title required")
+    if created_by is None:
+        created_by = _facade_agent()
+    today = today or routine_today(display_tz)
+    start_date = start_date or today
+    valid_until = _valid_until_for(end_date, today)
+    ulid = new_ulid()
+    rid = "rd:%s" % ulid
+    ts = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT INTO routine_def (ulid, recurrence_id, title, kind, "
+            "cadence, schedule_kind, time_of_day, duration_min, display_tz, "
+            "area_id, project_id, purpose, status, start_date, end_date, "
+            "valid_until, rule_effective_from, created_by, created_at, "
+            "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?);",
+            (ulid, rid, title, kind, cadence, schedule_kind, time_of_day,
+             duration_min, display_tz, area_id, project_id, purpose,
+             start_date, end_date, valid_until, today, created_by, ts, ts))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    dates = []
+    if materialize:
+        rr = _roller_mod()
+        defn = routine_def_get(conn, ulid)
+        dates = rr.materialize_def(conn, state_conn, defn,
+                                   today=today, now=now)
+    return {"def_id": routine_def_get(conn, ulid)["id"], "ulid": ulid,
+            "recurrence_id": rid, "materialized_dates": dates}
+
+
+_ROUTINE_UPD_COLS = ("title", "cadence", "schedule_kind", "time_of_day",
+                     "duration_min", "area_id", "project_id", "purpose",
+                     "end_date")
+
+
+def routine_update(conn, def_token, changes, effective_from=None,
+                   today=None, state_conn=None, now=None):
+    """Mode B rule change (spec 4.2) -- convergent, not atomic:
+      1. single txn: CAS bump def (version, updated_at) + apply changes +
+         persist rule_effective_from (F-A).
+      2. cancel-set regen (row-per-txn, roller regen path).
+      3. materialize per new rule over [max(today, effective_from), upper].
+    Returns dict(result, cancelled, deleted, materialized_dates)."""
+    defn = routine_def_get(conn, def_token)
+    if defn is None:
+        return {"result": "not_found"}
+    today = today or routine_today(defn["display_tz"])
+    effective_from = effective_from or today
+    merged = dict(defn)
+    for col in changes:
+        if col not in _ROUTINE_UPD_COLS:
+            raise ValueError("routine_update: column %r not updatable "
+                             "(allowed: %s)" % (col, list(_ROUTINE_UPD_COLS)))
+        merged[col] = changes[col]
+    _routine_validate(merged["cadence"], merged["schedule_kind"],
+                      merged["time_of_day"], merged["kind"])
+    # end_date change re-derives valid_until per the 1.3 initialization rule.
+    new_valid_until = (_valid_until_for(merged["end_date"], today)
+                       if "end_date" in changes else defn["valid_until"])
+    ts = now_utc()
+    sets = ", ".join("%s=?" % c for c in sorted(changes.keys()))
+    params = [changes[c] for c in sorted(changes.keys())]
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE routine_def SET " + (sets + ", " if sets else "") +
+            "valid_until=?, rule_effective_from=?, version=version+1, "
+            "updated_at=? WHERE id=? AND version=?;",
+            params + [new_valid_until, effective_from, ts,
+                      defn["id"], defn["version"]])
+        if cur.rowcount != 1:
+            conn.rollback()
+            return {"result": "cas_fail"}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    # steps 2+3: best-effort catch-up; nightly conformance converges (2.4).
+    rr = _roller_mod()
+    fresh = routine_def_get(conn, def_token)
+    cancelled, deleted = rr.cancel_set_regen(conn, state_conn, fresh,
+                                             effective_from, now=now)
+    dates = rr.materialize_def(conn, state_conn, fresh, today=today, now=now,
+                               floor_date=max(today, effective_from))
+    return {"result": "applied", "cancelled": cancelled, "deleted": deleted,
+            "materialized_dates": dates}
+
+
+def routine_pause(conn, def_token, today=None, state_conn=None, now=None):
+    """pause = cancel-set treatment + status='paused' (spec 4.2)."""
+    defn = routine_def_get(conn, def_token)
+    if defn is None:
+        return {"result": "not_found"}
+    today = today or routine_today(defn["display_tz"])
+    ts = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE routine_def SET status='paused', version=version+1, "
+            "updated_at=? WHERE id=? AND version=? AND status='active';",
+            (ts, defn["id"], defn["version"]))
+        if cur.rowcount != 1:
+            conn.rollback()
+            return {"result": "cas_fail"}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    rr = _roller_mod()
+    cancelled, deleted = rr.cancel_set_regen(conn, state_conn, defn,
+                                             today, now=now)
+    return {"result": "applied", "cancelled": cancelled, "deleted": deleted}
+
+
+def routine_resume(conn, def_token, today=None, state_conn=None, now=None):
+    """resume: status='active' (+ autonomous valid_until reset, M7) + inline
+    materialize. end_date defs skip the valid_until reset (unused, 2.2).
+    pause/resume never touch rule_effective_from (spec 4.2)."""
+    defn = routine_def_get(conn, def_token)
+    if defn is None:
+        return {"result": "not_found"}
+    today = today or routine_today(defn["display_tz"])
+    ts = now_utc()
+    new_valid = (_valid_until_for(None, today)
+                 if defn["end_date"] is None else defn["valid_until"])
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE routine_def SET status='active', valid_until=?, "
+            "version=version+1, updated_at=? "
+            "WHERE id=? AND version=? AND status='paused';",
+            (new_valid, ts, defn["id"], defn["version"]))
+        if cur.rowcount != 1:
+            conn.rollback()
+            return {"result": "cas_fail"}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    rr = _roller_mod()
+    fresh = routine_def_get(conn, def_token)
+    dates = rr.materialize_def(conn, state_conn, fresh, today=today, now=now)
+    return {"result": "applied", "materialized_dates": dates}
+
+
+def routine_retire(conn, def_token, today=None, state_conn=None, now=None,
+                   by="routine-retire"):
+    """Group cleanup (spec 5.4): cancel ALL future unsettled instances
+    (exceptions INCLUDED -- retire means stop) + def.status='retired'
+    (row preserved). Past/settled rows = lifelog, untouchable."""
+    defn = routine_def_get(conn, def_token)
+    if defn is None:
+        return {"result": "not_found"}
+    today = today or routine_today(defn["display_tz"])
+    ts = now_utc()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE routine_def SET status='retired', version=version+1, "
+            "updated_at=? WHERE id=? AND version=? AND status != 'retired';",
+            (ts, defn["id"], defn["version"]))
+        if cur.rowcount != 1:
+            conn.rollback()
+            return {"result": "cas_fail"}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    rr = _roller_mod()
+    n = rr.retire_group_cancel(conn, state_conn, defn, today, now=now, by=by)
+    return {"result": "applied", "cancelled": n}
+
+
+def routine_exception(conn, event_ulid, schedule=None, content=None):
+    """Mode A this-instance-only edit (spec 4.1) -- thin wrapper.
+    schedule = (new_schedule_kind, new_start, new_end) -> delegates to
+    bypass_schedule_apply (which owns the rec_exception stamp, M-B).
+    content = {title/note} -> event_set_meta path (NO stamp; version bump
+    already makes the row regen-untouchable). Returns result string."""
+    if schedule is None and not content:
+        raise ValueError("routine_exception: nothing to change")
+    res = "noop"
+    if schedule is not None:
+        sk, ns, ne = schedule
+        res, _warn = bypass_schedule_apply(conn, event_ulid, sk, ns, ne)
+        if res != "applied":
+            return res
+    if content:
+        found = _ulid_lookup(conn, event_ulid)
+        if found is None:
+            return "not_found"
+        eid, version = found
+        mres = event_set_meta(conn, eid, version, dict(content))
+        res = mres if isinstance(mres, str) else "applied"
+    return res
+
+
+# ── health aggregation (spec 6.1 -- structural tombstones in NO bucket) ────
+ANOMALY_RATE_MIN_ELAPSED = 4     # last-14d elapsed occurrences (OQ-1)
+ANOMALY_RATE_THRESHOLD = 0.30
+ANOMALY_STREAK_D = 5
+ANOMALY_STREAK_WI = 3
+
+STRUCTURAL_SETTLERS = ("rule-regen", "routine-retire")
+
+
+def _def_streak_threshold(cadence):
+    return ANOMALY_STREAK_D if cadence == "D" else ANOMALY_STREAK_WI
+
+
+def routine_health(conn, window=28, as_of=None, include_retired=False):
+    """Per-def health JSON rows (spec 6.1). Pure read.
+    scheduled = COUNT(DISTINCT rec_date) of elapsed instances in the window,
+    structural tombstones (settled_by rule-regen/routine-retire) excluded
+    from EVERY bucket (M-E). rate = done/scheduled."""
+    as_of = as_of or routine_today()
+    lo = (datetime.date.fromisoformat(as_of)
+          - timedelta(days=int(window))).isoformat()
+    old_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        q = "SELECT * FROM routine_def"
+        if not include_retired:
+            q += " WHERE status != 'retired'"
+        defs = [dict(r) for r in conn.execute(q + " ORDER BY id;")]
+        out = []
+        for defn in defs:
+            rid = defn["recurrence_id"]
+            rows = [dict(r) for r in conn.execute(
+                "SELECT rec_date, status, settled_at, settled_by, "
+                "settled_outcome FROM event WHERE recurrence_id=? "
+                "AND rec_date IS NOT NULL AND rec_date <= ? "
+                "AND NOT (settled_outcome IS 'abandoned' AND settled_by IN "
+                "('rule-regen','routine-retire')) ORDER BY rec_date;",
+                (rid, as_of))]
+            def _bucket(r):
+                if r["settled_outcome"] == "done":
+                    return "done"
+                if (r["settled_outcome"] == "abandoned"
+                        and r["settled_by"] == "roller-lapse"):
+                    return "missed"
+                if r["settled_outcome"] == "abandoned":
+                    return "skipped"
+                if r["status"] == "expired":
+                    return "missed"
+                return "open"
+
+            per_date = {}
+            for r in rows:
+                # one bucket per (rid, rec_date): done wins over miss/skip
+                b = _bucket(r)
+                cur = per_date.get(r["rec_date"])
+                order = {"done": 3, "skipped": 2, "missed": 1, "open": 0}
+                if cur is None or order[b] > order[cur]:
+                    per_date[r["rec_date"]] = b
+
+            # m-3 (grill-final): an as_of-day occurrence counts as elapsed
+            # only once resolved -- a still-open same-day row would
+            # transiently understate the morning rate via the denominator.
+            def _elapsed(d):
+                return d < as_of or per_date.get(d, "open") != "open"
+
+            in_win = [r for r in rows if r["rec_date"] > lo]
+            sched_dates = sorted(
+                d for d in {r["rec_date"] for r in in_win} if _elapsed(d))
+            scheduled = len(sched_dates)
+            done = sum(1 for d in sched_dates if per_date.get(d) == "done")
+            missed = sum(1 for d in sched_dates if per_date.get(d) == "missed")
+            skipped = sum(1 for d in sched_dates if per_date.get(d) == "skipped")
+            displaced = conn.execute(
+                "SELECT COUNT(DISTINCT detail) FROM roller_log "
+                "WHERE category='displaced' AND recurrence_id=? "
+                "AND detail > ? AND detail <= ?;", (rid, lo, as_of)).fetchone()[0]
+            rate = round(done / scheduled, 2) if scheduled else None
+            # consec_miss over the most recent elapsed occurrences (all time)
+            consec = 0
+            for d in sorted(per_date.keys(), reverse=True):
+                b = per_date[d]
+                if b == "missed":
+                    consec += 1
+                elif b == "open":
+                    continue                     # not yet resolved: neutral
+                else:
+                    break                        # done/skipped breaks streak
+            # anomaly (2.5 constants; conformance_frozen from roller_log)
+            frozen = conn.execute(
+                "SELECT 1 FROM roller_log WHERE category='conformance_frozen' "
+                "AND recurrence_id=? AND ts > ? LIMIT 1;",
+                (rid, defn["updated_at"])).fetchone() is not None
+            lo14 = (datetime.date.fromisoformat(as_of)
+                    - timedelta(days=14)).isoformat()
+            d14 = sorted(d for d in {r["rec_date"] for r in rows
+                                     if r["rec_date"] > lo14} if _elapsed(d))
+            done14 = sum(1 for d in d14 if per_date.get(d) == "done")
+            anomaly = None
+            if frozen:
+                anomaly = "conformance_frozen"
+            elif (len(d14) >= ANOMALY_RATE_MIN_ELAPSED
+                    and (done14 / len(d14)) < ANOMALY_RATE_THRESHOLD):
+                anomaly = "rate"
+            elif (defn["cadence"] is not None
+                    and consec >= _def_streak_threshold(defn["cadence"])):
+                anomaly = "streak"
+            area = conn.execute("SELECT name FROM areas WHERE id=?;",
+                                (defn["area_id"],)).fetchone() \
+                if defn["area_id"] else None
+            project = None
+            if defn["project_id"]:
+                pr = conn.execute("SELECT title FROM projects WHERE id=?;",
+                                  (defn["project_id"],)).fetchone()
+                project = pr[0] if pr else None
+            out.append({
+                "rid": rid, "title": defn["title"],
+                "purpose": defn["purpose"],
+                "area": area[0] if area else None, "project": project,
+                "cadence": defn["cadence"], "status": defn["status"],
+                "scheduled": scheduled, "done": done, "missed": missed,
+                "skipped": skipped, "displaced": displaced,
+                "rate": rate, "consec_miss": consec, "anomaly": anomaly,
+                "valid_until": defn["valid_until"],
+            })
+        return out
+    finally:
+        conn.row_factory = old_factory
+
+
+def routine_ack_anomaly(conn, def_token, snapshot):
+    """Retro choice 4 (spec 6.3): record anomaly_ack snapshot JSON
+    ({type, rate, streak, ts}) under CAS."""
+    defn = routine_def_get(conn, def_token)
+    if defn is None:
+        return "not_found"
+    ts = now_utc()
+    payload = dict(snapshot)
+    payload.setdefault("ts", ts)
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE routine_def SET anomaly_ack=?, version=version+1, "
+            "updated_at=? WHERE id=? AND version=?;",
+            (json.dumps(payload), ts, defn["id"], defn["version"]))
+        if cur.rowcount != 1:
+            conn.rollback()
+            return "cas_fail"
+        conn.commit()
+        return "applied"
+    except Exception:
+        conn.rollback()
+        raise
+
+
+# ── mirror outbox enqueue hook (DGN-258) ─────────────────────────────────────
+# Self-locating path: SCRIPT_DIR = database/ -> ../mirror/mirror_state.db.
+# Idempotent insert: unique-pending index (idx_outbox_ulid_pending) on
+# (event_ulid) WHERE status IN ('queued','claimed') collapses duplicates.
+# Pattern is byte-identical to routine_roller.outbox_enqueue (single home kept
+# there; this copy avoids importing routine_roller into the interactive path
+# which would create a circular import: routine_roller -> lifekit -> .).
+#
+# Flag gate (DGN-259): when the mirror module is disabled (MIRROR_MODULE=off
+# in config/lifekit.conf, or the module directory is absent), this hook is a
+# SILENT no-op. A warning is emitted to stderr only if the module is enabled
+# but the state DB is unreachable (broken module, not disabled module).
+# The gate is cheap: one stat check per process start, cached in _MIRROR_ENABLED.
+
+_STATE_DB_PATH = os.path.normpath(
+    os.path.join(SCRIPT_DIR, "..", "mirror", "mirror_state.db"))
+
+# Module-presence sentinel: ../mirror/ directory (adjacent to database/).
+_MIRROR_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "mirror"))
+
+# Config file: ../config/lifekit.conf (standard agent config location).
+_LIFEKIT_CONF_PATH = os.path.normpath(
+    os.path.join(SCRIPT_DIR, "..", "config", "lifekit.conf"))
+
+_MIRROR_ENABLED = None          # None = not yet resolved; True/False = cached
+
+
+def _mirror_module_enabled():
+    """Return True iff the mirror module is present AND not explicitly disabled.
+    Result is cached per process (one stat + one file read, then pinned).
+    Disabled = MIRROR_MODULE=off in lifekit.conf OR mirror/ dir absent."""
+    global _MIRROR_ENABLED
+    if _MIRROR_ENABLED is not None:
+        return _MIRROR_ENABLED
+    # Module presence check (fast path: no dir = definitely disabled).
+    if not os.path.isdir(_MIRROR_DIR):
+        _MIRROR_ENABLED = False
+        return False
+    # Config flag check: read MIRROR_MODULE line from lifekit.conf if present.
+    try:
+        with open(_LIFEKIT_CONF_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("MIRROR_MODULE="):
+                    val = line.split("=", 1)[1].strip().lower()
+                    if val == "off":
+                        _MIRROR_ENABLED = False
+                        return False
+    except OSError:
+        pass  # conf absent or unreadable: fall through (module dir present = enabled)
+    _MIRROR_ENABLED = True
+    return True
+
+
+# Minimal DDL subset -- only used when the state db does not exist yet
+# (e.g. a fresh test sandbox). Byte-identical schema subset to routine_roller.
+_STATE_MIN_DDL = """
+CREATE TABLE IF NOT EXISTS mirror_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mirror_outbox (
+    id           INTEGER PRIMARY KEY,
+    event_ulid   TEXT NOT NULL,
+    op           TEXT NOT NULL DEFAULT 'sync',
+    status       TEXT NOT NULL DEFAULT 'queued',
+    lease_at     TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    requeues     INTEGER NOT NULL DEFAULT 0,
+    dead         INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL,
+    CHECK (status IN ('queued','claimed','pushed','failed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_ulid_pending
+    ON mirror_outbox(event_ulid) WHERE status IN ('queued','claimed');
+CREATE TABLE IF NOT EXISTS push_snapshot (
+    event_ulid   TEXT PRIMARY KEY,
+    surface      TEXT NOT NULL,
+    field_hash   TEXT NOT NULL,
+    field_json   TEXT NOT NULL DEFAULT '{}',
+    pushed_at    TEXT NOT NULL
+);
+"""
+
+
+def _outbox_enqueue_best_effort(event_ulid, state_db_path=None):
+    """Best-effort enqueue of event_ulid into mirror_outbox.
+    Called after every interactive lifekit write that touches the event table.
+    NEVER raises: on any failure, prints a one-line warning to stderr and
+    returns False. The lifekit write is already committed at this point.
+    Silent no-op when mirror module is disabled or absent (flag gate)."""
+    if not _mirror_module_enabled():
+        return False   # silent: module disabled/absent
+    path = state_db_path or _STATE_DB_PATH
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        sc = sqlite3.connect(path)
+        sc.execute("PRAGMA journal_mode=WAL")
+        sc.execute("PRAGMA busy_timeout=5000")
+        sc.executescript(_STATE_MIN_DDL)
+        sc.commit()
+        now = now_utc()
+        try:
+            sc.execute(
+                "INSERT INTO mirror_outbox(event_ulid, op, status, "
+                "created_at, updated_at) VALUES(?, 'sync', 'queued', ?, ?)",
+                (event_ulid, now, now))
+            sc.commit()
+        except sqlite3.IntegrityError:
+            sc.rollback()   # already queued/claimed -- idempotent, not an error
+        sc.close()
+        return True
+    except Exception as exc:
+        print("mirror outbox enqueue warning: %s (ulid=%s)" % (exc, event_ulid),
+              file=sys.stderr)
+        return False
+
+
+def _ulid_for_event_id(conn, eid):
+    """Return the ulid for an event integer id, or None."""
+    row = conn.execute("SELECT ulid FROM event WHERE id=?;", (eid,)).fetchone()
+    return row[0] if row else None
+
+
+# ── routine CLI (lifekit.sh routine <verb> ..., task-CLI 동형) ─────────────
+def _routine_line(defn):
+    return "%s\t%s\t%s\t%s\t%s\t%s" % (
+        defn["id"], defn["ulid"], defn["title"], defn["cadence"] or "",
+        defn["schedule_kind"] + (":" + defn["time_of_day"]
+                                 if defn["time_of_day"] else ""),
+        defn["status"])
+
+
+def cli_routine(argv):
+    _u = ("사용법: lifekit.sh routine "
+          "add|list|show|update|pause|resume|retire|exception|health|"
+          "materialize ...\n"
+          "  add <title> <cadence> [field=value ...] [--new]\n"
+          "      cadence: D | W:MON,WED,FRI | I:2@YYYY-MM-DD\n"
+          "      field: time(HH:MM) duration area project purpose start end\n"
+          "  update <def_ulid> [effective_from=YYYY-MM-DD] field=value ...\n"
+          "  exception <event_ulid> field=value ... "
+          "(field: start_at end_at date title note)\n"
+          "  health [window=N] [as_of=YYYY-MM-DD]")
+    if not argv:
+        _err(_u)
+    verb, rest = argv[0], argv[1:]
+    conn = event_conn()
+    try:
+        if verb == "add":
+            rest, force_new = _pop_flag(rest, "--new")   # DGN-231 pattern
+            if len(rest) < 2 or not rest[0] or not rest[1]:
+                _err(_u)
+            title, cadence = rest[0], rest[1]
+            fields = {}
+            for tok in rest[2:]:
+                if "=" not in tok:
+                    _err("field=value 형식이 아님: %s\n%s" % (tok, _u))
+                k, v = tok.split("=", 1)
+                fields[k.strip()] = v
+            if not force_new:
+                # duplicate gate: same-title active def (spec 8.3 / DGN-231)
+                dups = conn.execute(
+                    "SELECT id, ulid, title, cadence, schedule_kind, "
+                    "time_of_day, status FROM routine_def "
+                    "WHERE title=? AND status='active';", (title,)).fetchall()
+                if dups:
+                    print("EXISTS %d" % len(dups))
+                    for d in dups:
+                        print(_routine_line({
+                            "id": d[0], "ulid": d[1], "title": d[2],
+                            "cadence": d[3], "schedule_kind": d[4],
+                            "time_of_day": d[5], "status": d[6]}))
+                    sys.exit(EXISTS_CODE)
+            aid = None
+            if fields.get("area"):
+                aid = area_id(conn, fields["area"])
+                if aid is None:
+                    _err("영역 없음: %s" % fields["area"])
+            pid = None
+            if fields.get("project"):
+                pr = conn.execute(
+                    "SELECT id FROM projects WHERE title=? LIMIT 1;",
+                    (fields["project"],)).fetchone()
+                if pr is None:
+                    _err("프로젝트 없음: %s" % fields["project"])
+                pid = pr[0]
+            tod = fields.get("time")
+            sk = "timed" if tod else "all_day"
+            try:
+                res = routine_add(
+                    conn, title, cadence, sk, time_of_day=tod,
+                    duration_min=(int(fields["duration"])
+                                  if fields.get("duration") else None),
+                    area_id=aid, project_id=pid,
+                    purpose=fields.get("purpose"),
+                    start_date=fields.get("start"),
+                    end_date=fields.get("end"))
+            except ValueError as e:
+                _err(str(e))
+            print("%s\t%s\t%s" % (res["def_id"], res["ulid"],
+                                  ",".join(res["materialized_dates"])))
+        elif verb == "list":
+            status = rest[0] if rest else None
+            q = ("SELECT id, ulid, title, cadence, schedule_kind, "
+                 "time_of_day, status FROM routine_def ")
+            if status:
+                rows = conn.execute(q + "WHERE status=? ORDER BY id;",
+                                    (status,)).fetchall()
+            else:
+                rows = conn.execute(q + "ORDER BY id;").fetchall()
+            for d in rows:
+                print(_routine_line({
+                    "id": d[0], "ulid": d[1], "title": d[2], "cadence": d[3],
+                    "schedule_kind": d[4], "time_of_day": d[5],
+                    "status": d[6]}))
+        elif verb == "show":
+            if not rest:
+                _err(_u)
+            defn = routine_def_get(conn, rest[0])
+            if defn is None:
+                _err("routine 없음: %s" % rest[0])
+            for k in ("id", "ulid", "recurrence_id", "title", "kind",
+                      "cadence", "schedule_kind", "time_of_day",
+                      "duration_min", "area_id", "project_id", "purpose",
+                      "status", "start_date", "end_date", "valid_until",
+                      "rule_effective_from", "version"):
+                print("%s=%s" % (k, "" if defn[k] is None else defn[k]))
+        elif verb in ("update", "pause", "resume", "retire"):
+            if not rest:
+                _err(_u)
+            token = rest[0]
+            if verb == "update":
+                fields = {}
+                eff = None
+                for tok in rest[1:]:
+                    if "=" not in tok:
+                        _err("field=value 형식이 아님: %s\n%s" % (tok, _u))
+                    k, v = tok.split("=", 1)
+                    k = k.strip()
+                    if k == "effective_from":
+                        eff = v
+                    elif k == "time":
+                        fields["time_of_day"] = v or None
+                        fields.setdefault("schedule_kind",
+                                          "timed" if v else "all_day")
+                    elif k == "duration":
+                        fields["duration_min"] = int(v)
+                    elif k == "end":
+                        fields["end_date"] = v or None
+                    elif k in _ROUTINE_UPD_COLS:
+                        fields[k] = v or None
+                    else:
+                        _err("수정 불가 컬럼: %s\n%s" % (k, _u))
+                if not fields:
+                    _err(_u)
+                try:
+                    res = routine_update(conn, token, fields,
+                                         effective_from=eff)
+                except ValueError as e:
+                    _err(str(e))
+            elif verb == "pause":
+                res = routine_pause(conn, token)
+            elif verb == "resume":
+                res = routine_resume(conn, token)
+            else:
+                res = routine_retire(conn, token)
+            if res["result"] != "applied":
+                _err("routine %s 실패 (%s)" % (verb, res["result"]))
+            extra = ""
+            if "materialized_dates" in res:
+                extra = "\t" + ",".join(res["materialized_dates"])
+            if "cancelled" in res:
+                extra += "\tcancelled=%s" % res["cancelled"]
+            print("%s\t%s%s" % (token, res["result"], extra))
+        elif verb == "exception":
+            if len(rest) < 2:
+                _err(_u)
+            ulid_t = rest[0]
+            fields = {}
+            for tok in rest[1:]:
+                if "=" not in tok:
+                    _err("field=value 형식이 아님: %s\n%s" % (tok, _u))
+                k, v = tok.split("=", 1)
+                fields[k.strip()] = v
+            schedule = None
+            if "date" in fields:                       # all_day move
+                sa, ea = all_day_instants(fields["date"])
+                schedule = ("all_day", sa, ea)
+            elif "start_at" in fields or "end_at" in fields:
+                try:
+                    ns = (_to_canonical_utc(fields["start_at"])
+                          if fields.get("start_at") else None)
+                    ne = (_to_canonical_utc(fields["end_at"])
+                          if fields.get("end_at") else None)
+                except ValueError as e:
+                    _err(str(e))
+                if ns and not ne:
+                    # m-2 (grill-final): start-only move preserves the
+                    # row's current duration instead of collapsing to a
+                    # zero-length instance (end_at=start_at).
+                    _row = conn.execute(
+                        "SELECT start_at, end_at FROM event WHERE ulid=?;",
+                        (ulid_t,)).fetchone()
+                    if _row and _row[0] and _row[1]:
+                        _fmt = "%Y-%m-%dT%H:%M:%SZ"
+                        _dur = (datetime.datetime.strptime(_row[1], _fmt)
+                                - datetime.datetime.strptime(_row[0], _fmt))
+                        ne = (datetime.datetime.strptime(ns, _fmt)
+                              + _dur).strftime(_fmt)
+                    else:
+                        ne = ns
+                schedule = ("timed", ns, ne)
+            content = {k: v for k, v in fields.items()
+                       if k in ("title", "note")}
+            try:
+                res = routine_exception(conn, ulid_t, schedule=schedule,
+                                        content=content or None)
+            except ValueError as e:
+                _err(str(e))
+            if res not in ("applied", "noop"):
+                _err("routine exception 실패 (%s)" % res)
+            print("%s\t%s" % (ulid_t, res))
+        elif verb == "health":
+            window, as_of = 28, None
+            i = 0
+            while i < len(rest):
+                tok = rest[i]
+                if tok.startswith("window="):
+                    window = int(tok.split("=", 1)[1])
+                elif tok.startswith("as_of="):
+                    as_of = tok.split("=", 1)[1]
+                elif tok == "--window" and i + 1 < len(rest):
+                    i += 1
+                    window = int(rest[i])
+                elif tok == "--as-of" and i + 1 < len(rest):
+                    i += 1
+                    as_of = rest[i]
+                i += 1
+            for row in routine_health(conn, window=window, as_of=as_of):
+                print(json.dumps(row, ensure_ascii=False))
+        elif verb == "materialize":
+            rr = _roller_mod()
+            defs = ([routine_def_get(conn, rest[0])] if rest
+                    else rr.active_defs(conn))
+            total = []
+            for defn in defs:
+                if defn is None:
+                    _err("routine 없음: %s" % rest[0])
+                if defn["status"] == "active" and defn["cadence"]:
+                    total += rr.materialize_def(conn, None, defn)
+            print("materialized\t%d" % len(total))
+        else:
+            _err(_u)
+    finally:
+        conn.close()
 
 
 # ── CLI (lifekit.sh 서브커맨드 100% 동일 재현) ───────────────────
@@ -2578,6 +3435,7 @@ def cli_appt_add(argv):
         meta["summary"] = summary
 
     conn = event_conn()
+    _appt_add_ulid = None
     try:
         if not force_new:
             # DGN-231 match key = same LOCAL calendar date (+/-0 day). start_at
@@ -2600,8 +3458,12 @@ def cli_appt_add(argv):
             _err(str(e))                               # M-4 loud, no traceback
         if eid is None:
             _err("slot occupied")                      # E-add-slot (A7)
+        _appt_add_ulid = _ulid_for_event_id(conn, eid)
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _appt_add_ulid:
+        _outbox_enqueue_best_effort(_appt_add_ulid)
     print(f"{eid}\t{title}")
 
 
@@ -2708,6 +3570,7 @@ def cli_appt_upd(argv):
         _err(_u)
 
     conn = event_conn()
+    _appt_upd_ulid = None
     try:
         # M-1 kind gate: read kind ONCE; task / not-found -> legacy loud reject.
         kind = _read_appt_kind(conn, eid)
@@ -2789,9 +3652,14 @@ def cli_appt_upd(argv):
         # success line (legacy shape: id, title, location).
         row = conn.execute(
             "SELECT id, title, location FROM event WHERE id=?;", (eid,)).fetchone()
+        # DGN-258: fetch ulid for outbox enqueue before conn closes.
+        _appt_upd_ulid = _ulid_for_event_id(conn, eid)
         print(f"{row[0]}\t{row[1]}\t{row[2] or ''}")
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _appt_upd_ulid:
+        _outbox_enqueue_best_effort(_appt_upd_ulid)
 
 
 def cli_appt_person(argv):
@@ -2969,6 +3837,7 @@ def cli_task_add(argv):
     if due is not None and not _DATE_RE.match(due):
         _err(f"bad date format (want YYYY-MM-DD): {due}")
     conn = event_conn()
+    _task_add_ulid = None
     try:
         if due:
             sa, ea = all_day_instants(due)
@@ -2979,9 +3848,13 @@ def cli_task_add(argv):
             eid = event_add(conn, "task", title, "untimed",
                             owning_agent=_facade_agent(),
                             created_by=_facade_agent(), note=note)
+        _task_add_ulid = _ulid_for_event_id(conn, eid)
         print(_task_line(_task_fetch(conn, eid)))
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _task_add_ulid:
+        _outbox_enqueue_best_effort(_task_add_ulid)
 
 
 def cli_task_find(argv):
@@ -3016,28 +3889,38 @@ def cli_task_done(argv):
     if not argv or not argv[0]:
         _err("사용법: lifekit.sh task-done <id>")
     conn = event_conn()
+    _task_done_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
         res = force_settle(conn, row[0], row[9], _facade_agent())
         if res != MutationResult.APPLIED:
             _err(f"task-done 실패 ({res}): 이미 완료/취소되었거나 동시 변경")
+        _task_done_ulid = row[1]
         print(_task_line(_task_fetch(conn, row[0])))
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _task_done_ulid:
+        _outbox_enqueue_best_effort(_task_done_ulid)
 
 
 def cli_task_undone(argv):
     if not argv or not argv[0]:
         _err("사용법: lifekit.sh task-undone <id>")
     conn = event_conn()
+    _task_undone_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
         res, _warn = unsettle(conn, row[1], _facade_agent())
         if res != "applied":
             _err(f"task-undone 실패 ({res}): done 상태가 아니면 재개 불가")
+        _task_undone_ulid = row[1]
         print(_task_line(_task_fetch(conn, row[0])))
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _task_undone_ulid:
+        _outbox_enqueue_best_effort(_task_undone_ulid)
 
 
 def cli_task_reschedule(argv):
@@ -3046,6 +3929,7 @@ def cli_task_reschedule(argv):
     if not _DATE_RE.match(argv[1]):
         _err(f"bad date format (want YYYY-MM-DD): {argv[1]}")
     conn = event_conn()
+    _task_resched_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
         sa, ea = all_day_instants(argv[1])
@@ -3054,9 +3938,13 @@ def cli_task_reschedule(argv):
             _err(f"task-reschedule 실패 ({res})")
         if warn:
             print(warn, file=sys.stderr)
+        _task_resched_ulid = row[1]
         print(_task_line(_task_fetch(conn, row[0])))
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _task_resched_ulid:
+        _outbox_enqueue_best_effort(_task_resched_ulid)
 
 
 def cli_task_archive(argv):
@@ -3071,14 +3959,19 @@ def cli_task_archive(argv):
     if not argv or not argv[0]:
         _err("사용법: lifekit.sh task-archive <id>")
     conn = event_conn()
+    _task_archive_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
         res = cancel(conn, row[0], row[9], _facade_agent())
         if res != MutationResult.APPLIED:
             _err(f"task-archive 실패 ({res}): 이미 종결되었거나 동시 변경")
+        _task_archive_ulid = row[1]
         print(f"{row[0]}\t{row[2]}\tarchived")
     finally:
         conn.close()
+    # DGN-258: best-effort mirror outbox enqueue after successful commit.
+    if _task_archive_ulid:
+        _outbox_enqueue_best_effort(_task_archive_ulid)
 
 
 def cli_task_overdue(argv):
@@ -3396,6 +4289,7 @@ _DISPATCH = {
     'project-list': cli_project_list,
     'project-add': cli_project_add,
     'project-upd': cli_project_upd,
+    'routine': cli_routine,
 }
 
 

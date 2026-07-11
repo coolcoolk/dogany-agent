@@ -1,4 +1,4 @@
-PRAGMA user_version = 4;
+PRAGMA user_version = 6;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -218,8 +218,16 @@ CREATE TABLE IF NOT EXISTS event (
     purpose       TEXT,                           -- appointment
     summary       TEXT,                           -- appointment
 
-    recurrence_id TEXT,                           -- prebought, unused (future recurrence)
+    recurrence_id TEXT,                           -- group anchor (DGN-240 T5)
+    rec_date      TEXT,                           -- local YYYY-MM-DD of occurrence
+    rec_exception INTEGER NOT NULL DEFAULT 0,     -- 1 = detached from rule governance
     notion_id     TEXT,                           -- inherits UNIQUE partial index
+
+    -- DGN-180 W6 mirror bookkeeping (migration 005, folded here for fresh DBs)
+    gcal_event_id TEXT,
+    gtask_id      TEXT,
+    gcal_etag     TEXT,
+    gtask_etag    TEXT,
 
     created_at    TEXT NOT NULL,                  -- canonical UTC
     updated_at    TEXT NOT NULL,                  -- canonical UTC
@@ -333,3 +341,113 @@ CREATE TABLE IF NOT EXISTS event_persons (
 );
 CREATE INDEX IF NOT EXISTS idx_event_persons_person
     ON event_persons(person_id);
+
+-- ===========================================================================
+-- DGN-240 routine recurrence (folded migration 006; spec v3 T7).
+-- Creates routine_def, roller_log, projects, routine, session_type,
+-- session_muscle tables. rec_date / rec_exception / mirror bookkeeping
+-- columns are folded into the event CREATE TABLE above (fresh DBs born at
+-- user_version 6 include them natively; migrated DBs get them via 005/006
+-- ALTER ADD COLUMN). Identical to migrations/006_routine_recurrence.sql
+-- (IF NOT EXISTS -> idempotent on all paths).
+-- ===========================================================================
+
+-- projects table (nullable FK target for routine_def.project_id)
+CREATE TABLE IF NOT EXISTS projects (
+    id         INTEGER PRIMARY KEY,
+    ulid       TEXT NOT NULL UNIQUE,
+    title      TEXT NOT NULL,
+    status     TEXT,
+    start_date TEXT,
+    end_date   TEXT,
+    note       TEXT,
+    area_id    INTEGER REFERENCES areas(id),
+    notion_id  TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_notion
+    ON projects(notion_id) WHERE notion_id IS NOT NULL;
+
+-- routine_def: lifecycle anchor for recurring task series.
+CREATE TABLE IF NOT EXISTS routine_def (
+    id            INTEGER PRIMARY KEY,
+    ulid          TEXT NOT NULL UNIQUE,
+    recurrence_id TEXT NOT NULL UNIQUE,
+    title         TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'task',
+    cadence       TEXT,
+    schedule_kind TEXT NOT NULL,
+    time_of_day   TEXT,
+    duration_min  INTEGER,
+    exclusive     INTEGER NOT NULL DEFAULT 0,
+    display_tz    TEXT NOT NULL DEFAULT 'Asia/Seoul',
+    area_id       INTEGER REFERENCES areas(id),
+    project_id    INTEGER REFERENCES projects(id),
+    purpose       TEXT,
+    status        TEXT NOT NULL DEFAULT 'active',
+    start_date    TEXT NOT NULL,
+    end_date      TEXT,
+    valid_until   TEXT NOT NULL,
+    rule_effective_from TEXT NOT NULL,
+    anomaly_ack   TEXT,
+    version       INTEGER NOT NULL DEFAULT 0,
+    created_by    TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    CHECK (kind IN ('task','appointment')),
+    CHECK (schedule_kind IN ('timed','all_day')),
+    CHECK (status IN ('active','paused','retired')),
+    CHECK (schedule_kind != 'timed' OR time_of_day IS NOT NULL),
+    CHECK (exclusive IN (0,1)),
+    CHECK (cadence IS NOT NULL OR status = 'retired')
+);
+
+-- roller_log: nightly roller audit log.
+CREATE TABLE IF NOT EXISTS roller_log (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    recurrence_id TEXT,
+    category TEXT NOT NULL,
+    detail TEXT
+);
+
+-- routine: workout session grouping (legacy).
+CREATE TABLE IF NOT EXISTS routine (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    style TEXT,
+    goal_mode TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+-- session_type / session_muscle: workout session typing.
+CREATE TABLE IF NOT EXISTS session_type (
+    id INTEGER PRIMARY KEY,
+    routine_id INTEGER NOT NULL REFERENCES routine(id),
+    code TEXT NOT NULL,
+    display_name TEXT,
+    sort INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    UNIQUE(routine_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS session_muscle (
+    session_type_id INTEGER NOT NULL REFERENCES session_type(id),
+    type_id INTEGER NOT NULL REFERENCES workout_types(id),
+    role TEXT NOT NULL,
+    fatigue INTEGER NOT NULL DEFAULT 2,
+    PRIMARY KEY(session_type_id, type_id)
+);
+
+-- Unique partial index: at most one live (recurrence_id, rec_date) pair per
+-- recurrence series (prevents duplicate materialization races).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_rec_live
+    ON event(recurrence_id, rec_date)
+    WHERE recurrence_id IS NOT NULL
+      AND rec_date IS NOT NULL
+      AND settled_at IS NULL
+      AND rec_exception = 0;
