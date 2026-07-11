@@ -2106,7 +2106,8 @@ def reschedule_apply(conn, req_ulid):
 USAGE = ("사용법: lifekit.sh meal-add|meal-find|meal-day|meal-del|meal-upd|"
          "workout-add|workout-find|workout-del|agg-day|agg-week|"
          "task-add|task-find|task-done|task-undone|task-reschedule|"
-         "task-archive|task-overdue|task-done-between|event-window ...\n"
+         "task-archive|task-overdue|task-done-between|event-window|"
+         "project-list|project-add|project-upd ...\n"
          "  workout-add <date> <category> <subtype> [minutes kcal note avg_hr]\n"
          "    (category=대분류, subtype=세부. 인자 순서는 옛 <type> <name>와 동일 위치.)")
 
@@ -3146,6 +3147,217 @@ def cli_event_window(argv):
         conn.close()
 
 
+# ── project CRUD (DGN-256) ────────────────────────────────────────────────
+# projects table: id, ulid, title, status, start_date, end_date, note,
+#                 area_id, notion_id, created_at
+# Verbs: project-list, project-add, project-upd.
+# notion_id is NULL for locally-created rows.
+
+_DEFAULT_PROJECT_STATUS = "진행 중"
+
+
+def project_list(status=None, conn=None):
+    """Return list of projects as tuples (id, title, status, start_date, end_date).
+    status=None returns all rows; otherwise filtered by exact match."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        if status is not None:
+            rows = conn.execute(
+                "SELECT id, title, status, start_date, end_date "
+                "FROM projects WHERE status=? "
+                "ORDER BY COALESCE(start_date,'9999') DESC, id;",
+                (status,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, title, status, start_date, end_date "
+                "FROM projects "
+                "ORDER BY COALESCE(start_date,'9999') DESC, id;").fetchall()
+        return rows
+    finally:
+        if own:
+            conn.close()
+
+
+def project_add(title, status=None, start=None, end=None, note=None, conn=None):
+    """Insert a new project row with a fresh ulid. notion_id is NULL.
+    Returns the new row id."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        st = status if status else _DEFAULT_PROJECT_STATUS
+        now_str = datetime.datetime.now(
+            datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cur = conn.execute(
+            "INSERT INTO projects (ulid, title, status, start_date, end_date, "
+            "note, area_id, notion_id, created_at) VALUES (?,?,?,?,?,?,NULL,NULL,?)",
+            (new_ulid(), title, st, _txt(start), _txt(end), _txt(note), now_str))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        if own:
+            conn.close()
+
+
+def project_upd(pid, title=None, status=None, start=None, end=None, note=None,
+                conn=None):
+    """Partial update of a project row. Returns True if updated, False if not found.
+    At least one field must be given (caller checks)."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        sets, vals = [], []
+        if title is not None:
+            sets.append("title=?")
+            vals.append(title)
+        if status is not None:
+            sets.append("status=?")
+            vals.append(status)
+        if start is not None:
+            sets.append("start_date=?")
+            vals.append(_txt(start))
+        if end is not None:
+            sets.append("end_date=?")
+            vals.append(_txt(end))
+        if note is not None:
+            sets.append("note=?")
+            vals.append(_txt(note))
+        if not sets:
+            raise ValueError("no fields to update")
+        vals.append(int(pid))
+        cur = conn.execute(
+            "UPDATE projects SET %s WHERE id=?" % ", ".join(sets), vals)
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        if own:
+            conn.close()
+
+
+def _project_line(row):
+    """Format a project row tuple as TAB-separated output line."""
+    pid, title, status, start_date, end_date = row
+    return "%s\t%s\t%s\t%s\t%s" % (
+        pid, title, status or "",
+        start_date or "", end_date or "")
+
+
+def cli_project_list(argv):
+    # project-list [--status <S>] [--json]
+    status = None
+    as_json = False
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--status" and i + 1 < len(argv):
+            status = argv[i + 1]
+            i += 2
+        elif argv[i] == "--json":
+            as_json = True
+            i += 1
+        else:
+            _err("사용법: lifekit.sh project-list [--status <S>] [--json]")
+    rows = project_list(status=status)
+    if as_json:
+        out = [{"id": r[0], "title": r[1], "status": r[2],
+                "start_date": r[3], "end_date": r[4]} for r in rows]
+        print(json.dumps(out, ensure_ascii=False))
+    else:
+        for row in rows:
+            print(_project_line(row))
+
+
+def cli_project_add(argv):
+    # project-add --title <T> [--status <S>] [--start <d>] [--end <d>] [--note <N>]
+    title = None
+    status = None
+    start = None
+    end = None
+    note = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--title" and i + 1 < len(argv):
+            title = argv[i + 1]; i += 2
+        elif argv[i] == "--status" and i + 1 < len(argv):
+            status = argv[i + 1]; i += 2
+        elif argv[i] == "--start" and i + 1 < len(argv):
+            start = argv[i + 1]; i += 2
+        elif argv[i] == "--end" and i + 1 < len(argv):
+            end = argv[i + 1]; i += 2
+        elif argv[i] == "--note" and i + 1 < len(argv):
+            note = argv[i + 1]; i += 2
+        else:
+            _err("사용법: lifekit.sh project-add --title <T> "
+                 "[--status <S>] [--start <d>] [--end <d>] [--note <N>]")
+    if not title:
+        _err("project-add: --title is required")
+    if start and not _DATE_RE.match(start):
+        _err("bad date format (want YYYY-MM-DD): " + start)
+    if end and not _DATE_RE.match(end):
+        _err("bad date format (want YYYY-MM-DD): " + end)
+    pid = project_add(title, status=status, start=start, end=end, note=note)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, title, status, start_date, end_date FROM projects WHERE id=?;",
+            (pid,)).fetchone()
+        print(_project_line(row))
+    finally:
+        conn.close()
+
+
+def cli_project_upd(argv):
+    # project-upd --id <id> [--title T] [--status S] [--start d] [--end d] [--note N]
+    pid = None
+    title = None
+    status = None
+    start = None
+    end = None
+    note = None
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--id" and i + 1 < len(argv):
+            pid = argv[i + 1]; i += 2
+        elif argv[i] == "--title" and i + 1 < len(argv):
+            title = argv[i + 1]; i += 2
+        elif argv[i] == "--status" and i + 1 < len(argv):
+            status = argv[i + 1]; i += 2
+        elif argv[i] == "--start" and i + 1 < len(argv):
+            start = argv[i + 1]; i += 2
+        elif argv[i] == "--end" and i + 1 < len(argv):
+            end = argv[i + 1]; i += 2
+        elif argv[i] == "--note" and i + 1 < len(argv):
+            note = argv[i + 1]; i += 2
+        else:
+            _err("사용법: lifekit.sh project-upd --id <id> "
+                 "[--title T] [--status S] [--start d] [--end d] [--note N]")
+    if pid is None:
+        _err("project-upd: --id is required")
+    if not str(pid).isdigit():
+        _err("project-upd: --id must be a numeric id, got: " + str(pid))
+    if start and not _DATE_RE.match(start):
+        _err("bad date format (want YYYY-MM-DD): " + start)
+    if end and not _DATE_RE.match(end):
+        _err("bad date format (want YYYY-MM-DD): " + end)
+    # Check at least one field given
+    if all(v is None for v in (title, status, start, end, note)):
+        _err("project-upd: at least one of --title/--status/--start/--end/--note required")
+    found = project_upd(int(pid), title=title, status=status,
+                        start=start, end=end, note=note)
+    if not found:
+        _err("project 없음: " + str(pid))
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, title, status, start_date, end_date FROM projects WHERE id=?;",
+            (int(pid),)).fetchone()
+        print(_project_line(row))
+    finally:
+        conn.close()
+
+
 _DISPATCH = {
     'meal-add': cli_meal_add,
     'meal-find': cli_meal_find,
@@ -3181,6 +3393,9 @@ _DISPATCH = {
     'task-overdue': cli_task_overdue,
     'task-done-between': cli_task_done_between,
     'event-window': cli_event_window,
+    'project-list': cli_project_list,
+    'project-add': cli_project_add,
+    'project-upd': cli_project_upd,
 }
 
 

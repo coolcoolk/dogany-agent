@@ -45,6 +45,11 @@
 #   lifekit.sh task-overdue                          기한 지난 미완료 목록 TSV (오늘 이전, 보관 제외)
 #   lifekit.sh task-done-between <from> <to>         기간 내 완료 태스크 TSV (to 미포함; 주간회고용)
 #   lifekit.sh event-window <from_utc> <to_utc> [kind]  시간창 내 timed 이벤트 TSV (remind용, 읽기전용)
+#   lifekit.sh project-list [--status <S>] [--json]     프로젝트 목록 TSV(id title status start end). --json이면 JSON 배열.
+#   lifekit.sh project-add --title <T> [--status <S>] [--start <d>] [--end <d>] [--note <N>]
+#         새 프로젝트 등록. notion_id=NULL, 기본 status='진행 중'. 출력: id title status start end
+#   lifekit.sh project-upd --id <id> [--title T] [--status S] [--start d] [--end d] [--note N]
+#         프로젝트 부분 수정. 없는 id이면 오류. 출력: id title status start end
 #
 # DGN-231 reconcile-before-write: meal-add / workout-add / person-add / appt-add 는
 #   등록 전 중복을 자체 대조한다. 매치가 있으면 등록하지 않고 첫 줄 "EXISTS n" +
