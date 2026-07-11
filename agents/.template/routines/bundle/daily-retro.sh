@@ -22,6 +22,7 @@ DRY=0
 [[ -f "$PUSH_SH" ]] || { echo "[retro] push.sh not found: $PUSH_SH" >&2; exit 1; }
 
 TODAY="$(date +%F)"
+TOMORROW="$(date -v+1d +%F 2>/dev/null || date -d tomorrow +%F)"
 
 # ---- locale (address + tone come from the instance i18n) ----
 AGENT_LANG="$(grep -E '^AGENT_LANG=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
@@ -52,6 +53,8 @@ WO_TYPES="$("$LIFE_SH" workout-find "$TODAY" 2>/dev/null | cut -f2 | sort -u | g
 TARGETS="$("$LIFE_SH" targets --burn "${WO_KCAL:-0}" 2>/dev/null || true)"
 read -r EFF_GOAL BMR NEAT DEFICIT GOAL_PROT <<< "$TARGETS" || true
 EFF_GOAL="${EFF_GOAL:-0}"; GOAL_PROT="${GOAL_PROT:-0}"
+# Truncate floats before integer arithmetic (lifekit can emit e.g. 160.0 from DB config).
+EFF_GOAL="${EFF_GOAL%.*}"; GOAL_PROT="${GOAL_PROT%.*}"
 BALANCE_LINE=""
 if [[ "$EFF_GOAL" != "0" ]]; then
   DIFF=$(( DIET_KCAL - EFF_GOAL ))
@@ -64,6 +67,12 @@ APPT_TXT="$("$LIFE_SH" appt-find "$TODAY" 2>/dev/null | awk -F'\t' '{
   t=$2; time=""; if (t ~ /T/) { time=substr(t, index(t,"T")+1, 5)" " }
   loc=($4=="")?"":"  @"$4; print "- " time $3 loc }' || true)"
 APPT_CNT=0; [[ -n "$APPT_TXT" ]] && APPT_CNT="$(printf '%s\n' "$APPT_TXT" | wc -l | tr -d ' ')"
+
+# ---- (4) tomorrow's appointments (simple next-day preview) ----
+TMR_TXT="$("$LIFE_SH" appt-find "$TOMORROW" 2>/dev/null | awk -F'\t' '{
+  t=$2; time=""; if (t ~ /T/) { time=substr(t, index(t,"T")+1, 5)" " }
+  loc=($4=="")?"":"  @"$4; print "- " time $3 loc }' || true)"
+TMR_CNT=0; [[ -n "$TMR_TXT" ]] && TMR_CNT="$(printf '%s\n' "$TMR_TXT" | wc -l | tr -d ' ')"
 
 DATA="[today ${TODAY}]"$'\n\n'
 DATA+="# diet (${DIET_CNT} meals)"$'\n'
@@ -84,6 +93,8 @@ if [[ -n "$BALANCE_LINE" ]]; then
 fi
 DATA+=$'\n'"# today's appointments (${APPT_CNT})"$'\n'
 if [[ "$APPT_CNT" -gt 0 ]]; then DATA+="${APPT_TXT}"$'\n'; else DATA+="(none)"$'\n'; fi
+DATA+=$'\n'"# tomorrow preview (${TOMORROW}, ${TMR_CNT} appointments)"$'\n'
+if [[ "$TMR_CNT" -gt 0 ]]; then DATA+="${TMR_TXT}"$'\n'; else DATA+="(no appointments scheduled)"$'\n'; fi
 
 NOTES=""
 [[ "$DIET_CNT" -eq 0 ]] && NOTES+="NOTE: no meals logged; gently ask whether logging was missed. "
@@ -100,6 +111,7 @@ Structure (short labeled sections, emoji + line breaks, no prose walls):
 - workouts: type/minutes/burned kcal (or note nothing was logged)
 - calorie balance line ONLY if present in the data
 - appointments: ask in one line how each went; omit the section if none
+- tomorrow preview: a short, simple heads-up of tomorrow's schedule (each appointment's time + name in one line); if none scheduled, one light line that tomorrow is open
 - one-line closing (encouragement or gentle nudge)
 
 ${NOTES}

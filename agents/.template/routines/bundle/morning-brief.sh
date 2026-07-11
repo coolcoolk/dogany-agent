@@ -26,6 +26,7 @@ day_shift() { # day_shift <+1|-1> -> YYYY-MM-DD
 }
 TODAY="$(date +%F)"
 YDAY="$(day_shift -1)"
+NOW_HM="$(date +%H:%M)"   # actual send time -- keep briefing wording in sync
 
 # ---- locale (address + tone come from the instance i18n) ----
 AGENT_LANG="$(grep -E '^AGENT_LANG=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
@@ -63,12 +64,12 @@ if [[ "$APPT_CNT" -eq 0 ]]; then
   EMPTY_NOTE="NOTE: no appointments today. Do not invent items; briefly note it is an open day and close with light encouragement."
 fi
 
-PROMPT="You are the user's personal assistant sending a 6 AM morning briefing over Telegram.
+PROMPT="You are the user's personal assistant sending the morning briefing over Telegram. The current time is ${NOW_HM}.
 Write the briefing in the user's language (locale: ${AGENT_LANG}). Address the user as: ${ADDRESS:-"(no fixed form of address; write naturally)"}.
 Tone rules: ${TONE}
 
 Structure:
-- one-line good-morning opener
+- one-line good-morning opener (if you mention a clock time, use ${NOW_HM} exactly; never state a different hour)
 - today's appointments as short bullet items (keep HH:MM prefixes from the data as-is); omit the section if none
 - one line recapping yesterday (meals/workouts) ONLY if something was logged
 - one-line closing (light encouragement or nudge)
