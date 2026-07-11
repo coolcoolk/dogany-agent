@@ -57,6 +57,22 @@ TYPING_INTERVAL = 4  # seconds; Telegram typing status expires after ~5s
 
 _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
+# DGN-086: placeholder-flake detection pattern.
+# Matches Korean phrases the agent uses when reporting a subagent
+# delegation handoff, which a role-confused subagent echoes back verbatim
+# instead of executing the task. Common observations:
+#   - "동생이 아직 작업 중입니다. 완료 알림이 오면 결과를 먼저 보고드리겠습니다"
+#   - "백그라운드 정찰 에이전트 완료 대기 중"
+#   - "구현 서브에이전트 실행 중, 완료 통보 대기"
+#   - Any variant of "<agent noun> 작업중/실행중/완료 대기/통보 대기"
+_PLACEHOLDER_FLAKE_RE = re.compile(
+    r"(동생이?\s*(아직\s*)?작업\s*중|"
+    r"서브에이전트\s*(실행|작업)\s*중|"
+    r"완료\s*(알림|통보)\S*\s*(대기|오면)|"
+    r"백그라운드\s*(정찰\s*)?에이전트\s*완료\s*대기)",
+    re.IGNORECASE,
+)
+
 # Permission callback: async (chat_id, user_id, tool_name, tool_input) -> result
 PermissionCallback = Callable[[int, int, str, Dict[str, Any]], Awaitable]
 TypingCallback = Callable[[], Awaitable[Any]]
@@ -157,6 +173,10 @@ class _PendingRequest:
     last_assistant_texts: List[str] = field(default_factory=list)
     synthetic_response: Optional[str] = None
     streaming_handler: Optional[Any] = None
+    # DGN-086: count ToolUseBlocks in main-agent (non-subagent) messages for
+    # placeholder-flake detection. Incremented in _reader_loop on each
+    # AssistantMessage that has no parent_tool_use_id.
+    tool_use_count: int = 0
 
 
 @dataclass
@@ -410,6 +430,9 @@ class SdkBridge:
                                     await req.streaming_handler.update_if_needed(block.text)
                                 except Exception as e:
                                     logger.error("Streaming update failed: %s", e)
+                        elif isinstance(block, ToolUseBlock):
+                            # DGN-086: track main-agent tool uses for flake detection.
+                            req.tool_use_count += 1
                     continue
 
                 if isinstance(msg, ResultMessage):
@@ -444,6 +467,22 @@ class SdkBridge:
                             session_id=state.last_session_id,
                         )
                     )
+
+    @staticmethod
+    def _is_placeholder_flake(content: str) -> bool:
+        """DGN-086: detect subagent persona-bleed placeholder responses.
+
+        Returns True when the final content matches the known Korean pattern
+        where a role-confused subagent echoes the agent's own delegation-visibility
+        prose ("동생 작업중", "서브에이전트 완료 대기", etc.) instead of executing
+        the assigned task.
+
+        Used in _finalize_result to log a warning. Fail-silent (never raises).
+        """
+        try:
+            return bool(_PLACEHOLDER_FLAKE_RE.search(content))
+        except Exception:
+            return False
 
     @staticmethod
     async def _maybe_mark_options(prev_message: str, content: str) -> str:
@@ -608,6 +647,23 @@ class SdkBridge:
                 )
             )
             return
+
+        # DGN-086: placeholder-flake detection. Log a warning when the final
+        # response matches the delegation-handoff placeholder pattern (subagent
+        # role-confusion: inherited persona caused it to report "동생 작업중"
+        # instead of executing). Annotates the log with tool_use_count so the
+        # caller can distinguish the <=1 (original) from the >1 read-only case.
+        if req.synthetic_response is None and self._is_placeholder_flake(content):
+            logger.warning(
+                "DGN-086 placeholder flake detected for user %s "
+                "(tool_use_count=%d, num_turns=%d): response matches delegation-"
+                "placeholder pattern -- subagent likely echoed the agent persona "
+                "instead of executing. "
+                "Nudge: reply asking the agent to continue directly as executor.",
+                user_id,
+                req.tool_use_count,
+                msg.num_turns,
+            )
 
         # Haiku auto-classifier: only when no synthetic response, a numbered list
         # is present, and the marker is absent. Fail-silent.

@@ -232,7 +232,20 @@ STRINGS = {
         "lines and sends the files to the user.\n"
         "Example: send_file:: /path/to/image.png\n"
         "Supported image formats: .png, .jpg, .jpeg, .gif, .webp; other files are sent "
-        "as documents. After generating a file, always include its send_file:: line."
+        "as documents. After generating a file, always include its send_file:: line.\n\n"
+        "## Subagent Task Delegation (DGN-086)\n\n"
+        "When you delegate work using the Task tool, the subagent prompt MUST include "
+        "this line verbatim at the top:\n"
+        "\"You are the direct executor of this task. You MUST perform the work "
+        "yourself using the available tools. Do NOT delegate, defer, or report that "
+        "you are waiting for another agent. Do NOT output placeholder messages like "
+        "'working in background' or 'waiting for completion'. Complete the task "
+        "directly and output the result.\"\n"
+        "If a subagent returns a placeholder response (e.g. 'still working', "
+        "'waiting for completion notice', 'background agent running') instead of "
+        "actual results, that is a flake. Send a follow-up message telling it: "
+        "\"You are the executor. Do not delegate. Execute the task directly now "
+        "and output the result.\""
     ),
     # --- Denials returned to Claude (English on purpose) ---
     "ask_user_question_deny": (

@@ -20,6 +20,9 @@ OPTIONS_MARKER = "[[OPTIONS]]"
 _OPTION_RE = re.compile(r"^\s*(\d+)[.、)）]\s*(.+)", re.MULTILINE)
 # Plain numbered list detector (for the classifier gate): "1. ...".
 _NUMBERED_RE = re.compile(r"^\s*\d+\.\s+.+$", re.MULTILINE)
+# Fenced code block -- stripped before option/classifier scanning so numbered
+# items inside code examples never shadow the actual options list (DGN-085).
+_FENCED_CODE_RE = re.compile(r"```.*?```", re.DOTALL)
 
 # Haiku classifier knobs.
 _HAIKU_MODEL = "claude-haiku-4-5-20251001"
@@ -71,16 +74,20 @@ def strip_options_marker(text: str) -> Tuple[str, bool]:
 
 
 def has_numbered_list(text: str) -> bool:
-    """True when the text has >=2 numbered lines (classifier gate)."""
-    return len(_NUMBERED_RE.findall(text)) >= 2
+    """True when the text (outside code blocks) has >=2 numbered lines (classifier gate)."""
+    prose = _FENCED_CODE_RE.sub("", text)
+    return len(_NUMBERED_RE.findall(prose)) >= 2
 
 
 def extract_options(text: str) -> List[str]:
     """Extract option labels from a numbered list.
 
     Requires >=2 items numbered consecutively from 1. Returns [] otherwise.
+    Code blocks are excluded so numbered items in code examples do not shadow
+    the actual options list (DGN-085).
     """
-    matches = _OPTION_RE.findall(text)
+    prose = _FENCED_CODE_RE.sub("", text)
+    matches = _OPTION_RE.findall(prose)
     if len(matches) < 2:
         return []
     nums = [int(m[0]) for m in matches]

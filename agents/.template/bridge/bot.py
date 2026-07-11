@@ -1871,12 +1871,18 @@ class TelegramBot:
         # DGN-159: last-mile scrub of leaked tool-call markup on the non-streamed
         # / finalized send path (streamed drafts are scrubbed in strip_display_markers).
         display = strip_toolcall_markup(display)
+        has_code = "```" in display
         if not streamed:
             await self._send_text_body(message, display, parse_mode)
-        elif "```" in display and draft_message_ids:
+        elif has_code and (force_options or draft_message_ids):
+            # DGN-085: when code blocks and [[OPTIONS]] buttons coexist, streaming
+            # drafts are finalized without parse_mode so code/tables render literally.
+            # Force a clean re-send via _send_text_body (HTML segments) so the split
+            # is enforced at the bridge layer regardless of agent discipline.
+            # Also covers the pre-existing streamed+code case (draft cleanup).
             bot = message.get_bot()
             chat_id = message.chat.id
-            for mid in draft_message_ids:
+            for mid in (draft_message_ids or []):
                 try:
                     await bot.delete_message(chat_id, mid)
                 except Exception as e:
@@ -1962,10 +1968,13 @@ class TelegramBot:
         # DGN-159: last-mile scrub of leaked tool-call markup (proactive / option /
         # resume send path); streamed drafts are scrubbed in strip_display_markers.
         display = strip_toolcall_markup(display)
+        has_code = "```" in display
         if not streamed:
             await self._send_text_body_chat(chat_id, display)
-        elif "```" in display and draft_message_ids:
-            for mid in draft_message_ids:
+        elif has_code and (force_options or draft_message_ids):
+            # DGN-085: same backstop as _reply_smart -- code+options coexistence
+            # forces clean re-send via HTML segments so code/tables render correctly.
+            for mid in (draft_message_ids or []):
                 try:
                     await bot.delete_message(chat_id, mid)
                 except Exception as e:
