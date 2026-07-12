@@ -30,6 +30,14 @@ import sdk_bridge
 
 MAX_REQUEUES = 3
 
+# DGN-268 S1 (H7): user-facing strings route through a single module-level
+# seam so S4 i18n can swap the source without touching call sites. ko values
+# stay in place for S1 (no translation yet). notify.py owns its own TEMPLATES
+# dict; this covers the one literal composed here.
+TEXT = {
+    "verdict_attention": u"확인 필요",
+}
+
 
 def _fetch_all_calendar(cal_id):
     items, tok = [], None
@@ -284,7 +292,7 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             state_conn, "reconcile_report", None, dedup=False,
             checked=checked, missing=len(missing), mismatch=len(mismatched),
             orphan=len(orphans), deleted_held=len(owner_deleted),
-            verdict=u"확인 필요")
+            verdict=TEXT["verdict_attention"])
     return summary
 
 

@@ -63,16 +63,137 @@ import sdk_bridge
 import notify as notify_mod
 import http_direct
 
-DISPLAY_TZ_NAME = "Asia/Seoul"
-# PRODUCTION surface set (per-instance: set to the agent's calendar/tasklist
-# names and a unique marker so the adapter can identify its own calendar).
-SANDBOX_CAL_SUMMARY = "<agent-calendar-name>"     # replace per instance
-SANDBOX_TASKLIST_TITLE = "<agent-tasklist-name>"  # replace per instance
-CAL_DESCRIPTION_MARKER = "DGN-180-<agent-label>-mirror"  # replace per instance
-
 # Self-locating paths (module home = mirror/): SoT DB = ../database/
 # lifekit.db, mirror state lives next to the module. No absolute home paths.
 _MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ---------------------------------------------------------------------------
+# DGN-268 S1: config seam. Per-instance surface identity (calendar/tasklist
+# names, marker, display tz) is parameterized out of source literals into the
+# instance config so the mirror is a product, not an Ag-only fixture.
+#
+# Sources (both optional; a fresh dev checkout has NEITHER -> {} / defaults):
+#   ../config/lifekit.conf   -- per-instance lifekit activation + mirror keys
+#   ../.instance.conf        -- non-secret instance manifest (agent label etc.)
+# Format = shell-style KEY=value, '#' comments, blank lines ignored.
+#
+# ZERO-DELTA GUARANTEE: every default below equals the prior canonical literal
+# (or a system-derived value that falls back to it), so behavior is byte-
+# identical when no config file is present. S1 changes NO sync logic.
+# ---------------------------------------------------------------------------
+
+_CONF_CACHE = None
+
+
+def _parse_conf_file(path, into):
+    """Merge KEY=value pairs from a shell-style conf file into `into`.
+    Existing keys are NOT overwritten (earlier source wins). Missing file =
+    no-op. Tolerant: malformed lines are skipped, never raised."""
+    try:
+        with open(path, "r") as fh:
+            lines = fh.readlines()
+    except (OSError, IOError):
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in into:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        into[key] = val
+
+
+def _load_conf():
+    """Parse the instance config once, cached. lifekit.conf is the primary
+    source; .instance.conf provides fallback identity keys (agent label).
+    Returns {} when neither file exists (fresh checkout)."""
+    global _CONF_CACHE
+    if _CONF_CACHE is None:
+        conf = {}
+        _parse_conf_file(
+            os.path.join(_MODULE_DIR, "..", "config", "lifekit.conf"), conf)
+        _parse_conf_file(
+            os.path.join(_MODULE_DIR, "..", ".instance.conf"), conf)
+        _CONF_CACHE = conf
+    return _CONF_CACHE
+
+
+def _reset_conf_cache():
+    """Test seam: drop the cached parse so a new config file is re-read."""
+    global _CONF_CACHE
+    _CONF_CACHE = None
+
+
+def _agent_slug():
+    """Instance agent slug (lowercase name) for marker/label derivation.
+    Default 'agent' keeps derived strings well-formed on a bare checkout."""
+    conf = _load_conf()
+    return conf.get("DOGANY_AGENT_NAME") or "agent"
+
+
+def _default_display_tz():
+    """MIRROR_TZ default. Spec H4: system tz if resolvable, else Asia/Seoul.
+    'Resolvable' = the platform name is a real ZoneInfo key. Fixed-offset
+    abbreviations (e.g. 'KST') are NOT ZoneInfo keys -> fall back, preserving
+    the prior canonical literal (zero-delta on the reference machine)."""
+    try:
+        tz = datetime.now().astimezone().tzinfo
+        name = getattr(tz, "key", None)
+        if name:
+            ZoneInfo(name)   # validate
+            return name
+    except Exception:
+        pass
+    return "Asia/Seoul"
+
+
+def _resolve_display_tz():
+    conf = _load_conf()
+    return conf.get("MIRROR_TZ") or _default_display_tz()
+
+
+def _resolve_cal_summary():
+    """Calendar name. Default = agent label (.instance.conf) when present,
+    else the prior canonical placeholder literal (zero-delta)."""
+    conf = _load_conf()
+    return (conf.get("MIRROR_CAL_NAME")
+            or conf.get("DOGANY_AGENT_LABEL")
+            or "<agent-calendar-name>")
+
+
+def _resolve_tasklist_title():
+    """Tasklist name. Default = the resolved calendar name (spec H2)."""
+    conf = _load_conf()
+    return conf.get("MIRROR_TASKLIST_NAME") or _resolve_cal_summary()
+
+
+def _derived_cal_marker():
+    """Per-instance calendar description marker: dogany-mirror-<agent> (spec
+    H3). Survives a calendar rename because bootstrap FREEZES the value that
+    first created the calendar into the mirror_state KV (key 'cal_marker')
+    and reads KV-first thereafter."""
+    return "dogany-mirror-%s" % _agent_slug()
+
+
+# Module-level surface identity (config-resolved at import; defaults preserve
+# the prior canonical literals when no config file is present).
+DISPLAY_TZ_NAME = _resolve_display_tz()
+SANDBOX_CAL_SUMMARY = _resolve_cal_summary()
+SANDBOX_TASKLIST_TITLE = _resolve_tasklist_title()
+CAL_DESCRIPTION_MARKER = _derived_cal_marker()
+
+# H6 (DGN-268 S1): calendar description text. Product string now (was the
+# sandbox "Safe to delete." literal). i18n wiring lands in S4; this is the
+# single module constant the description composes from until then.
+CAL_DESCRIPTION_TEXT = (
+    "Managed by the agent -- two-way synced with your assistant. "
+    "Safe to edit; do not delete.")
 DB_PATH = os.path.normpath(os.path.join(_MODULE_DIR, "..", "database", "lifekit.db"))
 STATE_DB_PATH = os.path.join(_MODULE_DIR, "mirror_state.db")
 
@@ -541,9 +662,24 @@ def _extract_ulid(item: dict):
 # Bootstrap (m12: description-marker re-discovery for the calendar)
 # ---------------------------------------------------------------------------
 
+def _frozen_cal_marker(conn):
+    """DGN-268 S1 (H3): the calendar description marker, KV-first. The first
+    bootstrap freezes the derived marker into mirror_state (key 'cal_marker');
+    every later run reads that frozen value. This makes a later rename of
+    MIRROR_CAL_NAME / the agent slug safe -- the calendar is re-discovered by
+    the marker that CREATED it, never orphaned. Legacy state DBs with no
+    frozen marker fall back to the derived value (and freeze it)."""
+    marker = get_state(conn, "cal_marker")
+    if not marker:
+        marker = CAL_DESCRIPTION_MARKER
+        set_state(conn, "cal_marker", marker)
+    return marker
+
+
 def bootstrap(conn):
     cal_id = get_state(conn, "agent_calendar_id")
     tl_id = get_state(conn, "agent_tasklist_id")
+    cal_marker = _frozen_cal_marker(conn)
 
     if cal_id:
         try:
@@ -564,7 +700,7 @@ def bootstrap(conn):
         cal_list = gws("calendar", "calendarList", "list")
         marker_hit = summary_hit = None
         for item in cal_list.get("items", []):
-            if CAL_DESCRIPTION_MARKER in (item.get("description") or ""):
+            if cal_marker in (item.get("description") or ""):
                 marker_hit = item["id"]
                 break
             if item.get("summary") == SANDBOX_CAL_SUMMARY:
@@ -576,8 +712,7 @@ def bootstrap(conn):
     if not cal_id:
         r = gws("calendar", "calendars", "insert", body={
             "summary": SANDBOX_CAL_SUMMARY,
-            "description": "%s -- DGN-180 sandbox adapter test. Safe to delete."
-                           % CAL_DESCRIPTION_MARKER,
+            "description": "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT),
             "timeZone": DISPLAY_TZ_NAME})
         cal_id = r["id"]
         print("[bootstrap] Created calendar: %s" % cal_id)
