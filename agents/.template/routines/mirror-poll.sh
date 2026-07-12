@@ -14,12 +14,19 @@ if [ ! -f "$_CONF" ]; then exit 0; fi
 # non-zero instead of the intended silent skip. Absent key == off == exit 0.
 _MODULE_VAL="$( { grep '^MIRROR_MODULE=' "$_CONF" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
 if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
-# DGN-268 S3 safety rail (S5 hardening slice): module is ON but Google auth
-# may be absent. Do NOT crash-loop every 5 min -- probe gws auth, and when it
-# is missing/unauthed emit at most ONE warning per day (stamp-file throttle),
-# then exit 0. gws present + `gws auth status` exit 0 => proceed. Fine-grained
-# scope validation (calendar+tasks) is deferred to S5.
+# DGN-268 S3/S4 safety rail (S5 hardening slice): module is ON but Google auth
+# may be absent/incomplete. Do NOT crash-loop every 5 min -- probe auth, and
+# when it is missing/unauthed emit at most ONE warning per day (stamp-file
+# throttle), then exit 0. Fast path: gws present + `gws auth status` exit 0.
+# When the S4 preflight is present it ALSO enforces the fine-grained scope set
+# (calendar + tasks + gmail.send) -- the fast path stays as a cheap gate.
+_MIRROR_UNAUTH=0
 if ! command -v gws >/dev/null 2>&1 || ! gws auth status >/dev/null 2>&1; then
+  _MIRROR_UNAUTH=1
+elif [ -x "$_AGENT_ROOT/routines/mirror-setup-check.sh" ]; then
+  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet >/dev/null 2>&1 || _MIRROR_UNAUTH=1
+fi
+if [ "$_MIRROR_UNAUTH" = "1" ]; then
   _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unauth.stamp"
   _TODAY="$(date -u +%Y-%m-%d)"
   if [ "$(cat "$_STAMP" 2>/dev/null || true)" != "$_TODAY" ]; then

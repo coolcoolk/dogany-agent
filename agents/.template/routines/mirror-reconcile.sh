@@ -13,11 +13,18 @@ if [ ! -f "$_CONF" ]; then exit 0; fi
 # non-zero instead of the intended silent skip. Absent key == off == exit 0.
 _MODULE_VAL="$( { grep '^MIRROR_MODULE=' "$_CONF" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
 if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
-# DGN-268 S3 safety rail (S5 hardening slice): module ON but Google auth may be
-# absent -> warn at most once/day (shared stamp with mirror-poll so the two do
-# not double-warn), then exit 0. No crash, no traceback. Scope-granular checks
-# are deferred to S5.
+# DGN-268 S3/S4 safety rail (S5 hardening slice): module ON but Google auth may
+# be absent/incomplete -> warn at most once/day (shared stamp with mirror-poll
+# so the two do not double-warn), then exit 0. No crash, no traceback. Fast
+# path = gws present + auth status; the S4 preflight (when present) adds the
+# fine-grained scope check (calendar + tasks + gmail.send).
+_MIRROR_UNAUTH=0
 if ! command -v gws >/dev/null 2>&1 || ! gws auth status >/dev/null 2>&1; then
+  _MIRROR_UNAUTH=1
+elif [ -x "$_AGENT_ROOT/routines/mirror-setup-check.sh" ]; then
+  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet >/dev/null 2>&1 || _MIRROR_UNAUTH=1
+fi
+if [ "$_MIRROR_UNAUTH" = "1" ]; then
   _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unauth.stamp"
   _TODAY="$(date -u +%Y-%m-%d)"
   if [ "$(cat "$_STAMP" 2>/dev/null || true)" != "$_TODAY" ]; then

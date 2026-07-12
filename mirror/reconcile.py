@@ -27,13 +27,14 @@ sys.path.insert(0, os.path.dirname(__file__))
 import adapter as A
 import notify as notify_mod
 import sdk_bridge
+import mirror_i18n
 
 MAX_REQUEUES = 3
 
-# DGN-268 S1 (H7): user-facing strings route through a single module-level
-# seam so S4 i18n can swap the source without touching call sites. ko values
-# stay in place for S1 (no translation yet). notify.py owns its own TEMPLATES
-# dict; this covers the one literal composed here.
+# DGN-268 S1 (H7) -> S4: user-facing strings route through a single seam. The
+# ko literal is the fallback; the live value is resolved by AGENT_LANG through
+# mirror_i18n (i18n key 'mirror.reconcile_verdict_attention'). notify.py owns
+# its own TEMPLATES dict; this covers the one literal composed here.
 TEXT = {
     "verdict_attention": u"확인 필요",
 }
@@ -292,7 +293,8 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             state_conn, "reconcile_report", None, dedup=False,
             checked=checked, missing=len(missing), mismatch=len(mismatched),
             orphan=len(orphans), deleted_held=len(owner_deleted),
-            verdict=TEXT["verdict_attention"])
+            verdict=mirror_i18n.t("mirror.reconcile_verdict_attention",
+                                  TEXT["verdict_attention"]))
     return summary
 
 

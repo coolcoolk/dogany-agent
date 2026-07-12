@@ -1,166 +1,143 @@
-"""Mock-SMTP self-test for service.mailer. No real network, no real send.
+"""Self-test for service.mailer (DGN-268 S4: gws gmail transport).
 
-Monkeypatches smtplib.SMTP with a fake that records starttls/login/send_message
-calls and the composed message. Verifies configured + unconfigured cases and that
-the app password never leaks into the returned result.
+Monkeypatches subprocess.run so no real gws call / network happens: the fake
+answers `gws auth status` (authed with gmail.send or not) and records the
+`gws gmail users messages send` invocation (its --json raw payload). Verifies
+configured + unconfigured cases, the auto-CC, and that the composed To/Cc/
+Subject/body round-trip through the base64url raw message.
 
-Run: python3 service/mailer/selftest.py   (from repo root)
-Exit 0 = all assertions passed.
+Run: python3 service/mailer/selftest.py   (from repo root). Exit 0 = pass.
 """
 
+import base64
+import json
 import os
 import sys
+from email import message_from_bytes
+from email.policy import default as _default_policy
 
-# Import the module under a fresh state. Add repo root so `service` is importable.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
 sys.path.insert(0, _REPO_ROOT)
 
-import smtplib  # noqa: E402
+import subprocess  # noqa: E402
 from service import mailer  # noqa: E402
 
-APP_PW = "super-secret-app-pw-XYZ"
+
+class FakeCompleted:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
-class FakeSMTP:
-    """Records SMTP interactions instead of touching the network."""
+class FakeRun:
+    """Records gws calls; answers auth status + send. scopes controls whether
+    the account is authed with gmail.send."""
 
-    instances = []
+    def __init__(self, has_send_scope=True):
+        self.has_send_scope = has_send_scope
+        self.sends = []   # list of parsed raw messages
 
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.ehlo_count = 0
-        self.starttls_called = False
-        self.login_args = None
-        self.sent_message = None
-        self.sent_from = None
-        self.sent_to = None
-        FakeSMTP.instances.append(self)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def ehlo(self, *a, **k):
-        self.ehlo_count += 1
-
-    def starttls(self, *a, **k):
-        self.starttls_called = True
-
-    def login(self, user, password):
-        self.login_args = (user, password)
-
-    def send_message(self, msg, from_addr=None, to_addrs=None):
-        self.sent_message = msg
-        self.sent_from = from_addr
-        self.sent_to = to_addrs
+    def __call__(self, cmd, capture_output=False, text=False, **kw):
+        # auth status
+        if cmd[:3] == ["gws", "auth", "status"]:
+            scopes = ["https://www.googleapis.com/auth/calendar",
+                      "https://www.googleapis.com/auth/tasks"]
+            if self.has_send_scope:
+                scopes.append("https://www.googleapis.com/auth/gmail.send")
+            return FakeCompleted(0, json.dumps({"scopes": scopes}))
+        # gmail send
+        if cmd[:5] == ["gws", "gmail", "users", "messages", "send"]:
+            body = json.loads(cmd[cmd.index("--json") + 1])
+            raw = base64.urlsafe_b64decode(body["raw"].encode("ascii"))
+            self.sends.append(message_from_bytes(raw, policy=_default_policy))
+            return FakeCompleted(0, json.dumps({"id": "SENT1"}))
+        raise AssertionError("unexpected gws call: %s" % (cmd,))
 
 
 def _reset_env():
-    for k in ("EMAIL_ADDRESS", "EMAIL_APP_PASSWORD", "EMAIL_CC",
-              "SMTP_HOST", "SMTP_PORT", "PROJECT_ROOT"):
+    for k in ("EMAIL_ADDRESS", "EMAIL_CC", "PROJECT_ROOT"):
         os.environ.pop(k, None)
 
 
 def test_configured():
     _reset_env()
     os.environ["EMAIL_ADDRESS"] = "sender@example.com"
-    os.environ["EMAIL_APP_PASSWORD"] = APP_PW
     os.environ["EMAIL_CC"] = "owner@example.com"
-
-    FakeSMTP.instances = []
-    orig = smtplib.SMTP
-    smtplib.SMTP = FakeSMTP
+    fake = FakeRun(has_send_scope=True)
+    orig = subprocess.run
+    subprocess.run = fake
     try:
         res = mailer.send(to="a@b.com", subject="s", body="hi")
     finally:
-        smtplib.SMTP = orig
-
+        subprocess.run = orig
     assert res["ok"] is True, res
-    assert len(FakeSMTP.instances) == 1, "SMTP should be constructed once"
-    smtp = FakeSMTP.instances[0]
-
-    assert smtp.host == "smtp.gmail.com", smtp.host
-    assert smtp.port == 587, smtp.port
-    assert smtp.starttls_called is True, "STARTTLS must be called"
-    assert smtp.login_args == ("sender@example.com", APP_PW), smtp.login_args
-
-    msg = smtp.sent_message
+    assert len(fake.sends) == 1, "gws send should be called once"
+    msg = fake.sends[0]
     assert msg["To"] == "a@b.com", msg["To"]
-    assert "owner@example.com" in msg["Cc"], msg["Cc"]
+    assert "owner@example.com" in (msg["Cc"] or ""), msg["Cc"]
     assert msg["Subject"] == "s", msg["Subject"]
     assert msg.get_content().strip() == "hi", repr(msg.get_content())
-    # envelope recipients include the auto-CC
-    assert "owner@example.com" in smtp.sent_to, smtp.sent_to
-    assert "a@b.com" in smtp.sent_to, smtp.sent_to
-
-    # App password must NOT leak into the returned result.
-    assert APP_PW not in repr(res), "app password leaked into result!"
-    print("PASS configured: STARTTLS + login(pw from config) + To/Cc/Subject/body OK")
+    assert "owner@example.com" in res["cc"], res["cc"]
+    print("PASS configured: gws send + To/Cc/Subject/body round-trip OK")
 
 
 def test_no_double_cc():
-    """Owner already a recipient -> not added twice."""
     _reset_env()
     os.environ["EMAIL_ADDRESS"] = "sender@example.com"
-    os.environ["EMAIL_APP_PASSWORD"] = APP_PW
     os.environ["EMAIL_CC"] = "owner@example.com"
-
-    FakeSMTP.instances = []
-    orig = smtplib.SMTP
-    smtplib.SMTP = FakeSMTP
+    fake = FakeRun(has_send_scope=True)
+    orig = subprocess.run
+    subprocess.run = fake
     try:
         res = mailer.send(to="owner@example.com", subject="s", body="hi")
     finally:
-        smtplib.SMTP = orig
+        subprocess.run = orig
     assert res["ok"] is True, res
     assert res["cc"] == [], res["cc"]  # owner already in To -> no dup CC
     print("PASS no-double-cc: owner already recipient -> no duplicate CC")
 
 
-def test_unconfigured():
-    _reset_env()  # no creds at all
-
-    FakeSMTP.instances = []
-    orig = smtplib.SMTP
-    smtplib.SMTP = FakeSMTP
+def test_unconfigured_no_scope():
+    """gws authed but WITHOUT gmail.send -> not connected, no send attempt."""
+    _reset_env()
+    fake = FakeRun(has_send_scope=False)
+    orig = subprocess.run
+    subprocess.run = fake
     try:
         res = mailer.send(to="a@b.com", subject="s", body="hi")
     finally:
-        smtplib.SMTP = orig
-
+        subprocess.run = orig
     assert res["ok"] is False, res
     assert res["connected"] is False, res
     assert res["error"] == "email not connected", res
-    assert len(FakeSMTP.instances) == 0, "must NOT attempt SMTP when unconfigured"
-    print("PASS unconfigured: returns not-connected, no SMTP attempt, no raise")
+    assert len(fake.sends) == 0, "must NOT attempt send when unconnected"
+    # message points at Google onboarding, not app password.
+    assert "Google" in res["message"], res["message"]
+    assert "password" not in res["message"].lower(), res["message"]
+    print("PASS unconfigured: no gmail.send scope -> not connected, no send")
 
 
-def test_password_never_in_log_string():
-    """The graceful message + success result must never carry the password."""
+def test_gws_missing():
+    """gws CLI absent -> not connected (no crash)."""
     _reset_env()
-    os.environ["EMAIL_ADDRESS"] = "sender@example.com"
-    os.environ["EMAIL_APP_PASSWORD"] = APP_PW
-    os.environ["EMAIL_CC"] = "owner@example.com"
 
-    FakeSMTP.instances = []
-    orig = smtplib.SMTP
-    smtplib.SMTP = FakeSMTP
+    def _raise(*a, **k):
+        raise FileNotFoundError("gws")
+    orig = subprocess.run
+    subprocess.run = _raise
     try:
         res = mailer.send(to="a@b.com", subject="s", body="hi")
     finally:
-        smtplib.SMTP = orig
-    assert APP_PW not in str(res), "password in str(result)!"
-    assert APP_PW not in repr(res), "password in repr(result)!"
-    print("PASS secrecy: app password absent from returned result string")
+        subprocess.run = orig
+    assert res["ok"] is False and res["connected"] is False, res
+    print("PASS gws-missing: absent CLI -> graceful not-connected")
 
 
 if __name__ == "__main__":
     test_configured()
     test_no_double_cc()
-    test_unconfigured()
-    test_password_never_in_log_string()
+    test_unconfigured_no_scope()
+    test_gws_missing()
     print("ALL PASS")

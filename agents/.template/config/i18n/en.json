@@ -10,5 +10,17 @@
   "bundle.appointment_log": "Record and look up appointments and schedules",
   "bundle.relationship": "Keep notes on people you meet and your relationships",
   "bundle.morning_brief": "Daily morning briefing of today's schedule and tasks (default 06:00)",
-  "bundle.daily_retro": "Nightly routine to look back on your day (default 22:00)"
+  "bundle.daily_retro": "Nightly routine to look back on your day (default 22:00)",
+  "mirror.cal_description": "Managed by the agent -- two-way synced with your assistant. Safe to edit; do not delete.",
+  "mirror.outbox_exhausted": "Sync on hold: '{title}' is stuck after repeated failures. Please take a look.",
+  "mirror.circuit_breaker": "{count} cancellations were detected at once on your calendar, so auto-sync was paused. Please check your calendar.",
+  "mirror.inbound_cancel": "'{title}' was deleted from your calendar, so I cancelled it. Let me know if you want it back.",
+  "mirror.task_deleted": "The task '{title}' was deleted, so I cancelled it. Let me know if you want it back.",
+  "mirror.inbound_adopted": "I imported and registered '{title}', which you added directly to your calendar.",
+  "mirror.recurring_skipped": "The recurring event '{title}' isn't auto-synced yet, so I'm leaving it on the calendar only. (Recurring support is coming.)",
+  "mirror.outbox_exhausted_agg": "Sync on hold ({count}): several items are stuck after repeated failures. Please take a look.",
+  "mirror.overlap_notice": "Applying '{title}' overlaps with an existing event: {detail}",
+  "mirror.repeated_failure": "Repeated sync failure: '{title}' has hit the retry limit. Manual review needed.",
+  "mirror.reconcile_report": "Weekly sync check: {checked} checked, {missing} missing re-sent, {mismatch} mismatched, {orphan} out-of-scope, {deleted_held} deletion(s) held. {verdict}",
+  "mirror.reconcile_verdict_attention": "Attention needed"
 }

@@ -53,7 +53,8 @@ def _build_scratch(agent_name=None, cal_name=None, tasklist_name=None,
     root = tempfile.mkdtemp(prefix="dgn268-s1-")
     mirror_dir = os.path.join(root, "mirror")
     os.makedirs(mirror_dir)
-    for f in ("adapter.py", "reconcile.py", "notify.py", "mirror_state.sql"):
+    for f in ("adapter.py", "reconcile.py", "notify.py", "mirror_i18n.py",
+              "mirror_state.sql"):
         shutil.copy2(os.path.join(SRC_MIRROR, f), os.path.join(mirror_dir, f))
 
     lk_keys = {}
@@ -85,7 +86,8 @@ def _build_scratch(agent_name=None, cal_name=None, tasklist_name=None,
 
 def _import_adapter(root):
     """Fresh import of the scratch adapter with surface deps stubbed."""
-    for name in ("adapter", "sdk_bridge", "notify", "http_direct"):
+    for name in ("adapter", "sdk_bridge", "notify", "http_direct",
+                 "mirror_i18n"):
         sys.modules.pop(name, None)
     sdk_stub = types.ModuleType("sdk_bridge")
     sdk_stub.ec = types.ModuleType("ec")

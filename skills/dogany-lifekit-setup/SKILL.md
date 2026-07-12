@@ -75,6 +75,76 @@ comes from the `lifekit.offer` key in the same file.
 for each bundle.conf item: desired = lifekit.conf value, actual = symlink
 exists / routine-ctl status. desired != actual -> apply desired. report diff.
 
+## Connect Google (calendar + tasks + email)
+
+Walk user through this conversationally, one step at a time. Agent drives;
+user runs only their own auth commands (per RULES: hand OAuth commands to
+user, do not run them).
+
+### step 1 -- preflight
+Run `routines/mirror-setup-check.sh --quiet`. Report each item: OK or MISSING.
+Items checked: (a) gws CLI present, (b) gws auth OK + scopes include
+calendar+tasks+gmail.send, (c) python cryptography importable.
+
+### step 2 -- install gaps (agent runs these, not auth commands)
+- gws missing -> tell user: `npm i -g @googleworkspace/gws`
+- cryptography missing -> `python3 -m pip install cryptography`
+Re-run preflight after installs to confirm.
+
+### step 3 -- auth grant (user runs, agent verifies)
+Hand the user these two commands in order:
+```
+gws auth setup
+gws auth login -s calendar,tasks,gmail.send
+```
+Do NOT run them yourself. After user confirms done, re-run
+`routines/mirror-setup-check.sh` to verify scopes pass.
+
+### step 4 -- calendar name
+Ask user: "What name should your calendar have?" Write the answer to
+`config/lifekit.conf` as `MIRROR_CAL_NAME=<name>`. Tasklist defaults to same
+name (no separate key needed unless user picks differently).
+
+### step 5 -- bootstrap
+Call the mirror bootstrap. Two outcomes:
+
+- Clean -> proceed.
+- `adapter.BootstrapAmbiguous(candidates)` raised -> show the candidate(s)
+  (each has surface, candidate_id, summary -- an existing same-name
+  calendar/tasklist without our marker). Ask: "adopt this existing calendar,
+  or create a new one with a different name?"
+  - adopt -> set `MIRROR_ADOPT_UNMARKED=true` in `config/lifekit.conf`,
+    re-run bootstrap.
+  - create -> ask for a new name, update `MIRROR_CAL_NAME`, re-run bootstrap.
+
+### step 6 -- enable mirror module
+Set `MIRROR_MODULE=on` in `config/lifekit.conf`.
+
+### step 7 -- enable crons
+- macOS: `launchctl load` both mirror plists:
+  `routines/com.telegram-skill-bot.<agent>.mirror-poll.plist`
+  `routines/com.telegram-skill-bot.<agent>.mirror-reconcile.plist`
+- Linux: `systemctl --user enable --now` both mirror timers:
+  `com.telegram-skill-bot.<agent>.mirror-poll.timer`
+  `com.telegram-skill-bot.<agent>.mirror-reconcile.timer`
+Poll = every 300s. Reconcile = weekly Sun 21:30.
+
+### step 8 -- first backfill + self-test
+Run bounded initial pull (backfill). Then:
+1. Create a lifekit test event.
+2. Run one poll cycle manually.
+3. Verify the test event appears on the connected calendar surface.
+4. Delete the test event.
+
+### step 9 -- report
+Tell user: "Connected. N items synced." (N = count from backfill output.)
+
+### hard rules for this flow
+- One step at a time. Confirm each before proceeding.
+- Never run `gws auth` commands yourself -- hand them to the user.
+- `MIRROR_ADOPT_UNMARKED=true` must only be set after explicit user choice
+  to adopt. Default: absent (safe, never auto-adopts).
+
 ## notes
 - task-update skill is currently inert (lifekit task CLI not yet implemented)
   -- say so honestly when describing it: "prepared; activates when task

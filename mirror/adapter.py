@@ -62,6 +62,7 @@ from zoneinfo import ZoneInfo
 import sdk_bridge
 import notify as notify_mod
 import http_direct
+import mirror_i18n
 
 # Self-locating paths (module home = mirror/): SoT DB = ../database/
 # lifekit.db, mirror state lives next to the module. No absolute home paths.
@@ -179,9 +180,11 @@ SANDBOX_TASKLIST_TITLE = _resolve_tasklist_title()
 CAL_DESCRIPTION_MARKER = _derived_cal_marker()
 
 # H6 (DGN-268 S1): calendar description text. Product string now (was the
-# sandbox "Safe to delete." literal). i18n wiring lands in S4; this is the
-# single module constant the description composes from until then.
-CAL_DESCRIPTION_TEXT = (
+# sandbox "Safe to delete." literal). DGN-268 S4: resolved through mirror_i18n
+# by AGENT_LANG (i18n key 'mirror.cal_description'); the English literal here is
+# the fallback used verbatim when the key/locale file is absent (zero-delta).
+CAL_DESCRIPTION_TEXT = mirror_i18n.t(
+    "mirror.cal_description",
     "Managed by the agent -- two-way synced with your assistant. "
     "Safe to edit; do not delete.")
 DB_PATH = os.path.normpath(os.path.join(_MODULE_DIR, "..", "database", "lifekit.db"))

@@ -52,7 +52,8 @@ def _build_scratch(adopt_unmarked=None, agent_name="testbot", cal_name=None):
     root = tempfile.mkdtemp(prefix="dgn268-s2-")
     mirror_dir = os.path.join(root, "mirror")
     os.makedirs(mirror_dir)
-    for f in ("adapter.py", "reconcile.py", "notify.py", "mirror_state.sql"):
+    for f in ("adapter.py", "reconcile.py", "notify.py", "mirror_i18n.py",
+              "mirror_state.sql"):
         shutil.copy2(os.path.join(SRC_MIRROR, f), os.path.join(mirror_dir, f))
     os.makedirs(os.path.join(root, "config"))
     with open(os.path.join(root, "config", "lifekit.conf"), "w") as fh:
@@ -67,7 +68,8 @@ def _build_scratch(adopt_unmarked=None, agent_name="testbot", cal_name=None):
 
 
 def _import_adapter(root):
-    for name in ("adapter", "sdk_bridge", "notify", "http_direct"):
+    for name in ("adapter", "sdk_bridge", "notify", "http_direct",
+                 "mirror_i18n"):
         sys.modules.pop(name, None)
     sdk_stub = types.ModuleType("sdk_bridge")
     sdk_stub.ec = types.ModuleType("ec")
