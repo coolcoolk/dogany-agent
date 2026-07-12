@@ -1,4 +1,4 @@
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -229,6 +229,12 @@ CREATE TABLE IF NOT EXISTS event (
     gcal_etag     TEXT,
     gtask_etag    TEXT,
 
+    -- DGN-273 notify policy (migration 007, folded here for fresh DBs).
+    -- NULL = 'default' = legacy remind behavior. Stamped from routine_def at
+    -- materialization; one-off events may carry their own override.
+    notify_policy   TEXT,
+    notify_lead_min INTEGER,
+
     created_at    TEXT NOT NULL,                  -- canonical UTC
     updated_at    TEXT NOT NULL,                  -- canonical UTC
 
@@ -283,7 +289,16 @@ CREATE TABLE IF NOT EXISTS event (
     CHECK ((settled_at IS NULL) = (settled_outcome IS NULL)),
     CHECK (settled_outcome IS NULL OR settled_outcome IN ('done','abandoned')),
     -- grill-5 (MINOR-1): reversed interval illegal (zero-length is legal, use >=).
-    CHECK (end_at IS NULL OR start_at IS NULL OR end_at >= start_at)
+    CHECK (end_at IS NULL OR start_at IS NULL OR end_at >= start_at),
+    -- DGN-273 notify belt CHECKs (fresh DBs only; migrated DBs enforce via
+    -- the lifekit verbs -- ALTER cannot add CHECKs). COALESCE folds the NULL
+    -- policy into the non-custom branch so NULL-CHECK-passes cannot leak an
+    -- orphan lead value.
+    CHECK (notify_policy IS NULL OR notify_policy IN
+           ('default','silent','start_only','custom')),
+    CHECK (notify_lead_min IS NULL OR COALESCE(notify_policy,'') = 'custom'),
+    CHECK (COALESCE(notify_policy,'') != 'custom'
+           OR (notify_lead_min IS NOT NULL AND notify_lead_min >= 0))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_notion
     ON event(notion_id) WHERE notion_id IS NOT NULL;
@@ -390,6 +405,9 @@ CREATE TABLE IF NOT EXISTS routine_def (
     valid_until   TEXT NOT NULL,
     rule_effective_from TEXT NOT NULL,
     anomaly_ack   TEXT,
+    -- DGN-273 notify policy home (migration 007). NULL = 'default'.
+    notify_policy   TEXT,
+    notify_lead_min INTEGER,
     version       INTEGER NOT NULL DEFAULT 0,
     created_by    TEXT NOT NULL,
     created_at    TEXT NOT NULL,
@@ -399,7 +417,13 @@ CREATE TABLE IF NOT EXISTS routine_def (
     CHECK (status IN ('active','paused','retired')),
     CHECK (schedule_kind != 'timed' OR time_of_day IS NOT NULL),
     CHECK (exclusive IN (0,1)),
-    CHECK (cadence IS NOT NULL OR status = 'retired')
+    CHECK (cadence IS NOT NULL OR status = 'retired'),
+    -- DGN-273 notify belt CHECKs (fresh DBs; verbs enforce on migrated DBs).
+    CHECK (notify_policy IS NULL OR notify_policy IN
+           ('default','silent','start_only','custom')),
+    CHECK (notify_lead_min IS NULL OR COALESCE(notify_policy,'') = 'custom'),
+    CHECK (COALESCE(notify_policy,'') != 'custom'
+           OR (notify_lead_min IS NOT NULL AND notify_lead_min >= 0))
 );
 
 -- roller_log: nightly roller audit log.

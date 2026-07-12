@@ -572,7 +572,7 @@ ensure_dir "$INSTANCE/database"
 # DB version nag: informational, runs even under --dry-run (read-only check).
 db_drift_nag "$INSTANCE/database/lifekit.db" "$REPO_ROOT/database/lifekit.py"
 
-for f in schema.sql lifekit.py lifekit.sh README.md; do
+for f in schema.sql lifekit.py lifekit.sh README.md remind_select.py routine_roller.py routine_projection.py; do
   [ -f "$REPO_ROOT/database/$f" ] || continue
 
   # Reverse-drift guard: check GUARDED_FILES for this filename.

@@ -1056,7 +1056,7 @@ def load_card_data(iso_date, conn=None):
 # facade time parser). datetime/timezone are already imported at file top.
 from zoneinfo import ZoneInfo
 
-EXPECTED_USER_VERSION = 6  # 006_routine_recurrence (DGN-240 T7)
+EXPECTED_USER_VERSION = 7  # 007_notify_policy (DGN-273)
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
@@ -1086,6 +1086,72 @@ LIVE_FILTER = ("e.slot_exclusive = 1 AND e.settled_at IS NULL "
 
 class MigrationRequired(Exception):
     """Raised when user_version does not match. Actionable, not a hard exit."""
+
+
+# ── DGN-273 notify policy ──────────────────────────────────────────────────
+# Per-routine / per-event notification policy for the remind poller.
+# NULL = 'default' = legacy behavior (task: 30-min lead + on-time alert;
+# appointment: 120-min lead + on-time alert). notify_lead_min is meaningful
+# ONLY with 'custom' (minutes before start, >= 0; on-time alert kept).
+NOTIFY_POLICIES = ("default", "silent", "start_only", "custom")
+
+
+def validate_notify_policy(notify_policy, notify_lead_min):
+    """Pair-coherence validator (the verb IS the enforcement point on
+    migrated DBs -- sqlite ALTER cannot add CHECKs; fresh DBs also carry
+    table CHECKs). Returns the normalized (policy, lead) pair or raises
+    ValueError. Rules: policy in NOTIFY_POLICIES or None; 'custom' requires
+    an integer lead >= 0; a lead with any other policy is refused (single
+    meaning per column)."""
+    if notify_policy is not None and notify_policy not in NOTIFY_POLICIES:
+        raise ValueError(
+            "notify_policy must be one of %s, got %r"
+            % ("|".join(NOTIFY_POLICIES), notify_policy))
+    lead = None
+    if notify_lead_min is not None:
+        try:
+            lead = int(notify_lead_min)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "notify_lead_min must be an integer (minutes), got %r"
+                % (notify_lead_min,))
+        if lead < 0:
+            raise ValueError("notify_lead_min must be >= 0, got %d" % lead)
+    if notify_policy == "custom" and lead is None:
+        raise ValueError("notify_policy 'custom' requires notify_lead_min")
+    if notify_policy != "custom" and lead is not None:
+        raise ValueError(
+            "notify_lead_min is only valid with notify_policy 'custom' "
+            "(got policy %r)" % (notify_policy,))
+    return notify_policy, lead
+
+
+def parse_notify_arg(raw):
+    """CLI notify value -> (notify_policy, notify_lead_min).
+    ''                          -> (None, None)   reset to default behavior
+    default|silent|start_only   -> (raw, None)
+    <N> or custom:<N>           -> ('custom', N)  N = lead minutes
+    Special: custom:0 / '0' normalizes to start_only (no double-fire at
+    the start instant).
+    Anything else raises ValueError."""
+    if raw is None or raw == "":
+        return None, None
+    val = str(raw).strip()
+    if val in ("default", "silent", "start_only"):
+        return val, None
+    if val.startswith("custom:"):
+        val = val[len("custom:"):]
+    try:
+        policy, lead = validate_notify_policy("custom", val)
+        # custom lead=0 means 'alert at start' with no separate lead offset --
+        # identical to start_only; normalize to avoid double-fire.
+        if lead == 0:
+            return "start_only", None
+        return policy, lead
+    except ValueError:
+        raise ValueError(
+            "bad notify value %r (want default|silent|start_only|"
+            "<lead-minutes>|custom:<lead-minutes>)" % (raw,))
 
 
 def event_conn(db_path=None, assert_version=True):
@@ -1340,7 +1406,8 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
               completion_rule="all", note=None, area_id=None,
               display_tz="Asia/Seoul", task_kind=None, day_block=False,
               notion_id=None, meta=None,
-              recurrence_id=None, rec_date=None, is_routine=0):
+              recurrence_id=None, rec_date=None, is_routine=0,
+              notify_policy=None, notify_lead_min=None):
     """Insert a new event. For slot_exclusive events with a start instant, the
     insert is atomic INSERT..WHERE NOT EXISTS(overlap): returns event id on win,
     None on slot loss. For non-exclusive/no-start, always inserts (no slot guard).
@@ -1401,6 +1468,9 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
                 "event_add: meta column %r not allowed for kind %r "
                 "(allowed: %s; title/note are first-class params)"
                 % (col, kind, sorted(allowed)))
+    # DGN-273: pair coherence (raises ValueError on a bad pair).
+    notify_policy, notify_lead_min = validate_notify_policy(
+        notify_policy, notify_lead_min)
     slot_exclusive = resolve_slot_exclusive(kind, schedule_kind, task_kind, day_block)
     now = now_utc()
     ulid = new_ulid()
@@ -1417,6 +1487,13 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
                  owning_agent, created_by, notion_id,
                  recurrence_id, rec_date, 1 if is_routine else 0, now, now]
     base_vals += [meta[c] for c in meta_cols]
+    # DGN-273: include notify columns ONLY when set -- callers that never pass
+    # a policy (e.g. the mirror adapter inside its 006/007 rollout window)
+    # keep working against a not-yet-migrated DB, and absent columns default
+    # to NULL (= legacy behavior) everywhere else.
+    if notify_policy is not None or notify_lead_min is not None:
+        cols += ", notify_policy, notify_lead_min"
+        base_vals += [notify_policy, notify_lead_min]
 
     conn.execute("BEGIN IMMEDIATE;")
     try:
@@ -1625,7 +1702,9 @@ def event_promote_exclusive(conn, eid, version):
 # D1 -- metadata columns per kind. Structurally excludes every slot field
 # (start_at/end_at/open_ended/slot_exclusive/schedule_kind) and every derivation
 # input -> event_set_meta needs no overlap guard and no recompute dependency.
-META_COLS_COMMON = ("title", "note")
+# DGN-273: notify columns ride the meta path (feed no derivation, no slot
+# guard needed). event_set_meta enforces the pair rule (both together).
+META_COLS_COMMON = ("title", "note", "notify_policy", "notify_lead_min")
 META_COLS_BY_KIND = {
     "appointment": ("location", "location_url", "purpose", "summary"),
     "task": (),  # extended when the task CLI is built (no caller today)
@@ -1655,6 +1734,17 @@ def event_set_meta(conn, eid, version, fields):
         raise ValueError("event_set_meta: empty fields")
     if "title" in fields and (fields["title"] is None or fields["title"] == ""):
         raise ValueError("event_set_meta: title is NOT NULL, cannot be empty")
+    # DGN-273: notify columns are a coherent pair -- always written together
+    # (partial writes could strand a lead without its policy or vice versa).
+    if ("notify_policy" in fields) != ("notify_lead_min" in fields):
+        raise ValueError(
+            "event_set_meta: notify_policy and notify_lead_min must be "
+            "written together (pass both; use None to clear)")
+    if "notify_policy" in fields:
+        fields = dict(fields)
+        fields["notify_policy"], fields["notify_lead_min"] = (
+            validate_notify_policy(fields["notify_policy"],
+                                   fields["notify_lead_min"]))
     conn.execute("BEGIN IMMEDIATE;")
     try:
         row = conn.execute("SELECT kind FROM event WHERE id=?;", (eid,)).fetchone()
@@ -2239,10 +2329,15 @@ def routine_add(conn, title, cadence, schedule_kind, time_of_day=None,
                 duration_min=None, area_id=None, project_id=None,
                 purpose=None, start_date=None, end_date=None, kind="task",
                 display_tz="Asia/Seoul", created_by=None, today=None,
-                materialize=True, state_conn=None, now=None):
+                materialize=True, state_conn=None, now=None,
+                notify_policy=None, notify_lead_min=None):
     """Register a routine_def + inline first materialization (spec 8.2).
-    Returns dict(def_id, ulid, recurrence_id, materialized_dates)."""
+    Returns dict(def_id, ulid, recurrence_id, materialized_dates).
+    DGN-273: notify_policy/notify_lead_min live on the def and are stamped
+    onto every materialized instance (NULL = 'default' = legacy alerts)."""
     _routine_validate(cadence, schedule_kind, time_of_day, kind)
+    notify_policy, notify_lead_min = validate_notify_policy(
+        notify_policy, notify_lead_min)
     if not title or not str(title).strip():
         raise ValueError("routine_add: title required")
     if created_by is None:
@@ -2259,11 +2354,13 @@ def routine_add(conn, title, cadence, schedule_kind, time_of_day=None,
             "INSERT INTO routine_def (ulid, recurrence_id, title, kind, "
             "cadence, schedule_kind, time_of_day, duration_min, display_tz, "
             "area_id, project_id, purpose, status, start_date, end_date, "
-            "valid_until, rule_effective_from, created_by, created_at, "
-            "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?);",
+            "valid_until, rule_effective_from, notify_policy, "
+            "notify_lead_min, created_by, created_at, updated_at) VALUES "
+            "(?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?,?,?,?);",
             (ulid, rid, title, kind, cadence, schedule_kind, time_of_day,
              duration_min, display_tz, area_id, project_id, purpose,
-             start_date, end_date, valid_until, today, created_by, ts, ts))
+             start_date, end_date, valid_until, today, notify_policy,
+             notify_lead_min, created_by, ts, ts))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -2280,7 +2377,7 @@ def routine_add(conn, title, cadence, schedule_kind, time_of_day=None,
 
 _ROUTINE_UPD_COLS = ("title", "cadence", "schedule_kind", "time_of_day",
                      "duration_min", "area_id", "project_id", "purpose",
-                     "end_date")
+                     "end_date", "notify_policy", "notify_lead_min")
 
 
 def routine_update(conn, def_token, changes, effective_from=None,
@@ -2304,6 +2401,10 @@ def routine_update(conn, def_token, changes, effective_from=None,
         merged[col] = changes[col]
     _routine_validate(merged["cadence"], merged["schedule_kind"],
                       merged["time_of_day"], merged["kind"])
+    # DGN-273: notify pair must stay coherent after the merge (CLI always
+    # writes the pair together; API callers get the same guarantee here).
+    validate_notify_policy(merged.get("notify_policy"),
+                           merged.get("notify_lead_min"))
     # end_date change re-derives valid_until per the 1.3 initialization rule.
     new_valid_until = (_valid_until_for(merged["end_date"], today)
                        if "end_date" in changes else defn["valid_until"])
@@ -2741,6 +2842,7 @@ def cli_routine(argv):
           "  add <title> <cadence> [field=value ...] [--new]\n"
           "      cadence: D | W:MON,WED,FRI | I:2@YYYY-MM-DD\n"
           "      field: time(HH:MM) duration area project purpose start end\n"
+          "             notify(default|silent|start_only|<lead-min>)\n"
           "  update <def_ulid> [effective_from=YYYY-MM-DD] field=value ...\n"
           "  exception <event_ulid> field=value ... "
           "(field: start_at end_at date title note)\n"
@@ -2791,6 +2893,7 @@ def cli_routine(argv):
             tod = fields.get("time")
             sk = "timed" if tod else "all_day"
             try:
+                np, nl = parse_notify_arg(fields.get("notify"))
                 res = routine_add(
                     conn, title, cadence, sk, time_of_day=tod,
                     duration_min=(int(fields["duration"])
@@ -2798,7 +2901,8 @@ def cli_routine(argv):
                     area_id=aid, project_id=pid,
                     purpose=fields.get("purpose"),
                     start_date=fields.get("start"),
-                    end_date=fields.get("end"))
+                    end_date=fields.get("end"),
+                    notify_policy=np, notify_lead_min=nl)
             except ValueError as e:
                 _err(str(e))
             print("%s\t%s\t%s" % (res["def_id"], res["ulid"],
@@ -2827,7 +2931,8 @@ def cli_routine(argv):
                       "cadence", "schedule_kind", "time_of_day",
                       "duration_min", "area_id", "project_id", "purpose",
                       "status", "start_date", "end_date", "valid_until",
-                      "rule_effective_from", "version"):
+                      "rule_effective_from", "notify_policy",
+                      "notify_lead_min", "version"):
                 print("%s=%s" % (k, "" if defn[k] is None else defn[k]))
         elif verb in ("update", "pause", "resume", "retire"):
             if not rest:
@@ -2851,6 +2956,15 @@ def cli_routine(argv):
                         fields["duration_min"] = int(v)
                     elif k == "end":
                         fields["end_date"] = v or None
+                    elif k == "notify":
+                        # DGN-273: the pair is always written together
+                        # (notify= empty resets both to NULL = default).
+                        try:
+                            np, nl = parse_notify_arg(v)
+                        except ValueError as e:
+                            _err(str(e))
+                        fields["notify_policy"] = np
+                        fields["notify_lead_min"] = nl
                     elif k in _ROUTINE_UPD_COLS:
                         fields[k] = v or None
                     else:
@@ -2964,7 +3078,7 @@ USAGE = ("사용법: lifekit.sh meal-add|meal-find|meal-day|meal-del|meal-upd|"
          "workout-add|workout-find|workout-del|agg-day|agg-week|"
          "task-add|task-find|task-done|task-undone|task-reschedule|"
          "task-archive|task-overdue|task-done-between|event-window|"
-         "project-list|project-add|project-upd ...\n"
+         "event-notify|project-list|project-add|project-upd ...\n"
          "  workout-add <date> <category> <subtype> [minutes kcal note avg_hr]\n"
          "    (category=대분류, subtype=세부. 인자 순서는 옛 <type> <name>와 동일 위치.)")
 
@@ -2989,6 +3103,21 @@ def _pop_flag(argv, flag):
     if flag in argv:
         return [a for a in argv if a != flag], True
     return list(argv), False
+
+
+def _pop_opt(argv, flag):
+    """DGN-273: return (argv_without_pair, value_or_None), removing the first
+    '<flag> <value>' pair. Same positional-preserving contract as _pop_flag.
+    A trailing flag with no value is a loud usage error."""
+    argv = list(argv)
+    if flag not in argv:
+        return argv, None
+    i = argv.index(flag)
+    if i + 1 >= len(argv):
+        _err("%s requires a value" % flag)
+    val = argv[i + 1]
+    del argv[i:i + 2]
+    return argv, val
 
 
 def cli_meal_add(argv):
@@ -3382,10 +3511,17 @@ def cli_appt_find(argv):
 
 def cli_appt_add(argv):
     # appt-add <title> <start_at> [end_at location purpose summary] [--new]
+    #          [--notify <policy>]   (DGN-273 per-event override)
     argv, force_new = _pop_flag(argv, '--new')      # DGN-231
+    argv, notify_raw = _pop_opt(argv, '--notify')   # DGN-273
     if len(argv) < 2 or not argv[0] or not argv[1]:
         _err("사용법: lifekit.sh appt-add <title> <start_at> "
-             "[end_at location purpose summary]")
+             "[end_at location purpose summary] "
+             "[--notify default|silent|start_only|<lead-min>]")
+    try:
+        _np, _nl = parse_notify_arg(notify_raw)
+    except ValueError as e:
+        _err(str(e))
     g = lambda i: argv[i] if i < len(argv) else None
     title, start_raw = argv[0], argv[1]
     end_raw = g(2)
@@ -3453,7 +3589,8 @@ def cli_appt_add(argv):
                             schedule_kind=schedule_kind, start_at=start_at,
                             end_at=end_at, open_ended=0,
                             owning_agent=agent, created_by=agent,
-                            completion_rule="manual", meta=meta)
+                            completion_rule="manual", meta=meta,
+                            notify_policy=_np, notify_lead_min=_nl)
         except ValueError as e:
             _err(str(e))                               # M-4 loud, no traceback
         if eid is None:
@@ -3828,14 +3965,21 @@ def _task_line(row):
 
 
 def cli_task_add(argv):
-    # task-add <title> [due_date] [note]  (dec-001: event_add kind='task')
+    # task-add <title> [due_date] [note] [--notify <policy>]
+    # (dec-001: event_add kind='task'; --notify = DGN-273 per-event override)
+    argv, notify_raw = _pop_opt(argv, '--notify')   # DGN-273
     if not argv or not argv[0]:
-        _err("사용법: lifekit.sh task-add <title> [due_date] [note]")
+        _err("사용법: lifekit.sh task-add <title> [due_date] [note] "
+             "[--notify default|silent|start_only|<lead-min>]")
     title = argv[0]
     due = argv[1] if len(argv) > 1 and argv[1] else None
     note = argv[2] if len(argv) > 2 and argv[2] else None
     if due is not None and not _DATE_RE.match(due):
         _err(f"bad date format (want YYYY-MM-DD): {due}")
+    try:
+        np, nl = parse_notify_arg(notify_raw)
+    except ValueError as e:
+        _err(str(e))
     conn = event_conn()
     _task_add_ulid = None
     try:
@@ -3843,11 +3987,13 @@ def cli_task_add(argv):
             sa, ea = all_day_instants(due)
             eid = event_add(conn, "task", title, "all_day", start_at=sa,
                             end_at=ea, owning_agent=_facade_agent(),
-                            created_by=_facade_agent(), note=note)
+                            created_by=_facade_agent(), note=note,
+                            notify_policy=np, notify_lead_min=nl)
         else:
             eid = event_add(conn, "task", title, "untimed",
                             owning_agent=_facade_agent(),
-                            created_by=_facade_agent(), note=note)
+                            created_by=_facade_agent(), note=note,
+                            notify_policy=np, notify_lead_min=nl)
         _task_add_ulid = _ulid_for_event_id(conn, eid)
         print(_task_line(_task_fetch(conn, eid)))
     finally:
@@ -4026,16 +4172,69 @@ def cli_event_window(argv):
     kind = argv[2] if len(argv) > 2 and argv[2] else None
     conn = event_conn()
     try:
-        q = ("SELECT ulid, kind, title, start_at, end_at, status FROM event "
+        # DGN-273: notify columns appended as cols 7-8 (existing consumers
+        # read cols 1-6 by position and are unaffected).
+        q = ("SELECT ulid, kind, title, start_at, end_at, status, "
+             "notify_policy, notify_lead_min FROM event "
              "WHERE settled_at IS NULL AND schedule_kind='timed' "
              "AND start_at >= ? AND start_at < ? ")
         params = [argv[0], argv[1]]
         if kind:
             q += "AND kind=? "
             params.append(kind)
-        for u, k, t, sa, ea, st in conn.execute(
+        for u, k, t, sa, ea, st, np, nl in conn.execute(
                 q + "ORDER BY start_at;", params).fetchall():
-            print(f"{u}\t{k}\t{t}\t{sa}\t{ea or ''}\t{st}")
+            print(f"{u}\t{k}\t{t}\t{sa}\t{ea or ''}\t{st}"
+                  f"\t{np or ''}\t{'' if nl is None else nl}")
+    finally:
+        conn.close()
+
+
+def cli_event_notify(argv):
+    # event-notify <event id|ulid> <default|silent|start_only|<lead-min>|''>
+    # DGN-273 per-event notify override (any kind; '' resets to default).
+    _u = ("사용법: lifekit.sh event-notify <event id|ulid> "
+          "<default|silent|start_only|<lead-min>|''>")
+    if len(argv) < 2:
+        _err(_u)
+    token, raw = argv[0], argv[1]
+    try:
+        np, nl = parse_notify_arg(raw)
+    except ValueError as e:
+        _err(str(e))
+    conn = event_conn()
+    try:
+        if str(token).isdigit():
+            row = conn.execute(
+                "SELECT id, title FROM event WHERE id=?;",
+                (int(token),)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, title FROM event WHERE ulid=?;",
+                (token,)).fetchone()
+        if row is None:
+            _err(f"event 없음: {token}")
+        eid, title = row
+        for _attempt in range(_UPD_RETRY_MAX):
+            cur = conn.execute(
+                "SELECT version FROM event WHERE id=?;", (eid,)).fetchone()
+            if cur is None:
+                _err(f"event 없음: {token}")
+            try:
+                res = event_set_meta(conn, eid, cur[0],
+                                     {"notify_policy": np,
+                                      "notify_lead_min": nl})
+            except ValueError as e:
+                _err(str(e))
+            if res == MutationResult.APPLIED:
+                break
+            if res == MutationResult.NOT_FOUND:
+                _err(f"event 없음: {token}")
+            # CAS_FAIL -> re-read version and retry.
+        else:
+            _err("conflict, please retry")
+        print(f"{eid}\t{title}\t{np or 'default'}"
+              f"\t{'' if nl is None else nl}")
     finally:
         conn.close()
 
@@ -4301,6 +4500,7 @@ _DISPATCH = {
     'task-overdue': cli_task_overdue,
     'task-done-between': cli_task_done_between,
     'event-window': cli_event_window,
+    'event-notify': cli_event_notify,
     'project-list': cli_project_list,
     'project-add': cli_project_add,
     'project-upd': cli_project_upd,
