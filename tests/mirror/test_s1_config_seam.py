@@ -117,7 +117,8 @@ def test_zero_delta_no_config():
     _check("TASKLIST_TITLE == CAL_SUMMARY (H2 default)",
            A.SANDBOX_TASKLIST_TITLE == CANON_TASKLIST_TITLE,
            repr(A.SANDBOX_TASKLIST_TITLE))
-    _check("DISPLAY_TZ_NAME falls back to Asia/Seoul",
+    _check("DISPLAY_TZ_NAME == Asia/Seoul unconditionally (strict zero-delta,"
+           " no system-tz autodetect on the default path)",
            A.DISPLAY_TZ_NAME == CANON_TZ, repr(A.DISPLAY_TZ_NAME))
     _check("_load_conf() is empty on fresh checkout",
            A._load_conf() == {}, repr(A._load_conf()))

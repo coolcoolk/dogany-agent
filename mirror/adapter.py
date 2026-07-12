@@ -137,25 +137,15 @@ def _agent_slug():
     return conf.get("DOGANY_AGENT_NAME") or "agent"
 
 
-def _default_display_tz():
-    """MIRROR_TZ default. Spec H4: system tz if resolvable, else Asia/Seoul.
-    'Resolvable' = the platform name is a real ZoneInfo key. Fixed-offset
-    abbreviations (e.g. 'KST') are NOT ZoneInfo keys -> fall back, preserving
-    the prior canonical literal (zero-delta on the reference machine)."""
-    try:
-        tz = datetime.now().astimezone().tzinfo
-        name = getattr(tz, "key", None)
-        if name:
-            ZoneInfo(name)   # validate
-            return name
-    except Exception:
-        pass
-    return "Asia/Seoul"
-
-
 def _resolve_display_tz():
+    """Display timezone. Config-supplied MIRROR_TZ wins; when absent the
+    default is the prior canonical literal "Asia/Seoul" UNCONDITIONALLY on
+    every platform (strict S1 zero-delta). System-tz autodetect is a value-
+    add that belongs in S4 onboarding (the installer already knows the
+    instance TZ and wires MIRROR_TZ explicitly), and it is cross-platform
+    fragile (a fixed-offset tzinfo like 'KST' has no ZoneInfo key)."""
     conf = _load_conf()
-    return conf.get("MIRROR_TZ") or _default_display_tz()
+    return conf.get("MIRROR_TZ") or "Asia/Seoul"
 
 
 def _resolve_cal_summary():
