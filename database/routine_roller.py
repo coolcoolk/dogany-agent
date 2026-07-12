@@ -273,7 +273,12 @@ def materialize_def(conn, state_conn, defn, today=None, now=None,
                 start_at=sa, end_at=ea, owning_agent=OWNING_AGENT,
                 created_by=ROLLER_BY, completion_rule="manual",
                 area_id=defn["area_id"], display_tz=defn["display_tz"],
-                recurrence_id=rid, rec_date=d, is_routine=1)
+                recurrence_id=rid, rec_date=d, is_routine=1,
+                # DGN-273: stamp the def's notify policy onto the instance
+                # (remind poller reads per-row; NULL = legacy default).
+                # .get: tolerate a pre-007 def dict (columns absent -> NULL).
+                notify_policy=defn.get("notify_policy"),
+                notify_lead_min=defn.get("notify_lead_min"))
         except sqlite3.IntegrityError as e:
             # n3: inline-vs-nightly race -- the later INSERT hits
             # idx_event_rec_live. Benign: skip this (rid, d), keep looping.

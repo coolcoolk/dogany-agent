@@ -20,8 +20,8 @@ if _DB_DIR not in sys.path:
 
 import lifekit as ec  # noqa: E402  (adapter reaches ec.* through this alias)
 
-ALLOWED_USER_VERSIONS = (6,)  # 006 rollout window (DGN-240 T7); pin to
-                                # (6,) after cutover settles (S9-5)
+ALLOWED_USER_VERSIONS = (6, 7)  # 007 rollout window (DGN-273); pin to
+                                # (7,) after cutover settles
 
 
 def get_conn(db_path=None):
