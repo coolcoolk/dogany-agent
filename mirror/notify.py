@@ -10,7 +10,13 @@ Code itself is English/ASCII.
 
 from datetime import datetime, timezone
 
-# Final user-facing templates (Korean, concise, persona-neutral).
+import mirror_i18n
+
+# Final user-facing templates. The ko literals below are the FALLBACK (and the
+# byte-identical zero-delta default when no locale file carries the key). At
+# send time each kind is resolved through mirror_i18n by AGENT_LANG under the
+# i18n key 'mirror.<kind>' (config/i18n/<lang>.json); the ko value here is used
+# verbatim when the key/file is absent (DGN-268 S4).
 TEMPLATES = {
     "outbox_exhausted": (
         u"동기화 보류: '{title}' 항목이 "
@@ -68,7 +74,9 @@ def notify(state_conn, kind, event_ulid=None, dedup=True, **kwargs):
     Returns True if queued, False if deduped."""
     if kind not in TEMPLATES:
         raise ValueError("unknown notify kind: %r" % kind)
-    message = TEMPLATES[kind].format(**kwargs)
+    # i18n resolve: locale bundle by AGENT_LANG, else the ko literal fallback
+    # (zero-delta when no locale file carries 'mirror.<kind>').
+    message = mirror_i18n.t("mirror.%s" % kind, TEMPLATES[kind], **kwargs)
     if dedup:
         row = state_conn.execute(
             "SELECT 1 FROM notify_outbox WHERE kind=? AND delivered=0 AND "

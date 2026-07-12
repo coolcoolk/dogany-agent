@@ -5,9 +5,10 @@ description: Send email on the user's behalf via their connected mail account. T
 
 # dogany-mailer -- send email
 
-Send mail via SMTP using the service.mailer facade. Owner mail account creds live
-in the gitignored instance config (`.telegram_bot/.env`). NEVER hardcode any
-address or password. External action -> confirm before send (RULES).
+Send mail via user's connected Google account (gws gmail) using the
+service.mailer facade. Transport is gws -- no SMTP, no app password. One
+OAuth login covers calendar + tasks + email (same Google onboarding). NEVER
+hardcode any address. External action -> confirm before send (RULES).
 
 ## when to use
 - user says: send X by mail / email this / "메일로 보내줘" / "email me the summary"
@@ -39,9 +40,8 @@ If `service` is not importable by cwd, add the repo root that holds `service/` t
 
 ## not connected (graceful)
 - `res["connected"] is False` (or `is_configured()` False) -> DO NOT retry, DO NOT
-  error. Tell user: email isn't connected yet; connect it by setting
-  EMAIL_ADDRESS + EMAIL_APP_PASSWORD in the instance config (onboarding / connect
-  step). Point to onboarding.
+  error. Tell user: email isn't connected yet; ask the agent to "connect Google"
+  (same login as calendar sync). Point to the Google onboarding flow.
 
 ## auto-CC
 - service always CCs the owner (EMAIL_CC from config) unless the owner is already
@@ -49,6 +49,6 @@ If `service` is not importable by cwd, add the repo root that holds `service/` t
 
 ## bounds
 - external action: always confirm before send (step 2). no silent send.
-- never print / log the app password. never hardcode an address.
+- never hardcode an address.
 - attachments: pass `attachments=[<abs path>]` only for files the user asked to
   attach.

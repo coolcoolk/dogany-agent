@@ -173,6 +173,8 @@ fi
 #   config/ (i18n only)     locales refreshed; agent.conf/lifekit.conf are
 #                           per-instance STATE (write-if-absent, never reset)
 #   service/                service SDK facade (lifekit + mailer)
+#   mirror/                 GCal/GTasks mirror engine code + schema; NEVER *.db
+#                           (mirror_state.db is per-instance sync bookkeeping)
 #   database/               schema.sql + lifekit.py/.sh/README; NEVER *.db
 #   .claude/settings.json   harness config (instance model choice preserved)
 #   worklog/_TEMPLATE.md    ticket template only; never existing tickets
@@ -539,6 +541,23 @@ if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
     "$REPO_ROOT/service/" "$INSTANCE/service/"
   UPDATED+=("service/")
+fi
+
+# 3e-mirror) mirror/ engine (DGN-268 S3), hoisted at repo root (single home;
+#     not in the template). Refresh CODE + schema ONLY. The instance's
+#     mirror_state.db holds live sync bookkeeping (surface ids / etags /
+#     cursors) and MUST survive a refresh -- COMMON_EXCLUDES already drops
+#     *.db, and we add the WAL sidecars (*.db-wal / *.db-shm) belt-and-braces
+#     so a mid-poll refresh never truncates in-flight state. Always-ship: the
+#     cron flag-gate (MIRROR_MODULE) already silences opted-out users, so an
+#     unconditional code refresh is correct and matches how service/ ships.
+if [ -d "$REPO_ROOT/mirror" ]; then
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+    --exclude '*.db-wal' \
+    --exclude '*.db-shm' \
+    --exclude '*.db.bak*' \
+    "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
+  UPDATED+=("mirror/ (code+schema; *.db preserved)")
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).
@@ -1095,14 +1114,19 @@ if [ "$DRY_RUN" = "0" ]; then
       "$INSTANCE/config" "$INSTANCE/service" "$INSTANCE/database" \
       "$INSTANCE/worklog/_TEMPLATE.md" \
       \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
+         -o -name '*.service' -o -name '*.timer' \
          -o -name '*.md' -o -name '*.conf' -o -name '*.txt' -o -name '*.example' \) \
       -type f \
       -not -path '*/venv/*' -not -path '*/__pycache__/*' -not -name '*.bak.*' \
       -print0 2>/dev/null)
 
-  # Rename any freshly-copied generic plists to carry the agent name (mint step 3).
+  # Rename any freshly-copied generic units to carry the agent name (mint step 3).
+  # Covers macOS plists and the Linux mirror systemd units (DGN-268 S3
+  # .service/.timer) -- without .service/.timer here an updated Linux instance
+  # would keep generic telegram-agent units with literal __PROJECT_ROOT__ etc.
   if [ "$IDENTITY_OK" = "1" ]; then
-    for p in "$INSTANCE"/bridge/*.plist "$INSTANCE"/routines/*.plist; do
+    for p in "$INSTANCE"/bridge/*.plist "$INSTANCE"/routines/*.plist \
+             "$INSTANCE"/routines/*.service "$INSTANCE"/routines/*.timer; do
       [ -e "$p" ] || continue
       np="${p//telegram-agent/$AGENT_NAME}"
       [ "$np" = "$p" ] && continue
@@ -1138,6 +1162,7 @@ if [ "$DRY_RUN" = "0" ]; then
   # Sanity: warn on any surviving placeholders in active code.
   LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME)__' \
             --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
+            --include='*.service' --include='*.timer' \
             "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
             "$INSTANCE/config" "$INSTANCE/.claude" 2>/dev/null || true)"
   if [ -n "$LEFT" ]; then

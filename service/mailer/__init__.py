@@ -1,36 +1,35 @@
 """service.mailer -- stable SDK facade for sending email.
 
-Skills import THIS package (service.mailer), never smtplib directly. The module
-name is 'mailer' on purpose: naming it 'email' would shadow the Python stdlib
-'email' package that we rely on to build MIME messages.
+Skills import THIS package (service.mailer), never the transport directly. The
+module name is 'mailer' on purpose: naming it 'email' would shadow the Python
+stdlib 'email' package we rely on to build MIME messages.
+
+DGN-268 S4 -- transport is the Google Workspace CLI `gws gmail users messages
+send` (per-user OAuth, one Google login covering calendar + tasks + gmail.send).
+The SMTP + app-password path is removed: email now connects through the SAME
+Google auth the agent's mirror onboarding sets up. No shared secret, no
+EMAIL_APP_PASSWORD.
 
 Config is read from the INSTANCE .env (gitignored), NOT hardcoded. Keys:
-  EMAIL_ADDRESS       sender / SMTP login user
-  EMAIL_APP_PASSWORD  app password (Gmail app-password, never logged)
-  EMAIL_CC            owner address auto-CC'd on every send
-  SMTP_HOST           optional, default smtp.gmail.com
-  SMTP_PORT           optional, default 587 (STARTTLS)
+  EMAIL_ADDRESS   sender identity (From:); optional -- gws sends as the authed
+                  account, so this is only a display/From hint.
+  EMAIL_CC        owner address auto-CC'd on every send (RULES: CC the user).
 
-The .env is loaded from PROJECT_ROOT/.telegram_bot/.env (matches bridge/config.py
-BOT_DATA_DIR), with a fallback to the process environment. No credentials live in
-this repo -- they fill into the gitignored instance config at connect-time.
-
-Graceful degradation: if the sender address or app password is missing, send()
-returns a clear "email not connected" result instead of raising, so the agent can
-tell the user to connect email rather than crashing.
+"Connected" now means: the gws CLI is installed AND authed with the gmail.send
+scope. send() checks this and returns a clear "not connected" result (never
+raises) so the agent can point the user at Google onboarding instead of
+crashing.
 """
 
+import base64
+import json
 import os
-import smtplib
+import subprocess
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
 
 __all__ = ["send", "is_configured", "load_config"]
-
-# Default SMTP endpoint (Gmail STARTTLS). Overridable via config.
-_DEFAULT_SMTP_HOST = "smtp.gmail.com"
-_DEFAULT_SMTP_PORT = 587
 
 
 def _project_env_path():
@@ -46,12 +45,7 @@ def _project_env_path():
 
 
 def _read_env_file(path):
-    """Minimal .env parser: KEY=VALUE lines, no external dependency.
-
-    We do not use python-dotenv here to keep the service import-light and usable
-    from any cwd. Comments (#) and blank lines are skipped. Existing process env
-    wins over the file (so an explicit export can override).
-    """
+    """Minimal .env parser: KEY=VALUE lines, no external dependency."""
     values = {}
     try:
         text = path.read_text(encoding="utf-8")
@@ -72,26 +66,45 @@ def _read_env_file(path):
 def load_config():
     """Return the mailer config dict from instance .env + process env.
 
-    Process env takes precedence over the .env file. Missing keys are simply
-    absent from the returned dict (callers check is_configured / send handles it).
+    Process env takes precedence over the .env file. Only the transport-neutral
+    keys remain (EMAIL_ADDRESS / EMAIL_CC); the SMTP + app-password keys are
+    gone with the gws re-wire.
     """
     cfg = {}
     env_path = _project_env_path()
     if env_path is not None and env_path.exists():
         cfg.update(_read_env_file(env_path))
-    # Process env overrides file values.
-    for key in ("EMAIL_ADDRESS", "EMAIL_APP_PASSWORD", "EMAIL_CC",
-                "SMTP_HOST", "SMTP_PORT"):
+    for key in ("EMAIL_ADDRESS", "EMAIL_CC"):
         if os.environ.get(key):
             cfg[key] = os.environ[key]
     return cfg
 
 
+def _gws_authed_with_send():
+    """True when gws is installed AND authed with the gmail.send scope.
+
+    A missing CLI, an unauthed account, or a missing scope all mean "not
+    connected" -- the agent should route the user to Google onboarding.
+    """
+    try:
+        proc = subprocess.run(["gws", "auth", "status"],
+                              capture_output=True, text=True)
+    except (OSError, FileNotFoundError):
+        return False
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    try:
+        scopes = json.loads(proc.stdout).get("scopes", [])
+    except (ValueError, TypeError):
+        return False
+    return any("/auth/gmail.send" in s for s in scopes)
+
+
 def is_configured(cfg=None):
-    """True when both sender address and app password are present."""
-    if cfg is None:
-        cfg = load_config()
-    return bool(cfg.get("EMAIL_ADDRESS")) and bool(cfg.get("EMAIL_APP_PASSWORD"))
+    """True when email can actually be sent: gws installed + authed with the
+    gmail.send scope. EMAIL_ADDRESS is no longer required (gws sends as the
+    authed account)."""
+    return _gws_authed_with_send()
 
 
 def _as_list(value):
@@ -110,60 +123,20 @@ def _not_connected_result():
         "connected": False,
         "error": "email not connected",
         "message": (
-            "Email is not connected. Set EMAIL_ADDRESS and EMAIL_APP_PASSWORD "
-            "in the instance config (.telegram_bot/.env) to enable sending."
+            "Email is not connected. Connect your Google account during agent "
+            "setup (the same login that enables calendar sync) -- ask me to "
+            "connect Google, then I can send mail."
         ),
     }
 
 
-def send(to, subject, body, cc=None, attachments=None):
-    """Send an email via SMTP STARTTLS. Returns a result dict (never raises on
-    a missing-config or normal SMTP error -- errors come back in the dict).
-
-    Args:
-        to:          recipient address, or list/comma-string of addresses.
-        subject:     subject line.
-        body:        plain-text body.
-        cc:          optional extra CC address(es). The owner's EMAIL_CC is
-                     ALWAYS added (RULES: CC user's mail) unless already present.
-        attachments: optional list of file paths to attach.
-
-    Returns dict with keys: ok(bool), connected(bool), and on success
-        to(list), cc(list), subject(str); on failure error(str)/message(str).
-    The app password is NEVER placed in the returned dict or any log line.
-    """
-    cfg = load_config()
-
-    if not is_configured(cfg):
-        return _not_connected_result()
-
-    sender = cfg["EMAIL_ADDRESS"]
-    password = cfg["EMAIL_APP_PASSWORD"]
-    host = cfg.get("SMTP_HOST") or _DEFAULT_SMTP_HOST
-    try:
-        port = int(cfg.get("SMTP_PORT") or _DEFAULT_SMTP_PORT)
-    except (TypeError, ValueError):
-        port = _DEFAULT_SMTP_PORT
-
-    to_list = _as_list(to)
-    if not to_list:
-        return {
-            "ok": False,
-            "connected": True,
-            "error": "no recipient",
-            "message": "No recipient address provided.",
-        }
-
-    cc_list = _as_list(cc)
-    # Auto-CC the owner unless already present (case-insensitive) in to or cc.
-    owner_cc = (cfg.get("EMAIL_CC") or "").strip()
-    if owner_cc:
-        seen = {a.lower() for a in to_list + cc_list}
-        if owner_cc.lower() not in seen:
-            cc_list.append(owner_cc)
-
+def _build_raw(sender, to_list, cc_list, subject, body, attachments):
+    """Build an RFC822 message and return its base64url-encoded 'raw' form for
+    the Gmail API (gws gmail users messages send). Returns (raw, error_dict):
+    error_dict is None on success, else a ready-to-return failure result."""
     msg = EmailMessage()
-    msg["From"] = formataddr((None, sender))
+    if sender:
+        msg["From"] = formataddr((None, sender))
     msg["To"] = ", ".join(to_list)
     if cc_list:
         msg["Cc"] = ", ".join(cc_list)
@@ -175,42 +148,87 @@ def send(to, subject, body, cc=None, attachments=None):
             p = Path(path)
             data = p.read_bytes()
             msg.add_attachment(
-                data,
-                maintype="application",
-                subtype="octet-stream",
-                filename=p.name,
-            )
+                data, maintype="application", subtype="octet-stream",
+                filename=p.name)
         except OSError as exc:
-            return {
-                "ok": False,
-                "connected": True,
-                "error": "attachment error",
-                "message": "Cannot read attachment %s: %s" % (path, exc),
-            }
+            return None, {
+                "ok": False, "connected": True, "error": "attachment error",
+                "message": "Cannot read attachment %s: %s" % (path, exc)}
 
-    # All recipients (To + Cc) get the message; smtplib needs the full envelope.
-    all_rcpts = to_list + cc_list
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    return raw, None
+
+
+def send(to, subject, body, cc=None, attachments=None):
+    """Send an email via `gws gmail users messages send`. Returns a result dict
+    (never raises on a missing-config or normal send error -- errors come back
+    in the dict).
+
+    Args:
+        to:          recipient address, or list/comma-string of addresses.
+        subject:     subject line.
+        body:        plain-text body.
+        cc:          optional extra CC address(es). The owner's EMAIL_CC is
+                     ALWAYS added (RULES: CC user's mail) unless already present.
+        attachments: optional list of file paths to attach.
+
+    Returns dict with keys: ok(bool), connected(bool), and on success
+        to(list), cc(list), subject(str); on failure error(str)/message(str).
+    """
+    cfg = load_config()
+
+    if not is_configured(cfg):
+        return _not_connected_result()
+
+    sender = cfg.get("EMAIL_ADDRESS") or ""
+
+    to_list = _as_list(to)
+    if not to_list:
+        return {
+            "ok": False, "connected": True, "error": "no recipient",
+            "message": "No recipient address provided."}
+
+    cc_list = _as_list(cc)
+    # Auto-CC the owner unless already present (case-insensitive) in to or cc.
+    owner_cc = (cfg.get("EMAIL_CC") or "").strip()
+    if owner_cc:
+        seen = {a.lower() for a in to_list + cc_list}
+        if owner_cc.lower() not in seen:
+            cc_list.append(owner_cc)
+
+    raw, err = _build_raw(sender, to_list, cc_list, subject, body, attachments)
+    if err is not None:
+        return err
 
     try:
-        with smtplib.SMTP(host, port) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(sender, password)
-            smtp.send_message(msg, from_addr=sender, to_addrs=all_rcpts)
-    except (smtplib.SMTPException, OSError) as exc:
-        # Never include the password. exc from smtplib carries only protocol info.
+        proc = subprocess.run(
+            ["gws", "gmail", "users", "messages", "send",
+             "--params", json.dumps({"userId": "me"}),
+             "--json", json.dumps({"raw": raw})],
+            capture_output=True, text=True)
+    except (OSError, FileNotFoundError) as exc:
         return {
-            "ok": False,
-            "connected": True,
-            "error": "send failed",
-            "message": "SMTP send failed: %s" % (exc,),
-        }
+            "ok": False, "connected": True, "error": "send failed",
+            "message": "gws send failed: %s" % (exc,)}
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()[:200]
+        return {
+            "ok": False, "connected": True, "error": "send failed",
+            "message": "gws send failed: %s" % (detail or "unknown error")}
+    # A successful gws call returns the sent message JSON; a body with an
+    # "error" object is an API-level failure even on exit 0.
+    try:
+        resp = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except ValueError:
+        resp = {}
+    if isinstance(resp.get("error"), dict):
+        return {
+            "ok": False, "connected": True, "error": "send failed",
+            "message": "gws send failed: %s"
+                       % resp["error"].get("message", "API error")}
 
     return {
-        "ok": True,
-        "connected": True,
-        "to": to_list,
-        "cc": cc_list,
-        "subject": subject or "",
+        "ok": True, "connected": True,
+        "to": to_list, "cc": cc_list, "subject": subject or "",
     }

@@ -62,17 +62,131 @@ from zoneinfo import ZoneInfo
 import sdk_bridge
 import notify as notify_mod
 import http_direct
-
-DISPLAY_TZ_NAME = "Asia/Seoul"
-# PRODUCTION surface set (per-instance: set to the agent's calendar/tasklist
-# names and a unique marker so the adapter can identify its own calendar).
-SANDBOX_CAL_SUMMARY = "<agent-calendar-name>"     # replace per instance
-SANDBOX_TASKLIST_TITLE = "<agent-tasklist-name>"  # replace per instance
-CAL_DESCRIPTION_MARKER = "DGN-180-<agent-label>-mirror"  # replace per instance
+import mirror_i18n
 
 # Self-locating paths (module home = mirror/): SoT DB = ../database/
 # lifekit.db, mirror state lives next to the module. No absolute home paths.
 _MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+# ---------------------------------------------------------------------------
+# DGN-268 S1: config seam. Per-instance surface identity (calendar/tasklist
+# names, marker, display tz) is parameterized out of source literals into the
+# instance config so the mirror is a product, not a single-instance fixture.
+#
+# Sources (both optional; a fresh dev checkout has NEITHER -> {} / defaults):
+#   ../config/lifekit.conf   -- per-instance lifekit activation + mirror keys
+#   ../.instance.conf        -- non-secret instance manifest (agent label etc.)
+# Format = shell-style KEY=value, '#' comments, blank lines ignored.
+#
+# ZERO-DELTA GUARANTEE: every default below equals the prior canonical literal
+# (or a system-derived value that falls back to it), so behavior is byte-
+# identical when no config file is present. S1 changes NO sync logic.
+# ---------------------------------------------------------------------------
+
+_CONF_CACHE = None
+
+
+def _parse_conf_file(path, into):
+    """Merge KEY=value pairs from a shell-style conf file into `into`.
+    Existing keys are NOT overwritten (earlier source wins). Missing file =
+    no-op. Tolerant: malformed lines are skipped, never raised."""
+    try:
+        with open(path, "r") as fh:
+            lines = fh.readlines()
+    except (OSError, IOError):
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in into:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        into[key] = val
+
+
+def _load_conf():
+    """Parse the instance config once, cached. lifekit.conf is the primary
+    source; .instance.conf provides fallback identity keys (agent label).
+    Returns {} when neither file exists (fresh checkout)."""
+    global _CONF_CACHE
+    if _CONF_CACHE is None:
+        conf = {}
+        _parse_conf_file(
+            os.path.join(_MODULE_DIR, "..", "config", "lifekit.conf"), conf)
+        _parse_conf_file(
+            os.path.join(_MODULE_DIR, "..", ".instance.conf"), conf)
+        _CONF_CACHE = conf
+    return _CONF_CACHE
+
+
+def _reset_conf_cache():
+    """Test seam: drop the cached parse so a new config file is re-read."""
+    global _CONF_CACHE
+    _CONF_CACHE = None
+
+
+def _agent_slug():
+    """Instance agent slug (lowercase name) for marker/label derivation.
+    Default 'agent' keeps derived strings well-formed on a bare checkout."""
+    conf = _load_conf()
+    return conf.get("DOGANY_AGENT_NAME") or "agent"
+
+
+def _resolve_display_tz():
+    """Display timezone. Config-supplied MIRROR_TZ wins; when absent the
+    default is the prior canonical literal "Asia/Seoul" UNCONDITIONALLY on
+    every platform (strict S1 zero-delta). System-tz autodetect is a value-
+    add that belongs in S4 onboarding (the installer already knows the
+    instance TZ and wires MIRROR_TZ explicitly), and it is cross-platform
+    fragile (a fixed-offset tzinfo like 'KST' has no ZoneInfo key)."""
+    conf = _load_conf()
+    return conf.get("MIRROR_TZ") or "Asia/Seoul"
+
+
+def _resolve_cal_summary():
+    """Calendar name. Default = agent label (.instance.conf) when present,
+    else the prior canonical placeholder literal (zero-delta)."""
+    conf = _load_conf()
+    return (conf.get("MIRROR_CAL_NAME")
+            or conf.get("DOGANY_AGENT_LABEL")
+            or "<agent-calendar-name>")
+
+
+def _resolve_tasklist_title():
+    """Tasklist name. Default = the resolved calendar name (spec H2)."""
+    conf = _load_conf()
+    return conf.get("MIRROR_TASKLIST_NAME") or _resolve_cal_summary()
+
+
+def _derived_cal_marker():
+    """Per-instance calendar description marker: dogany-mirror-<agent> (spec
+    H3). Survives a calendar rename because bootstrap FREEZES the value that
+    first created the calendar into the mirror_state KV (key 'cal_marker')
+    and reads KV-first thereafter."""
+    return "dogany-mirror-%s" % _agent_slug()
+
+
+# Module-level surface identity (config-resolved at import; defaults preserve
+# the prior canonical literals when no config file is present).
+DISPLAY_TZ_NAME = _resolve_display_tz()
+SANDBOX_CAL_SUMMARY = _resolve_cal_summary()
+SANDBOX_TASKLIST_TITLE = _resolve_tasklist_title()
+CAL_DESCRIPTION_MARKER = _derived_cal_marker()
+
+# H6 (DGN-268 S1): calendar description text. Product string now (was the
+# sandbox "Safe to delete." literal). DGN-268 S4: resolved through mirror_i18n
+# by AGENT_LANG (i18n key 'mirror.cal_description'); the English literal here is
+# the fallback used verbatim when the key/locale file is absent (zero-delta).
+CAL_DESCRIPTION_TEXT = mirror_i18n.t(
+    "mirror.cal_description",
+    "Managed by the agent -- two-way synced with your assistant. "
+    "Safe to edit; do not delete.")
 DB_PATH = os.path.normpath(os.path.join(_MODULE_DIR, "..", "database", "lifekit.db"))
 STATE_DB_PATH = os.path.join(_MODULE_DIR, "mirror_state.db")
 
@@ -541,9 +655,56 @@ def _extract_ulid(item: dict):
 # Bootstrap (m12: description-marker re-discovery for the calendar)
 # ---------------------------------------------------------------------------
 
+def _frozen_cal_marker(conn):
+    """DGN-268 S1 (H3): the calendar description marker, KV-first. The first
+    bootstrap freezes the derived marker into mirror_state (key 'cal_marker');
+    every later run reads that frozen value. This makes a later rename of
+    MIRROR_CAL_NAME / the agent slug safe -- the calendar is re-discovered by
+    the marker that CREATED it, never orphaned. Legacy state DBs with no
+    frozen marker fall back to the derived value (and freeze it)."""
+    marker = get_state(conn, "cal_marker")
+    if not marker:
+        marker = CAL_DESCRIPTION_MARKER
+        set_state(conn, "cal_marker", marker)
+    return marker
+
+
+class BootstrapAmbiguous(RuntimeError):
+    """DGN-268 S2: bootstrap found a same-name surface that does NOT carry our
+    marker -- a foreign/ambiguous calendar or tasklist that must NOT be
+    silently adopted or written into. Carries the candidate(s) so the S4
+    onboarding layer can ask the user 'adopt this existing one, or create a
+    new one under a different name?'. Setting MIRROR_ADOPT_UNMARKED=true (the
+    user answered 'adopt') suppresses the signal and adopts + stamps."""
+    def __init__(self, candidates):
+        self.candidates = candidates   # list of dicts (surface/candidate_id/..)
+        summary = ", ".join(
+            "%s '%s' (%s)" % (c["surface"], c["summary"], c["candidate_id"])
+            for c in candidates)
+        super().__init__("ambiguous existing surface(s): %s" % summary)
+
+
+def _adopt_unmarked_enabled():
+    """Config gate MIRROR_ADOPT_UNMARKED (default false). Onboarding sets it
+    true after the user explicitly chooses to adopt an existing same-name
+    surface. Only 'true'/'1'/'yes' (case-insensitive) enable adoption."""
+    val = (_load_conf().get("MIRROR_ADOPT_UNMARKED") or "").strip().lower()
+    return val in ("true", "1", "yes", "on")
+
+
 def bootstrap(conn):
+    """Resolve (or create) the agent's calendar + tasklist, return (cal_id,
+    tl_id). Adopt-or-create policy (DGN-268 S2): a marker match is ours ->
+    adopt; a bare summary/title match WITHOUT our marker is ambiguous ->
+    NEVER auto-adopt or write into it unless MIRROR_ADOPT_UNMARKED=true (then
+    adopt + stamp the marker so the next run is unambiguous); no match ->
+    create + stamp. Ambiguous surfaces with the gate off collect into a
+    single BootstrapAmbiguous signal (no state mutation, no inserts) for the
+    onboarding layer to resolve."""
     cal_id = get_state(conn, "agent_calendar_id")
     tl_id = get_state(conn, "agent_tasklist_id")
+    cal_marker = _frozen_cal_marker(conn)
+    adopt_unmarked = _adopt_unmarked_enabled()
 
     if cal_id:
         try:
@@ -558,46 +719,111 @@ def bootstrap(conn):
         except Exception:
             tl_id = None
 
+    # --- Phase 1: resolve without mutating state. Decide per surface whether
+    # it is already known, adoptable (marker or gated summary), ambiguous, or
+    # to-be-created. Nothing is inserted/adopted until all ambiguity is clear.
+    ambiguous = []
+    cal_action = tl_action = None   # ("adopt", id) | ("create", None) | None
+
     if not cal_id:
-        # m12: primary key = description marker (survives rename);
-        # summary match is the fallback only.
+        # m12: primary re-discovery key = description marker (survives rename);
+        # a bare summary match is NOT trusted (S2: could be a foreign cal).
         cal_list = gws("calendar", "calendarList", "list")
         marker_hit = summary_hit = None
         for item in cal_list.get("items", []):
-            if CAL_DESCRIPTION_MARKER in (item.get("description") or ""):
+            if cal_marker in (item.get("description") or ""):
                 marker_hit = item["id"]
                 break
             if item.get("summary") == SANDBOX_CAL_SUMMARY:
                 summary_hit = item["id"]
-        cal_id = marker_hit or summary_hit
-        if cal_id:
-            print("[bootstrap] Re-discovered calendar: %s" % cal_id)
-
-    if not cal_id:
-        r = gws("calendar", "calendars", "insert", body={
-            "summary": SANDBOX_CAL_SUMMARY,
-            "description": "%s -- DGN-180 sandbox adapter test. Safe to delete."
-                           % CAL_DESCRIPTION_MARKER,
-            "timeZone": DISPLAY_TZ_NAME})
-        cal_id = r["id"]
-        print("[bootstrap] Created calendar: %s" % cal_id)
-    set_state(conn, "agent_calendar_id", cal_id)
+        if marker_hit:
+            cal_action = ("adopt", marker_hit)
+        elif summary_hit and adopt_unmarked:
+            cal_action = ("adopt_unmarked", summary_hit)
+        elif summary_hit:
+            ambiguous.append({"surface": "calendar",
+                              "candidate_id": summary_hit,
+                              "summary": SANDBOX_CAL_SUMMARY})
+        else:
+            cal_action = ("create", None)
 
     if not tl_id:
-        # Tasklist has no description field -> title match is the only
-        # re-discovery key (limitation noted in report).
+        # Tasklist has no description field -> title match is the ONLY
+        # re-discovery key. That makes a bare title collision even more
+        # likely to be foreign, so the same S2 guard applies.
         tl_list = gws("tasks", "tasklists", "list")
+        title_hit = None
         for item in tl_list.get("items", []):
             if item.get("title") == SANDBOX_TASKLIST_TITLE:
-                tl_id = item["id"]
-                print("[bootstrap] Re-discovered tasklist: %s" % tl_id)
+                title_hit = item["id"]
                 break
-    if not tl_id:
-        r = gws("tasks", "tasklists", "insert", body={"title": SANDBOX_TASKLIST_TITLE})
-        tl_id = r["id"]
-        print("[bootstrap] Created tasklist: %s" % tl_id)
+        if title_hit and adopt_unmarked:
+            tl_action = ("adopt_unmarked", title_hit)
+        elif title_hit:
+            ambiguous.append({"surface": "tasklist",
+                              "candidate_id": title_hit,
+                              "summary": SANDBOX_TASKLIST_TITLE})
+        elif not title_hit:
+            tl_action = ("create", None)
+
+    if ambiguous:
+        # Guard off + a foreign same-name surface present: signal, do NOT
+        # create or adopt anything this run (no partial bootstrap).
+        raise BootstrapAmbiguous(ambiguous)
+
+    # --- Phase 2: commit the resolved actions (all unambiguous now). ---
+    if cal_action is not None:
+        verb, hit = cal_action
+        if verb == "adopt":
+            cal_id = hit
+            print("[bootstrap] Re-discovered calendar (marker): %s" % cal_id)
+        elif verb == "adopt_unmarked":
+            cal_id = hit
+            # Stamp our marker into the description so the next run is
+            # unambiguous (marker match, no longer summary-only).
+            _stamp_calendar_marker(cal_id, cal_marker)
+            print("[bootstrap] Adopted unmarked calendar + stamped: %s" % cal_id)
+        else:  # create
+            r = gws("calendar", "calendars", "insert", body={
+                "summary": SANDBOX_CAL_SUMMARY,
+                "description": "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT),
+                "timeZone": DISPLAY_TZ_NAME})
+            cal_id = r["id"]
+            print("[bootstrap] Created calendar: %s" % cal_id)
+    set_state(conn, "agent_calendar_id", cal_id)
+
+    if tl_action is not None:
+        verb, hit = tl_action
+        if verb == "adopt_unmarked":
+            tl_id = hit
+            print("[bootstrap] Adopted unmarked tasklist: %s" % tl_id)
+        else:  # create
+            r = gws("tasks", "tasklists", "insert",
+                    body={"title": SANDBOX_TASKLIST_TITLE})
+            tl_id = r["id"]
+            print("[bootstrap] Created tasklist: %s" % tl_id)
     set_state(conn, "agent_tasklist_id", tl_id)
     return cal_id, tl_id
+
+
+def _stamp_calendar_marker(cal_id, cal_marker):
+    """Adopt-unmarked: write our marker into an existing calendar's
+    description so future bootstraps re-discover it by marker (unambiguous),
+    not by the weaker summary match. Preserves any existing description text
+    the user had, appending our marker line if absent."""
+    try:
+        cur = gws("calendar", "calendars", "get",
+                  "--params", json.dumps({"calendarId": cal_id}))
+    except Exception:
+        cur = {}
+    existing = (cur.get("description") or "").strip()
+    if cal_marker in existing:
+        return
+    marker_line = "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT)
+    new_desc = (existing + "\n" + marker_line) if existing else marker_line
+    gws("calendar", "calendars", "patch",
+        "--params", json.dumps({"calendarId": cal_id}),
+        body={"description": new_desc})
 
 
 # ---------------------------------------------------------------------------
@@ -1738,14 +1964,64 @@ def sweep_step(state_conn, src_conn):
     return changed
 
 
+def _run_cycle_step(out, key, state_conn, fn):
+    """DGN-268 S5: run one poll-cycle step under its own exception guard so a
+    failure in one step does NOT abort the others. On success the step's normal
+    result lands in out[key]; on failure out[key] becomes {"error": "..."} (the
+    stdout summary still prints; the failure is visible + counted) and the error
+    is logged via mirror_log. Ordering + idempotency are preserved because each
+    step is already independent and self-locking (pulls + drain each acquire and
+    release the shared mirror lock in their own finally, so a raised step never
+    holds the lock hostage). NOTHING propagates -- a transient inbound 404 must
+    never crash the cron or block the outbound drain.
+
+    Error texture matches the rest of the module: GwsError carries http_code, so
+    we tag transient (RETRYABLE_HTTP or 404 not-found) vs persistent. Persistent
+    errors are logged at a distinct category for the weekly reconcile / operator
+    to notice; we do NOT invent a new per-cycle notify/alarm (a single transient
+    404 must stay silent -- the once/day on-but-unauth warning already owns the
+    auth-failure alarm)."""
+    try:
+        out[key] = fn()
+        return True
+    except GwsError as e:
+        transient = (e.http_code == 404 or e.http_code in RETRYABLE_HTTP)
+        category = ("cycle_step_transient" if transient
+                    else "cycle_step_persistent")
+        mirror_log(state_conn, category, None,
+                   "step=%s http=%s: %s" % (key, e.http_code, e))
+        out[key] = {"error": str(e), "http_code": e.http_code,
+                    "transient": transient}
+        return False
+    except Exception as e:  # non-GwsError: unexpected, treat as persistent
+        mirror_log(state_conn, "cycle_step_persistent", None,
+                   "step=%s: %s" % (key, e))
+        out[key] = {"error": str(e), "http_code": None, "transient": False}
+        return False
+
+
 def poll_cycle(state_conn, src_conn, cal_id, tl_id):
     """One full poller cycle (the cron target at cutover):
-    sweep -> inbound pulls -> outbox drain."""
+    sweep -> inbound pulls -> outbox drain.
+
+    DGN-268 S5: each step is isolated (see _run_cycle_step). The outbound DRAIN
+    always runs even if an inbound pull raised -- the outbound path must never
+    be held hostage to an inbound 404 (the 2026-07-12 09:21 live-instance
+    starvation: a transient pull_calendar 404 aborted the whole cycle before
+    drain could push).
+    Ordering (sweep -> pulls -> drain) and idempotency are unchanged; on the
+    all-success path the returned dict is byte-identical to the pre-S5 shape."""
     out = {}
-    out["sweep"] = sweep_step(state_conn, src_conn)
-    out["calendar"] = pull_calendar(cal_id, state_conn, src_conn)
-    out["tasks"] = pull_tasks(tl_id, state_conn, src_conn)
-    out["drain"] = outbox_drain(state_conn, src_conn, cal_id, tl_id)
+    _run_cycle_step(out, "sweep", state_conn,
+                    lambda: sweep_step(state_conn, src_conn))
+    _run_cycle_step(out, "calendar", state_conn,
+                    lambda: pull_calendar(cal_id, state_conn, src_conn))
+    _run_cycle_step(out, "tasks", state_conn,
+                    lambda: pull_tasks(tl_id, state_conn, src_conn))
+    # Drain runs unconditionally -- it is the outbound lane and must not be
+    # skipped just because an inbound pull failed above.
+    _run_cycle_step(out, "drain", state_conn,
+                    lambda: outbox_drain(state_conn, src_conn, cal_id, tl_id))
     return out
 
 
