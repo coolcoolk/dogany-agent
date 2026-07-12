@@ -666,10 +666,42 @@ def _frozen_cal_marker(conn):
     return marker
 
 
+class BootstrapAmbiguous(RuntimeError):
+    """DGN-268 S2: bootstrap found a same-name surface that does NOT carry our
+    marker -- a foreign/ambiguous calendar or tasklist that must NOT be
+    silently adopted or written into. Carries the candidate(s) so the S4
+    onboarding layer can ask the user 'adopt this existing one, or create a
+    new one under a different name?'. Setting MIRROR_ADOPT_UNMARKED=true (the
+    user answered 'adopt') suppresses the signal and adopts + stamps."""
+    def __init__(self, candidates):
+        self.candidates = candidates   # list of dicts (surface/candidate_id/..)
+        summary = ", ".join(
+            "%s '%s' (%s)" % (c["surface"], c["summary"], c["candidate_id"])
+            for c in candidates)
+        super().__init__("ambiguous existing surface(s): %s" % summary)
+
+
+def _adopt_unmarked_enabled():
+    """Config gate MIRROR_ADOPT_UNMARKED (default false). Onboarding sets it
+    true after the user explicitly chooses to adopt an existing same-name
+    surface. Only 'true'/'1'/'yes' (case-insensitive) enable adoption."""
+    val = (_load_conf().get("MIRROR_ADOPT_UNMARKED") or "").strip().lower()
+    return val in ("true", "1", "yes", "on")
+
+
 def bootstrap(conn):
+    """Resolve (or create) the agent's calendar + tasklist, return (cal_id,
+    tl_id). Adopt-or-create policy (DGN-268 S2): a marker match is ours ->
+    adopt; a bare summary/title match WITHOUT our marker is ambiguous ->
+    NEVER auto-adopt or write into it unless MIRROR_ADOPT_UNMARKED=true (then
+    adopt + stamp the marker so the next run is unambiguous); no match ->
+    create + stamp. Ambiguous surfaces with the gate off collect into a
+    single BootstrapAmbiguous signal (no state mutation, no inserts) for the
+    onboarding layer to resolve."""
     cal_id = get_state(conn, "agent_calendar_id")
     tl_id = get_state(conn, "agent_tasklist_id")
     cal_marker = _frozen_cal_marker(conn)
+    adopt_unmarked = _adopt_unmarked_enabled()
 
     if cal_id:
         try:
@@ -684,9 +716,15 @@ def bootstrap(conn):
         except Exception:
             tl_id = None
 
+    # --- Phase 1: resolve without mutating state. Decide per surface whether
+    # it is already known, adoptable (marker or gated summary), ambiguous, or
+    # to-be-created. Nothing is inserted/adopted until all ambiguity is clear.
+    ambiguous = []
+    cal_action = tl_action = None   # ("adopt", id) | ("create", None) | None
+
     if not cal_id:
-        # m12: primary key = description marker (survives rename);
-        # summary match is the fallback only.
+        # m12: primary re-discovery key = description marker (survives rename);
+        # a bare summary match is NOT trusted (S2: could be a foreign cal).
         cal_list = gws("calendar", "calendarList", "list")
         marker_hit = summary_hit = None
         for item in cal_list.get("items", []):
@@ -695,34 +733,94 @@ def bootstrap(conn):
                 break
             if item.get("summary") == SANDBOX_CAL_SUMMARY:
                 summary_hit = item["id"]
-        cal_id = marker_hit or summary_hit
-        if cal_id:
-            print("[bootstrap] Re-discovered calendar: %s" % cal_id)
-
-    if not cal_id:
-        r = gws("calendar", "calendars", "insert", body={
-            "summary": SANDBOX_CAL_SUMMARY,
-            "description": "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT),
-            "timeZone": DISPLAY_TZ_NAME})
-        cal_id = r["id"]
-        print("[bootstrap] Created calendar: %s" % cal_id)
-    set_state(conn, "agent_calendar_id", cal_id)
+        if marker_hit:
+            cal_action = ("adopt", marker_hit)
+        elif summary_hit and adopt_unmarked:
+            cal_action = ("adopt_unmarked", summary_hit)
+        elif summary_hit:
+            ambiguous.append({"surface": "calendar",
+                              "candidate_id": summary_hit,
+                              "summary": SANDBOX_CAL_SUMMARY})
+        else:
+            cal_action = ("create", None)
 
     if not tl_id:
-        # Tasklist has no description field -> title match is the only
-        # re-discovery key (limitation noted in report).
+        # Tasklist has no description field -> title match is the ONLY
+        # re-discovery key. That makes a bare title collision even more
+        # likely to be foreign, so the same S2 guard applies.
         tl_list = gws("tasks", "tasklists", "list")
+        title_hit = None
         for item in tl_list.get("items", []):
             if item.get("title") == SANDBOX_TASKLIST_TITLE:
-                tl_id = item["id"]
-                print("[bootstrap] Re-discovered tasklist: %s" % tl_id)
+                title_hit = item["id"]
                 break
-    if not tl_id:
-        r = gws("tasks", "tasklists", "insert", body={"title": SANDBOX_TASKLIST_TITLE})
-        tl_id = r["id"]
-        print("[bootstrap] Created tasklist: %s" % tl_id)
+        if title_hit and adopt_unmarked:
+            tl_action = ("adopt_unmarked", title_hit)
+        elif title_hit:
+            ambiguous.append({"surface": "tasklist",
+                              "candidate_id": title_hit,
+                              "summary": SANDBOX_TASKLIST_TITLE})
+        elif not title_hit:
+            tl_action = ("create", None)
+
+    if ambiguous:
+        # Guard off + a foreign same-name surface present: signal, do NOT
+        # create or adopt anything this run (no partial bootstrap).
+        raise BootstrapAmbiguous(ambiguous)
+
+    # --- Phase 2: commit the resolved actions (all unambiguous now). ---
+    if cal_action is not None:
+        verb, hit = cal_action
+        if verb == "adopt":
+            cal_id = hit
+            print("[bootstrap] Re-discovered calendar (marker): %s" % cal_id)
+        elif verb == "adopt_unmarked":
+            cal_id = hit
+            # Stamp our marker into the description so the next run is
+            # unambiguous (marker match, no longer summary-only).
+            _stamp_calendar_marker(cal_id, cal_marker)
+            print("[bootstrap] Adopted unmarked calendar + stamped: %s" % cal_id)
+        else:  # create
+            r = gws("calendar", "calendars", "insert", body={
+                "summary": SANDBOX_CAL_SUMMARY,
+                "description": "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT),
+                "timeZone": DISPLAY_TZ_NAME})
+            cal_id = r["id"]
+            print("[bootstrap] Created calendar: %s" % cal_id)
+    set_state(conn, "agent_calendar_id", cal_id)
+
+    if tl_action is not None:
+        verb, hit = tl_action
+        if verb == "adopt_unmarked":
+            tl_id = hit
+            print("[bootstrap] Adopted unmarked tasklist: %s" % tl_id)
+        else:  # create
+            r = gws("tasks", "tasklists", "insert",
+                    body={"title": SANDBOX_TASKLIST_TITLE})
+            tl_id = r["id"]
+            print("[bootstrap] Created tasklist: %s" % tl_id)
     set_state(conn, "agent_tasklist_id", tl_id)
     return cal_id, tl_id
+
+
+def _stamp_calendar_marker(cal_id, cal_marker):
+    """Adopt-unmarked: write our marker into an existing calendar's
+    description so future bootstraps re-discover it by marker (unambiguous),
+    not by the weaker summary match. Preserves any existing description text
+    the user had, appending our marker line if absent."""
+    try:
+        cur = gws("calendar", "calendars", "get",
+                  "--params", json.dumps({"calendarId": cal_id}))
+    except Exception:
+        cur = {}
+    existing = (cur.get("description") or "").strip()
+    if cal_marker in existing:
+        return
+    marker_line = "%s -- %s" % (cal_marker, CAL_DESCRIPTION_TEXT)
+    new_desc = (existing + "\n" + marker_line) if existing else marker_line
+    gws("calendar", "calendars", "patch",
+        "--params", json.dumps({"calendarId": cal_id}),
+        body={"description": new_desc})
 
 
 # ---------------------------------------------------------------------------
