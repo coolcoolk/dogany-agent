@@ -173,6 +173,8 @@ fi
 #   config/ (i18n only)     locales refreshed; agent.conf/lifekit.conf are
 #                           per-instance STATE (write-if-absent, never reset)
 #   service/                service SDK facade (lifekit + mailer)
+#   mirror/                 GCal/GTasks mirror engine code + schema; NEVER *.db
+#                           (mirror_state.db is per-instance sync bookkeeping)
 #   database/               schema.sql + lifekit.py/.sh/README; NEVER *.db
 #   .claude/settings.json   harness config (instance model choice preserved)
 #   worklog/_TEMPLATE.md    ticket template only; never existing tickets
@@ -539,6 +541,23 @@ if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
     "$REPO_ROOT/service/" "$INSTANCE/service/"
   UPDATED+=("service/")
+fi
+
+# 3e-mirror) mirror/ engine (DGN-268 S3), hoisted at repo root (single home;
+#     not in the template). Refresh CODE + schema ONLY. The instance's
+#     mirror_state.db holds live sync bookkeeping (surface ids / etags /
+#     cursors) and MUST survive a refresh -- COMMON_EXCLUDES already drops
+#     *.db, and we add the WAL sidecars (*.db-wal / *.db-shm) belt-and-braces
+#     so a mid-poll refresh never truncates in-flight state. Always-ship: the
+#     cron flag-gate (MIRROR_MODULE) already silences opted-out users, so an
+#     unconditional code refresh is correct and matches how service/ ships.
+if [ -d "$REPO_ROOT/mirror" ]; then
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+    --exclude '*.db-wal' \
+    --exclude '*.db-shm' \
+    --exclude '*.db.bak*' \
+    "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
+  UPDATED+=("mirror/ (code+schema; *.db preserved)")
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).

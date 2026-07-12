@@ -1,0 +1,13 @@
+[Unit]
+# DGN-268 S3: Linux parity for the macOS mirror-reconcile plist (Sun 21:30).
+# One-shot weekly reconcile fired by the paired .timer. Same flag-gate /
+# unauth-throttle safety as the poll path (mirror-reconcile.sh exits 0 when
+# the module is off/absent, warns at most once/day when on-but-unauthed).
+Description=dogany mirror reconcile (__AGENT_NAME__) -- weekly GCal/GTasks reconcile
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.mirror-reconcile --log __PROJECT_ROOT__/.telegram_bot/logs/mirror-reconcile.stdout.log -- /bin/bash __PROJECT_ROOT__/routines/mirror-reconcile.sh
+WorkingDirectory=__PROJECT_ROOT__
+Environment=HOME=__HOME__
+Environment=PATH=__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.local/bin

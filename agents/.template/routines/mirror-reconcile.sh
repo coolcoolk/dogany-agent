@@ -8,8 +8,26 @@ _AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 _CONF="$_AGENT_ROOT/config/lifekit.conf"
 if [ ! -d "$_AGENT_ROOT/mirror" ]; then exit 0; fi
 if [ ! -f "$_CONF" ]; then exit 0; fi
-_MODULE_VAL="$(grep '^MIRROR_MODULE=' "$_CONF" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+# `|| true`: under `set -euo pipefail`, a missing MIRROR_MODULE key makes grep
+# exit 1 and (pipefail) fail the whole substitution -> the routine would exit
+# non-zero instead of the intended silent skip. Absent key == off == exit 0.
+_MODULE_VAL="$( { grep '^MIRROR_MODULE=' "$_CONF" 2>/dev/null || true; } | tail -1 | cut -d= -f2- | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
 if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
+# DGN-268 S3 safety rail (S5 hardening slice): module ON but Google auth may be
+# absent -> warn at most once/day (shared stamp with mirror-poll so the two do
+# not double-warn), then exit 0. No crash, no traceback. Scope-granular checks
+# are deferred to S5.
+if ! command -v gws >/dev/null 2>&1 || ! gws auth status >/dev/null 2>&1; then
+  _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unauth.stamp"
+  _TODAY="$(date -u +%Y-%m-%d)"
+  if [ "$(cat "$_STAMP" 2>/dev/null || true)" != "$_TODAY" ]; then
+    printf '%s' "$_TODAY" > "$_STAMP" 2>/dev/null || true
+    "$_AGENT_ROOT/routines/push.sh" --text \
+      "Calendar sync is on but not connected to Google yet. Ask me to connect your calendar to start syncing." \
+      >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
 # Install home: routines/ (plist convention); modules live in
 # mirror/ -- resolve relative, no absolute home paths.
 cd "$_AGENT_ROOT/mirror"

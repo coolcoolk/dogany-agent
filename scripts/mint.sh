@@ -266,6 +266,27 @@ if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL --exclude '__pycache__' --exclude '*.pyc' "$REPO_ROOT/service/" "$PROJECT_ROOT/service/"
 fi
 
+# 1d) mirror/ engine (DGN-268 S3): the GCal/GTasks mirror lives at repo-root
+#     mirror/ (single canonical home; NOT in the template, to avoid a third
+#     copy). Ship CODE + schema ONLY into the instance so the cron flag-gates
+#     have something to import. NEVER copy state: mirror_state.db holds the
+#     instance's live sync bookkeeping (surface ids / etags / cursors) -- a
+#     re-mint must preserve it, so *.db / *.db.bak* are excluded exactly like
+#     lifekit.db above. Idempotent on re-mint: rsync has no --delete and the
+#     db excludes protect live state, so re-minting only refreshes code.
+if [ -d "$REPO_ROOT/mirror" ]; then
+  rsync -aL \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    --exclude '*.db' \
+    --exclude '*.db-wal' \
+    --exclude '*.db-shm' \
+    --exclude '*.db.bak*' \
+    --exclude '*.bak*' \
+    "$REPO_ROOT/mirror/" "$PROJECT_ROOT/mirror/"
+  echo "[mint] copied mirror/ engine (code + schema; *.db excluded)"
+fi
+
 # Portable in-place sed: BSD (macOS) and GNU (Linux) disagree on `sed -i`'s
 # flavor (BSD requires a mandatory backup-suffix arg, GNU forbids the space).
 # Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
@@ -306,12 +327,15 @@ while IFS= read -r -d '' f; do
   substitute "$f"
 done < <(find "$PROJECT_ROOT" -type f \
             \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
+               -o -name '*.service' -o -name '*.timer' \
                -o -name '*.md' -o -name '*.example' -o -name '*.txt' -o -name '*.conf' \) \
             -not -path '*/venv/*' -not -path '*/.git/*' -print0)
 
-# 3) rename agent-specific plists (Label already substituted; make filenames
-#    carry the agent name for launchd clarity).
-for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist; do
+# 3) rename agent-specific units (Label already substituted; make filenames
+#    carry the agent name for launchd/systemd clarity). Covers macOS plists and
+#    the Linux mirror systemd units (DGN-268 S3 .service/.timer parity).
+for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist \
+         "$PROJECT_ROOT"/routines/*.service "$PROJECT_ROOT"/routines/*.timer; do
   [ -e "$p" ] || continue
   np="${p//telegram-agent/$AGENT_NAME}"
   [ "$np" != "$p" ] && mv "$p" "$np"
