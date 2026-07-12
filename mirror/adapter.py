@@ -1964,14 +1964,63 @@ def sweep_step(state_conn, src_conn):
     return changed
 
 
+def _run_cycle_step(out, key, state_conn, fn):
+    """DGN-268 S5: run one poll-cycle step under its own exception guard so a
+    failure in one step does NOT abort the others. On success the step's normal
+    result lands in out[key]; on failure out[key] becomes {"error": "..."} (the
+    stdout summary still prints; the failure is visible + counted) and the error
+    is logged via mirror_log. Ordering + idempotency are preserved because each
+    step is already independent and self-locking (pulls + drain each acquire and
+    release the shared mirror lock in their own finally, so a raised step never
+    holds the lock hostage). NOTHING propagates -- a transient inbound 404 must
+    never crash the cron or block the outbound drain.
+
+    Error texture matches the rest of the module: GwsError carries http_code, so
+    we tag transient (RETRYABLE_HTTP or 404 not-found) vs persistent. Persistent
+    errors are logged at a distinct category for the weekly reconcile / operator
+    to notice; we do NOT invent a new per-cycle notify/alarm (a single transient
+    404 must stay silent -- the once/day on-but-unauth warning already owns the
+    auth-failure alarm)."""
+    try:
+        out[key] = fn()
+        return True
+    except GwsError as e:
+        transient = (e.http_code == 404 or e.http_code in RETRYABLE_HTTP)
+        category = ("cycle_step_transient" if transient
+                    else "cycle_step_persistent")
+        mirror_log(state_conn, category, None,
+                   "step=%s http=%s: %s" % (key, e.http_code, e))
+        out[key] = {"error": str(e), "http_code": e.http_code,
+                    "transient": transient}
+        return False
+    except Exception as e:  # non-GwsError: unexpected, treat as persistent
+        mirror_log(state_conn, "cycle_step_persistent", None,
+                   "step=%s: %s" % (key, e))
+        out[key] = {"error": str(e), "http_code": None, "transient": False}
+        return False
+
+
 def poll_cycle(state_conn, src_conn, cal_id, tl_id):
     """One full poller cycle (the cron target at cutover):
-    sweep -> inbound pulls -> outbox drain."""
+    sweep -> inbound pulls -> outbox drain.
+
+    DGN-268 S5: each step is isolated (see _run_cycle_step). The outbound DRAIN
+    always runs even if an inbound pull raised -- the outbound path must never
+    be held hostage to an inbound 404 (the 2026-07-12 09:21 Ag starvation: one
+    transient pull_calendar 404 aborted the whole cycle before drain could push).
+    Ordering (sweep -> pulls -> drain) and idempotency are unchanged; on the
+    all-success path the returned dict is byte-identical to the pre-S5 shape."""
     out = {}
-    out["sweep"] = sweep_step(state_conn, src_conn)
-    out["calendar"] = pull_calendar(cal_id, state_conn, src_conn)
-    out["tasks"] = pull_tasks(tl_id, state_conn, src_conn)
-    out["drain"] = outbox_drain(state_conn, src_conn, cal_id, tl_id)
+    _run_cycle_step(out, "sweep", state_conn,
+                    lambda: sweep_step(state_conn, src_conn))
+    _run_cycle_step(out, "calendar", state_conn,
+                    lambda: pull_calendar(cal_id, state_conn, src_conn))
+    _run_cycle_step(out, "tasks", state_conn,
+                    lambda: pull_tasks(tl_id, state_conn, src_conn))
+    # Drain runs unconditionally -- it is the outbound lane and must not be
+    # skipped just because an inbound pull failed above.
+    _run_cycle_step(out, "drain", state_conn,
+                    lambda: outbox_drain(state_conn, src_conn, cal_id, tl_id))
     return out
 
 
