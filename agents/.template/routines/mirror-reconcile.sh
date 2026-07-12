@@ -16,13 +16,14 @@ if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
 # DGN-268 S3/S4 safety rail (S5 hardening slice): module ON but Google auth may
 # be absent/incomplete -> warn at most once/day (shared stamp with mirror-poll
 # so the two do not double-warn), then exit 0. No crash, no traceback. Fast
-# path = gws present + auth status; the S4 preflight (when present) adds the
-# fine-grained scope check (calendar + tasks + gmail.send).
+# path = gws present + auth status; the S4 preflight (when present) checks the
+# scope set the MIRROR needs -- calendar + tasks ONLY (DGN-268 FIX 2). gmail.send
+# is NOT required to run the mirror (it gates the mailer + onboarding preflight).
 _MIRROR_UNAUTH=0
 if ! command -v gws >/dev/null 2>&1 || ! gws auth status >/dev/null 2>&1; then
   _MIRROR_UNAUTH=1
 elif [ -x "$_AGENT_ROOT/routines/mirror-setup-check.sh" ]; then
-  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet >/dev/null 2>&1 || _MIRROR_UNAUTH=1
+  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet --require calendar,tasks >/dev/null 2>&1 || _MIRROR_UNAUTH=1
 fi
 if [ "$_MIRROR_UNAUTH" = "1" ]; then
   _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unauth.stamp"

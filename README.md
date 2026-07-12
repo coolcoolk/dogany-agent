@@ -139,8 +139,9 @@ root, and each agent lives under `agents/`.
   core; skills import this rather than the raw data layer.
 - **`scripts/`** -- `mint.sh`, which instantiates a standalone agent from
   `agents/.template` + the shared roots and writes the instance `.env`
-  (single generator; secrets arrive via the `DOGANY_BOT_TOKEN` /
-  `DOGANY_EMAIL_PW` environment variables, never argv).
+  (single generator; the bot token arrives via the `DOGANY_BOT_TOKEN`
+  environment variable, never argv). Email connects via Google onboarding
+  (one OAuth login), not an app password.
 - **`install.sh`** -- a bilingual (ko/en) setup wizard: checks prerequisites,
   collects a bot token + owner id (born-locked), and calls `scripts/mint.sh` to
   mint a single self-contained instance (mint writes the full `.env` from the

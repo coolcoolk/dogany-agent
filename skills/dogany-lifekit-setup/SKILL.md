@@ -95,10 +95,14 @@ Re-run preflight after installs to confirm.
 Hand the user these two commands in order:
 ```
 gws auth setup
-gws auth login -s calendar,tasks,gmail.send
+gws auth login --scopes https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/tasks,https://www.googleapis.com/auth/gmail.send
 ```
-Do NOT run them yourself. After user confirms done, re-run
-`routines/mirror-setup-check.sh` to verify scopes pass.
+Do NOT run them yourself. `--scopes` passes exact scope URLs; `-s/--services`
+only filters the picker by service name and does NOT pin exact scopes ("gmail.send"
+is not a valid service name). The exact URL list above is what the preflight
+greps for -- they must match verbatim. After user confirms done, agent runs
+`routines/mirror-setup-check.sh` (full check: calendar+tasks+gmail.send) to
+verify scopes pass.
 
 ### step 4 -- calendar name
 Ask user: "What name should your calendar have?" Write the answer to
@@ -114,7 +118,10 @@ Call the mirror bootstrap. Two outcomes:
   calendar/tasklist without our marker). Ask: "adopt this existing calendar,
   or create a new one with a different name?"
   - adopt -> set `MIRROR_ADOPT_UNMARKED=true` in `config/lifekit.conf`,
-    re-run bootstrap.
+    re-run bootstrap. On success, immediately unset it (set back to `false`
+    or remove the line). It is a one-shot answer: leaving it `true` permanently
+    would silently auto-adopt a same-name foreign calendar in the future (e.g.
+    if the marked calendar is deleted and a new same-name one exists).
   - create -> ask for a new name, update `MIRROR_CAL_NAME`, re-run bootstrap.
 
 ### step 6 -- enable mirror module
@@ -124,9 +131,18 @@ Set `MIRROR_MODULE=on` in `config/lifekit.conf`.
 - macOS: `launchctl load` both mirror plists:
   `routines/com.telegram-skill-bot.<agent>.mirror-poll.plist`
   `routines/com.telegram-skill-bot.<agent>.mirror-reconcile.plist`
-- Linux: `systemctl --user enable --now` both mirror timers:
-  `com.telegram-skill-bot.<agent>.mirror-poll.timer`
-  `com.telegram-skill-bot.<agent>.mirror-reconcile.timer`
+- Linux: systemd cannot enable units by name when they sit in routines/.
+  First copy (or symlink) them into the user unit dir, then enable. Unit files
+  carry substituted absolute paths already (mint/update bakes them in), so a
+  plain copy is correct.
+  ```
+  mkdir -p ~/.config/systemd/user
+  cp routines/com.telegram-skill-bot.<agent>.mirror-poll.service routines/com.telegram-skill-bot.<agent>.mirror-poll.timer ~/.config/systemd/user/
+  cp routines/com.telegram-skill-bot.<agent>.mirror-reconcile.service routines/com.telegram-skill-bot.<agent>.mirror-reconcile.timer ~/.config/systemd/user/
+  systemctl --user daemon-reload
+  systemctl --user enable --now com.telegram-skill-bot.<agent>.mirror-poll.timer
+  systemctl --user enable --now com.telegram-skill-bot.<agent>.mirror-reconcile.timer
+  ```
 Poll = every 300s. Reconcile = weekly Sun 21:30.
 
 ### step 8 -- first backfill + self-test

@@ -1114,14 +1114,19 @@ if [ "$DRY_RUN" = "0" ]; then
       "$INSTANCE/config" "$INSTANCE/service" "$INSTANCE/database" \
       "$INSTANCE/worklog/_TEMPLATE.md" \
       \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
+         -o -name '*.service' -o -name '*.timer' \
          -o -name '*.md' -o -name '*.conf' -o -name '*.txt' -o -name '*.example' \) \
       -type f \
       -not -path '*/venv/*' -not -path '*/__pycache__/*' -not -name '*.bak.*' \
       -print0 2>/dev/null)
 
-  # Rename any freshly-copied generic plists to carry the agent name (mint step 3).
+  # Rename any freshly-copied generic units to carry the agent name (mint step 3).
+  # Covers macOS plists and the Linux mirror systemd units (DGN-268 S3
+  # .service/.timer) -- without .service/.timer here an updated Linux instance
+  # would keep generic telegram-agent units with literal __PROJECT_ROOT__ etc.
   if [ "$IDENTITY_OK" = "1" ]; then
-    for p in "$INSTANCE"/bridge/*.plist "$INSTANCE"/routines/*.plist; do
+    for p in "$INSTANCE"/bridge/*.plist "$INSTANCE"/routines/*.plist \
+             "$INSTANCE"/routines/*.service "$INSTANCE"/routines/*.timer; do
       [ -e "$p" ] || continue
       np="${p//telegram-agent/$AGENT_NAME}"
       [ "$np" = "$p" ] && continue
@@ -1157,6 +1162,7 @@ if [ "$DRY_RUN" = "0" ]; then
   # Sanity: warn on any surviving placeholders in active code.
   LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME)__' \
             --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
+            --include='*.service' --include='*.timer' \
             "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
             "$INSTANCE/config" "$INSTANCE/.claude" 2>/dev/null || true)"
   if [ -n "$LEFT" ]; then

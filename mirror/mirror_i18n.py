@@ -6,7 +6,7 @@ The mirror lives at <instance>/mirror/; locale files live at
 localized string, mirroring the shell `i18n()` contract in
 routines/lib/agentlib.sh: try AGENT_LANG, then 'en', then a caller-supplied
 fallback (the current ko literal -- so an instance with NO locale file for the
-key behaves byte-identically to before i18n, i.e. zero-delta for Ag).
+key behaves byte-identically to before i18n, i.e. zero-delta).
 
 English/ASCII only in code; the localized VALUES live in the JSON files.
 No external deps; the parse is cached.

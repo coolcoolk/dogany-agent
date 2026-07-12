@@ -72,7 +72,7 @@ _MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 # DGN-268 S1: config seam. Per-instance surface identity (calendar/tasklist
 # names, marker, display tz) is parameterized out of source literals into the
-# instance config so the mirror is a product, not an Ag-only fixture.
+# instance config so the mirror is a product, not a single-instance fixture.
 #
 # Sources (both optional; a fresh dev checkout has NEITHER -> {} / defaults):
 #   ../config/lifekit.conf   -- per-instance lifekit activation + mirror keys
@@ -2006,8 +2006,9 @@ def poll_cycle(state_conn, src_conn, cal_id, tl_id):
 
     DGN-268 S5: each step is isolated (see _run_cycle_step). The outbound DRAIN
     always runs even if an inbound pull raised -- the outbound path must never
-    be held hostage to an inbound 404 (the 2026-07-12 09:21 Ag starvation: one
-    transient pull_calendar 404 aborted the whole cycle before drain could push).
+    be held hostage to an inbound 404 (the 2026-07-12 09:21 live-instance
+    starvation: a transient pull_calendar 404 aborted the whole cycle before
+    drain could push).
     Ordering (sweep -> pulls -> drain) and idempotency are unchanged; on the
     all-success path the returned dict is byte-identical to the pre-S5 shape."""
     out = {}

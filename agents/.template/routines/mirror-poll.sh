@@ -18,13 +18,15 @@ if [ "$_MODULE_VAL" != "on" ]; then exit 0; fi
 # may be absent/incomplete. Do NOT crash-loop every 5 min -- probe auth, and
 # when it is missing/unauthed emit at most ONE warning per day (stamp-file
 # throttle), then exit 0. Fast path: gws present + `gws auth status` exit 0.
-# When the S4 preflight is present it ALSO enforces the fine-grained scope set
-# (calendar + tasks + gmail.send) -- the fast path stays as a cheap gate.
+# When the S4 preflight is present it ALSO enforces the scope set the MIRROR
+# needs -- calendar + tasks ONLY (DGN-268 FIX 2). gmail.send is NOT required to
+# run the calendar/tasks mirror; a user without it must not have their whole
+# sync halt (that scope gates the mailer + onboarding preflight, not the rail).
 _MIRROR_UNAUTH=0
 if ! command -v gws >/dev/null 2>&1 || ! gws auth status >/dev/null 2>&1; then
   _MIRROR_UNAUTH=1
 elif [ -x "$_AGENT_ROOT/routines/mirror-setup-check.sh" ]; then
-  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet >/dev/null 2>&1 || _MIRROR_UNAUTH=1
+  "$_AGENT_ROOT/routines/mirror-setup-check.sh" --quiet --require calendar,tasks >/dev/null 2>&1 || _MIRROR_UNAUTH=1
 fi
 if [ "$_MIRROR_UNAUTH" = "1" ]; then
   _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unauth.stamp"
