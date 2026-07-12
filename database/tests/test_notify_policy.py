@@ -69,6 +69,14 @@ def _utc(ts):
     return datetime.datetime.fromtimestamp(ts, tz=timezone.utc).strftime(_FMT)
 
 
+def _strip_dot_commands(sql):
+    """Strip sqlite3 CLI dot-commands (lines starting with '.') from SQL text.
+    Dot-commands (.bail on, .mode, etc.) are CLI-level directives; the Python
+    sqlite3 module's executescript() only understands SQL statements."""
+    lines = [l for l in sql.splitlines() if not l.lstrip().startswith(".")]
+    return "\n".join(lines)
+
+
 def _apply_pending_migrations(dbpath):
     """Emulate update.sh 3f-migrate: apply every migrations/NNN_*.sql whose
     NNN > the DB's user_version, ascending. Returns the list applied."""
@@ -80,7 +88,7 @@ def _apply_pending_migrations(dbpath):
         if not m or int(m.group(1)) <= cur_ver:
             continue
         with open(os.path.join(MIG_DIR, base), encoding="utf-8") as f:
-            conn.executescript(f.read())
+            conn.executescript(_strip_dot_commands(f.read()))
         cur_ver = conn.execute("PRAGMA user_version;").fetchone()[0]
         applied.append(base)
     conn.close()
@@ -433,9 +441,76 @@ def test_e2e_silent_routine():
                        "commute" not in p2.stdout, p2.stdout)
 
 
+def test_custom_zero_normalization():
+    """M-1 fix: custom:0 / '0' normalizes to start_only (no double-fire at the
+    start instant). The normalization lives in lifekit.parse_notify_arg."""
+    print("custom:0 -> start_only normalization:")
+    import lifekit as _lk  # noqa: PLC0415
+
+    for raw in ("0", "custom:0"):
+        policy, lead = _lk.parse_notify_arg(raw)
+        _check("parse_notify_arg(%r) -> start_only/None" % raw,
+               (policy, lead) == ("start_only", None),
+               "got (%r, %r)" % (policy, lead))
+
+    # round-trip via CLI: task-add --notify 0 should store start_only
+    with tempfile.TemporaryDirectory() as tmp:
+        dbdir = _build_instance(tmp)
+        rc, out, err = _run(dbdir, "task-add", "zero-lead-task",
+                            "2099-03-01", "", "--notify", "0")
+        _check("task-add --notify 0 rc0", rc == 0, f"rc={rc} err={err}")
+        if rc == 0:
+            tid = out.strip().split("\t")[0]
+            policy, lead = _event_notify_by(dbdir, "id", tid)
+            _check("notify=0 stored as start_only",
+                   policy == "start_only" and lead is None,
+                   "got (%r, %r)" % (policy, lead))
+        # selection: no double-fire at start instant (at most 1 alert)
+        conn = sqlite3.connect(os.path.join(dbdir, "lifekit.db"))
+        now_ts = 4102444800  # 2100-01-01 fixed anchor
+        lifekit.event_add(conn, kind="task", title="zero-lead-sel",
+                          schedule_kind="timed",
+                          start_at=_utc(now_ts),
+                          end_at=_utc(now_ts + 1800),
+                          owning_agent="test", created_by="test",
+                          completion_rule="manual",
+                          notify_policy="start_only", notify_lead_min=None)
+        alerts = remind_select.select_alerts(conn, now_ts)
+        hits = [a for a in alerts if a["title"] == "zero-lead-sel"]
+        _check("start_only at start instant: exactly 1 alert, type=start",
+               len(hits) == 1 and hits[0]["alert"] == "start",
+               str(hits))
+        # also check at lead-30-min instant: zero alerts (no lead burst)
+        alerts2 = remind_select.select_alerts(conn, now_ts - 30 * 60)
+        hits2 = [a for a in alerts2 if a["title"] == "zero-lead-sel"]
+        _check("start_only: no alert at 30-min-before instant",
+               hits2 == [], str(hits2))
+        conn.close()
+
+
+def test_remind_select_no_phantom():
+    """M-3 fix: remind_select.py must not create a phantom empty DB when the
+    DB file does not exist. It should exit 0 with no output."""
+    print("remind_select: no phantom DB creation:")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        nonexistent_db = os.path.join(tmp, "does_not_exist.db")
+        p = subprocess.run(
+            [sys.executable, os.path.join(DB_DIR, "remind_select.py"),
+             "--db", nonexistent_db],
+            capture_output=True, text=True)
+        _check("exit 0 on missing DB", p.returncode == 0,
+               "rc=%d stderr=%s" % (p.returncode, p.stderr))
+        _check("no output on missing DB", p.stdout == "",
+               "stdout=%r" % p.stdout)
+        _check("no phantom file created", not os.path.exists(nonexistent_db),
+               "file appeared: %s" % nonexistent_db)
+
+
 def main():
     for t in (test_migration, test_routine_verbs, test_event_verbs,
-              test_remind_selection, test_e2e_silent_routine):
+              test_remind_selection, test_e2e_silent_routine,
+              test_custom_zero_normalization, test_remind_select_no_phantom):
         t()
     print()
     if _failures:

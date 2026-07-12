@@ -1131,6 +1131,8 @@ def parse_notify_arg(raw):
     ''                          -> (None, None)   reset to default behavior
     default|silent|start_only   -> (raw, None)
     <N> or custom:<N>           -> ('custom', N)  N = lead minutes
+    Special: custom:0 / '0' normalizes to start_only (no double-fire at
+    the start instant).
     Anything else raises ValueError."""
     if raw is None or raw == "":
         return None, None
@@ -1140,7 +1142,12 @@ def parse_notify_arg(raw):
     if val.startswith("custom:"):
         val = val[len("custom:"):]
     try:
-        return validate_notify_policy("custom", val)
+        policy, lead = validate_notify_policy("custom", val)
+        # custom lead=0 means 'alert at start' with no separate lead offset --
+        # identical to start_only; normalize to avoid double-fire.
+        if lead == 0:
+            return "start_only", None
+        return policy, lead
     except ValueError:
         raise ValueError(
             "bad notify value %r (want default|silent|start_only|"

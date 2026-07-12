@@ -19,6 +19,9 @@ Forward-only, versioned schema migrations for `lifekit.db`, applied by
   (e.g. `002_add_foo_column.sql`, `003_backfill_bar.sql`).
 - Each migration MUST end with `PRAGMA user_version = NNN;` where `NNN` matches
   the file's number. This records the DB as upgraded to that version.
+- Start every migration file with `.bail on` (before any SQL) so that the
+  first error aborts the run -- a partial migration that commits silently is
+  worse than a loud failure (convention introduced with 007).
 - Write migrations idempotent-friendly where the SQL allows it (e.g. guard
   additive DDL so a partial/rerun does not hard-fail). `update.sh` only applies a
   migration whose `NNN` is strictly greater than the DB's current

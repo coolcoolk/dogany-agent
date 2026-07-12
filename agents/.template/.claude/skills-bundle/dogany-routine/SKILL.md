@@ -34,26 +34,26 @@ Ledger = sqlite (SoT). Mirror surfaces update themselves via outbox.
      (first = explicit date in utterance, else today)
    - time mentioned -> timed, time=HH:MM (+ duration; unstated = 30min)
    - no time mentioned -> all_day
-2. infer meta. NO interrogation (question budget: confirm question +
-   notification question + max 1 extra):
+2. infer meta. NO interrogation (question budget: ONE confirm question total,
+   notify included):
    - area: keyword match vs areas table (`sqlite3` read or lifekit).
    - project: fuzzy match title/context vs projects. not confident -> NULL.
    - purpose: goal phrase in utterance or context. none -> ask in confirm.
-3. notification question (DGN-273) -- ask ONE question, always, at
-   registration. Present the default and accept custom:
-   "Default alerts are 30 minutes before plus at start time. Keep that, or
-   customize? (silent / start-time only / a different lead time)"
-   Map the answer to the notify field:
+3. confirm -- ONE QUESTION total (covers inferred values + notify policy).
+   Facts the user said = restate. Inferences = ask, never assert.
+   Always include the notify line in the confirm, stating the default or
+   echoing what the user already said, and inviting adjustment:
+     "Adding '<title>' <cadence> at <time> in <area>
+      -- with default alerts 30 min before + on-time. Keep alerts, or
+      adjust? (silent / start-time only / N min before)"
+   If the user stated a notify preference in the utterance, restate it here
+   instead of the default (do NOT ask again -- 1 question budget is firm).
+   Map the confirm answer to the notify field:
    - keep default            -> omit notify (or notify=default)
    - no alerts               -> notify=silent
    - start-time alert only   -> notify=start_only
    - "N minutes before"      -> notify=N   (lead alert + on-time alert kept)
-   If the user already stated a preference in the utterance ("no alerts for
-   this one"), restate it inside the confirm instead of asking again.
-4. confirm -- QUESTION form for inferred values. Facts the user said =
-   restate. Inferences = ask, never assert. The notify choice rides this
-   confirm when it was stated; otherwise it was its own question in step 3.
-5. write after OK:
+4. write after OK:
    `lifekit.sh routine add "<title>" "<cadence>" time=HH:MM duration=N
     area=<name> project=<title> purpose="<one line>" [end=YYYY-MM-DD]
     [notify=default|silent|start_only|<lead-min>]`
@@ -81,8 +81,11 @@ Ask which the user means when ambiguous (1 question):
 - change the routine's alerts ("mute this routine", "alert me 10 min
   before instead") ->
   `lifekit.sh routine update <def_ulid> notify=silent|start_only|<lead-min>`
-  (notify= with an empty value resets to default). Future instances are
-  re-stamped by the engine; already-materialized ones regen automatically.
+  (notify= with an empty value resets to default).
+  The engine re-stamps ONLY roller-produced, non-exception future instances.
+  Hand-moved instances (rec_exception=1) are NOT re-stamped automatically --
+  list them with `lifekit.sh event-window <today> <+28d>` and apply the new
+  policy per instance: `lifekit.sh event-notify <event_ulid> <policy>`.
 - one instance only ("no alert for tomorrow's") ->
   `lifekit.sh event-notify <event_ulid> silent` (also takes
   default|start_only|<lead-min>|'' to reset). Works on one-off tasks and

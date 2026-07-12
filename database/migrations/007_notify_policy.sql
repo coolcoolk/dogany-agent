@@ -16,7 +16,10 @@
 -- cross-column CHECKs, so the lifekit verbs are the coherence enforcement
 -- point on migrated DBs (fresh DBs get table CHECKs from schema.sql).
 -- busy_timeout: live pollers must not fail mid-flight with SQLITE_BUSY.
+-- .bail on: abort on first error so a partial migration is never silently
+-- committed (convention for all migrations from 007 onward).
 
+.bail on
 PRAGMA busy_timeout = 10000;
 
 BEGIN;

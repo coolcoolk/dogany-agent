@@ -128,9 +128,20 @@ def main(argv=None):
     args = ap.parse_args(argv)
     now_ts = args.now if args.now is not None else int(
         datetime.datetime.now(tz=timezone.utc).timestamp())
-    # assert_version=False: a pre-007 DB must keep alerting with the legacy
-    # defaults, not go dark behind a MigrationRequired.
-    conn = lifekit.event_conn(args.db, assert_version=False)
+    db_path = args.db or lifekit.DB_PATH
+    # Fail-open: if the DB does not exist yet, produce no alerts rather than
+    # creating a phantom empty file (which would open with no rows and break
+    # the version assert on subsequent update.sh runs).
+    if not os.path.isfile(db_path):
+        return 0
+    # Open read-only via URI to ensure no phantom creation on a missing path
+    # that slips through the check above (e.g. race). assert_version=False:
+    # a pre-007 DB must keep alerting with the legacy defaults, not go dark.
+    uri = "file:%s?mode=ro" % db_path.replace("?", "%3F")
+    conn = sqlite3.connect(uri, uri=True)
+    # busy_timeout is safe read-only; WAL and foreign_keys are write-level
+    # pragmas but are silently ignored (or succeed) under mode=ro.
+    conn.execute("PRAGMA busy_timeout = 5000;")
     try:
         for a in select_alerts(conn, now_ts):
             sys.stdout.write(

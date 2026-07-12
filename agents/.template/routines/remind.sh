@@ -29,26 +29,44 @@ mkdir -p "$SENT_DIR"
 TODAY_SENT="$SENT_DIR/$(date +%Y-%m-%d).sent"
 touch "$TODAY_SENT"
 
+# ---- timezone (derive from agent.conf DISPLAY_TZ; fallback Asia/Seoul) ----
+DISPLAY_TZ="$(grep -E '^DISPLAY_TZ=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+export TZ="${DISPLAY_TZ:-Asia/Seoul}"
+
 # ---- locale (same pattern as morning-brief.sh) ----
-AGENT_LANG="$(grep -E '^AGENT_LANG=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+AGENT_LANG="$(grep -E '^AGENT_LANG=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true)"
 AGENT_LANG="${AGENT_LANG:-en}"
 I18N="$AGENT_DIR/config/i18n/${AGENT_LANG}.json"
 i18n_get() { # i18n_get <key> -> value ('' if missing)
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2],""))' "$I18N" "$1" 2>/dev/null || true
 }
 
+_fmt_lead() { # _fmt_lead <lead_min> <lang> -> "2h before"/"45min before" (en)
+              #                              or "2시간"/"45분"            (ko)
+  local m="$1" lang="${2:-en}"
+  if (( m % 60 == 0 )); then
+    local h=$(( m / 60 ))
+    [[ "$lang" == "ko" ]] && echo "${h}시간" || echo "${h}h before"
+  else
+    [[ "$lang" == "ko" ]] && echo "${m}분" || echo "${m}min before"
+  fi
+}
+
 hdr() { # hdr <kind> <alert> <lead_min> -> localized header line
-  local key="remind.${1}_${2}" tpl
+  local key="remind.${1}_${2}" tpl time_str
   tpl="$(i18n_get "$key")"
   if [[ -z "$tpl" ]]; then
     case "${1}_${2}" in
-      appointment_lead)  tpl="Appointment in {min} min" ;;
+      appointment_lead)  tpl="Appointment in {time}" ;;
       appointment_start) tpl="Appointment starting" ;;
-      task_lead)         tpl="Task in {min} min" ;;
+      task_lead)         tpl="Task in {time}" ;;
       task_start)        tpl="Task starting" ;;
       *)                 tpl="Reminder" ;;
     esac
   fi
+  time_str="$(_fmt_lead "$3" "$AGENT_LANG")"
+  tpl="${tpl//\{time\}/$time_str}"
+  # backward-compat: some locales may still use {min} -- replace with raw number
   printf '%s\n' "${tpl//\{min\}/$3}"
 }
 
