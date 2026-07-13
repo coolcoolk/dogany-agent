@@ -69,9 +69,27 @@ plus the sixth: Role `Primary focus` slot — fill with the chosen role (life as
 
 all five filled AND the Primary-focus slot filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
 
-after saving, brief confirm to user: saved settings, will interact this way from now. 1-2 lines.
+after saving, send the completion message:
+1. echo confirmed settings (name, emoji, address term, tone, humor) in 1-2 lines.
+2. declare immediate effect: "지금부터 이렇게 대화하겠습니다." NEVER say "다음 세션부터" --
+   identity is injected every turn; from-next-session framing is false.
+3. offer 2-3 first actions as a numbered list ending with [[OPTIONS]] on its own last line
+   (same mechanics as the emoji question). branch by agent type:
+   - DOMAIN agent (Primary focus filled with a real role, minted via a main agent):
+     include one expectation line before the list:
+     "이관/정리가 끝나면 제가 먼저 첫 상담을 제안드릴게요."
+     then the list:
+     1. 메인 에이전트 방으로 돌아가 기존 기록 이관 이어가기
+        (use the main agent's name if known; else "메인 에이전트")
+     2. 제가 뭘 해드릴 수 있는지 보기
+     3. 바로 기록 시작하기
+   - GENERAL agent (life assistant or placeholder):
+     1. 제가 뭘 해드릴 수 있는지 보기
+     2. domain-appropriate quick start (e.g. "오늘 일정 브리핑 받아보기" for life assistant;
+        adapt to the filled role if known)
+   FORBIDDEN: "무엇이든 말씀해 주세요" alone (empty-handed close). actions must always accompany.
 
-AGENT.md is @imported into constitution -> new identity applies from next session. no separate handoff needed.
+AGENT.md is @imported into constitution -> new identity applies from current turn onward. no separate handoff needed.
 
 ## 2. identity change (ongoing, own AGENT.md)
 
