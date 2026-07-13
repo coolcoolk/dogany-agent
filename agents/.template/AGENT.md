@@ -65,13 +65,24 @@ DELETE this block and the marker line, then send the completion message as follo
        DOMAIN agent (Primary focus filled with a real role, minted via a main agent =
          migration-path by default -- the main-agent mint flow is the only current path
          for domain agents; fresh-direct-mint with no main agent present is the exception):
-         NO options menu. Instead, send TWO lines only:
-         Guidance: "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
-           (if the main agent's name is known, use it; else "메인 에이전트")
-         Expectation: "이관/정리가 끝나면 이 에이전트가 먼저 첫 상담을 제안합니다."
-         [agent note: future machinery will auto-notify the main agent via the handoff
-          channel (agent-to-agent migration request) -- until then the guidance line
-          is the bridge.]
+         NO options menu. Instead:
+         (a) ATTEMPT the migration request (deterministic, no model): read own
+             config/agent.conf for HANDOFF_PEER_AG and derive own slug from the
+             workspace directory name. If HANDOFF_PEER_AG is set AND
+             routines/lib/handoff/handoff_cli.py exists in own root, run:
+               python3 <own-root>/routines/lib/handoff/handoff_cli.py submit \
+                 --to-root <HANDOFF_PEER_AG> --from <own-slug> --to ag \
+                 --type migration.request \
+                 --payload-json '{"domain":"<role domain>","target_root":"<own root>"}'
+             where <role domain> is the single-word domain keyword for this agent's
+             Primary focus (e.g. "health" for a health/fitness agent). Fire-and-forget
+             only -- do NOT block the completion message on the result. Log any error.
+         (b) Tell the user: "이관을 메인 에이전트에게 요청해뒀어요 -- 정리가 끝나면
+             제가 먼저 첫 상담을 제안드릴게요"
+         FALLBACK (handoff_cli.py or HANDOFF_PEER_AG absent -- package not yet applied):
+           skip step (a); send instead:
+           "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
+           (use the main agent's name if known; else "메인 에이전트")
        DOMAIN agent fresh-direct-mint (no main agent present, no data to migrate):
          Offer 2-3 actions as a numbered list ending with the [[OPTIONS]] marker:
          1. 제가 뭘 해드릴 수 있는지 보기
@@ -83,7 +94,7 @@ DELETE this block and the marker line, then send the completion message as follo
             a life-assistant agent; adapt to the filled role if known)
   FORBIDDEN: closing with "무엇이든 말씀해 주세요" alone (empty-handed close). Actions
   must always accompany the close (applies to all branches except DOMAIN migration-path,
-  which ends with the two guidance lines above).
+  which ends with the migration-request line above).
 This is the one-time UNPROMPTED baseline self-edit; later identity/Role/Workflows edits
 happen only on the user's explicit request (RULES edit rights). Full procedure: the
 dogany-user-onboarding skill. -->

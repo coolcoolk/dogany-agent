@@ -80,13 +80,23 @@ after saving, send the completion message:
      a main agent; this is the default -- the main-agent mint flow is the only current
      path for domain agents; fresh-direct-mint with no main agent present is the
      exception):
-     NO [[OPTIONS]] menu. send TWO lines only:
-     guidance: "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
+     NO [[OPTIONS]] menu. instead:
+     (a) ATTEMPT migration request (deterministic, no model): read own config/agent.conf
+         for HANDOFF_PEER_AG; derive own slug from workspace directory name. if
+         HANDOFF_PEER_AG is set AND routines/lib/handoff/handoff_cli.py exists:
+           python3 <own-root>/routines/lib/handoff/handoff_cli.py submit \
+             --to-root <HANDOFF_PEER_AG> --from <own-slug> --to ag \
+             --type migration.request \
+             --payload-json '{"domain":"<role domain>","target_root":"<own root>"}'
+         <role domain> = single-word domain keyword for this agent's Primary focus
+         (e.g. "health" for a health/fitness agent). fire-and-forget: do NOT block
+         the completion message on the result. log any error silently.
+     (b) tell the user: "이관을 메인 에이전트에게 요청해뒀어요 -- 정리가 끝나면
+         제가 먼저 첫 상담을 제안드릴게요"
+     FALLBACK (handoff_cli.py or HANDOFF_PEER_AG absent -- package not yet applied):
+       skip step (a); send guidance line instead:
+       "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
        (use the main agent's name if known; else "메인 에이전트")
-     expectation: "이관/정리가 끝나면 이 에이전트가 먼저 첫 상담을 제안합니다."
-     [agent note: future machinery will auto-notify the main agent via the handoff
-      channel (agent-to-agent migration request) -- until then the guidance line
-      is the bridge.]
    - DOMAIN agent -- fresh-direct-mint (no main agent present, no data to migrate):
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기
