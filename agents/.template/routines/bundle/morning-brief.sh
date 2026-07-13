@@ -88,11 +88,70 @@ Y_MEALS="$(ag meal_cnt)";   Y_MEALS="${Y_MEALS:-0}"
 Y_WO="$(ag workout_cnt)";   Y_WO="${Y_WO:-0}"
 Y_BURN="$(ag burn_kcal)";   Y_BURN="${Y_BURN:-0}"
 
+# ---- (3) Warg health section -- look for today's report.section.morning ----
+# Sections stay in inbox (VERDICT_LEAVE in ag_handlers); we read directly.
+# Staleness guard: only accept a section whose frontmatter created field is
+# TODAY (local tz, YYYY-MM-DD). Warg submits ahead of the brief, so the
+# filename prefix may be YDAY_COMPACT or TODAY_COMPACT -- glob both and let
+# the frontmatter created field be the authoritative same-day filter.
+AG_INBOX="$AGENT_DIR/files/handoff/inbox"
+WARG_SECTION=""
+TODAY_COMPACT="$(date +%Y%m%d)"
+YDAY_COMPACT="$(date -v-1d +%Y%m%d 2>/dev/null || date -d '-1 day' +%Y%m%d)"
+_read_section_body() {
+  python3 -c "
+import sys
+txt = open(sys.argv[1]).read()
+lines = txt.split('\n')
+in_fm = False; closed = False; body = []
+for i, l in enumerate(lines):
+    if i == 0 and l.strip() == '---':
+        in_fm = True; continue
+    if in_fm and l.strip() == '---':
+        closed = True; in_fm = False; continue
+    if closed:
+        body.append(l)
+print('\n'.join(body).strip())
+" "$1" 2>/dev/null || true
+}
+if [[ -d "$AG_INBOX" ]]; then
+  for _prefix in "$TODAY_COMPACT" "$YDAY_COMPACT"; do
+    for _f in "$AG_INBOX"/"${_prefix}"-report.section.morning-*.md; do
+      [[ -f "$_f" ]] || continue
+      # parse created field from frontmatter (YAML subset: created: YYYY-MM-DDTHH:MM:SSZ)
+      # convert UTC created to local date using TZ_OFFSET_H for the same-day check
+      _created_utc="$(grep '^created:' "$_f" 2>/dev/null | head -1 | awk '{print $2}')"
+      _created_day="$(python3 -c "
+import sys, datetime
+s = sys.argv[1]; off = int('$TZ_OFFSET_H')
+try:
+    dt = datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+    local_tz = datetime.timezone(datetime.timedelta(hours=off))
+    local_dt = dt.astimezone(local_tz)
+    print(local_dt.strftime('%Y-%m-%d'))
+except Exception:
+    print('')
+" "$_created_utc" 2>/dev/null || true)"
+      if [[ "$_created_day" == "$TODAY" ]]; then
+        WARG_SECTION="$(_read_section_body "$_f")"
+        break 2
+      fi
+    done
+  done
+fi
+
 DATA="[today ${TODAY}]"$'\n\n'
 DATA+="# today's schedule: ${SCHED_CNT}"$'\n'
 if [[ "$SCHED_CNT" -gt 0 ]]; then DATA+="${SCHED_TXT}"$'\n'; else DATA+="(none)"$'\n'; fi
 DATA+=$'\n'"# yesterday recap"$'\n'
 DATA+="meals logged: ${Y_MEALS} (intake ${Y_KCAL} kcal), workouts: ${Y_WO} (burned ${Y_BURN} kcal)"$'\n'
+
+WARG_SECTION_NOTE=""
+if [[ -n "$WARG_SECTION" ]]; then
+  DATA+=$'\n'"# warg health section (워그)"$'\n'
+  DATA+="${WARG_SECTION}"$'\n'
+  WARG_SECTION_NOTE="A Warg health section is included in the data below under '# warg health section (워그)'. Include it verbatim as its own short section attributed (워그). The Warg section is authoritative for diet/protein -- do not add a separate diet recap line; keep workout info from the yesterday recap if workout_cnt > 0."
+fi
 
 EMPTY_NOTE=""
 if [[ "$SCHED_CNT" -eq 0 ]]; then
@@ -106,9 +165,17 @@ Tone rules: ${TONE}
 Structure:
 - one-line good-morning opener (if you mention a clock time, use ${NOW_HM} exactly; never state a different hour)
 - today's schedule as short bullet items (keep HH:MM-HH:MM prefixes from the data as-is); omit the section if none
-- one line recapping yesterday (meals/workouts) ONLY if something was logged
+- one line recapping yesterday (meals/workouts) ONLY if something was logged and no Warg section is present
 - one-line closing (light encouragement or nudge)
 
+Icon rules (fixed, apply the SAME icons every brief -- do not vary or substitute):
+- opener line starts with 🌅
+- schedule section header line starts with 📅 (bullets themselves stay plain)
+- yesterday recap line starts with 🍽️
+- Warg health section starts with 💪 and keeps its (워그) attribution
+- closing line starts with ✨
+
+${WARG_SECTION_NOTE}
 ${EMPTY_NOTE}
 Use only the data below; never invent schedules or numbers. Output the message body only.
 
