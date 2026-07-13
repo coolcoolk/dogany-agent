@@ -27,7 +27,12 @@ import urllib.request
 
 # ---- path constants ----
 HERE = os.path.dirname(os.path.abspath(__file__))
-MEMORIES_DIR = os.path.normpath(os.path.join(HERE, "..", "memories"))
+# MEMORIES_DIR: env seam for testing (set MEMORIES_DIR=/tmp/... to use a scratch directory).
+# Production: always uses the default path derived from HERE.
+MEMORIES_DIR = os.environ.get(
+    "MEMORIES_DIR",
+    os.path.normpath(os.path.join(HERE, "..", "memories"))
+)
 DB_PATH = os.path.join(HERE, "state.db")
 
 # Files excluded from search indexing. USER.md is hot (always injected into
@@ -1889,6 +1894,13 @@ CLASSIFY_MODEL = "opus"
 CLASSIFY_EXCLUDE = {"USER.md", "inbox.md"}
 # Suggest creating a new file when this many items accumulate under the same new-topic label.
 NEW_TOPIC_SUGGEST_MIN = 3
+# Chunked classification: max items per Opus call (env-overridable for testing).
+# Splitting prevents 300s timeout death-spiral on large inboxes (e.g. 795-item backlog).
+CLASSIFY_CHUNK_SIZE = int(os.environ.get("CLASSIFY_CHUNK_SIZE", "100"))
+# Test seam: set CLASSIFY_CMD to a shell command that accepts a prompt on stdin and writes
+# verdict lines on stdout. When set, _run_classifier uses it instead of the real claude call.
+# Example: CLASSIFY_CMD="cat /tmp/stub_verdicts.txt" (ignores stdin, outputs fixed verdicts).
+CLASSIFY_CMD = os.environ.get("CLASSIFY_CMD", None)
 
 # Exit codes for classify-inbox (contract with the check wrapper).
 #   0 = actual classification success (ok to stamp marker) /
@@ -1991,8 +2003,14 @@ def _parse_classify_output(stdout, n_items, valid_files):
 
 
 def _run_classifier(items, topics):
-    """Single Opus classifier call. Judges each inbox item as topic file / new topic / drop.
-    Returns: (verdicts dict, ok bool). ok=False means call failed (inbox must be preserved)."""
+    """Single classifier call for one chunk of inbox items.
+    Judges each item as topic file / new topic / drop.
+    Returns: (verdicts dict {1-based-idx: (kind, payload)}, ok bool).
+    ok=False means the call failed; caller keeps this chunk's items in the inbox.
+
+    CLASSIFY_CMD env seam: if set, runs that shell command (prompt piped on stdin)
+    instead of the real claude call. Used by the unit-style dry test to stub responses
+    without touching the API. Example: CLASSIFY_CMD='cat /tmp/verdicts.txt'"""
     topic_lines = "\n".join(
         f"- {fn}" + (f" (section: {sec})" if sec else "") for fn, sec in topics
     )
@@ -2012,9 +2030,17 @@ def _run_classifier(items, topics):
         "받은편지함 항목:\n"
         f"{numbered}\n"
     )
+    # CLASSIFY_CMD seam: override the real claude subprocess for testing.
+    if CLASSIFY_CMD:
+        cmd = ["bash", "-c", CLASSIFY_CMD]
+        stdin_data = prompt
+    else:
+        cmd = ["claude", "-p", "--model", CLASSIFY_MODEL, prompt]
+        stdin_data = None
     try:
         proc = subprocess.run(
-            ["claude", "-p", "--model", CLASSIFY_MODEL, prompt],
+            cmd,
+            input=stdin_data,
             capture_output=True, text=True, timeout=300,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -2068,43 +2094,22 @@ def _rewrite_inbox(path, keep_items):
     os.replace(tmp, path)
 
 
-def cmd_classify_inbox(args):
-    """Weekly inbox classification. Exit-code contract: success=0 / no-items=2 / failure=1.
-    On failure, inbox.md is never touched and rc=1 (retry on next run).
-    'no-items' is rc=2 — the check wrapper skips writing the marker so the job re-runs
-    daily until real items arrive."""
-    inbox_path = os.path.join(MEMORIES_DIR, "inbox.md")
-    if not os.path.isfile(inbox_path):
-        print("[classify-inbox] inbox.md not found — nothing to do (rc=2).")
-        return CLASSIFY_RC_EMPTY
-
-    items = _inbox_items(inbox_path)
-    if not items:
-        print("[classify-inbox] inbox empty (headers/comments/blank sections only) — done (no items, rc=2).")
-        return CLASSIFY_RC_EMPTY
-    print(f"[classify-inbox] inbox items: {len(items)}")
-
-    topics = _classify_topics(MEMORIES_DIR)
-    if not topics:
-        print("[error] no topic files to assign to — inbox preserved, abnormal exit (rc=1).",
-              file=sys.stderr)
-        return CLASSIFY_RC_FAIL
-    print(f"[classify-inbox] topic candidates: {len(topics)}: " +
-          ", ".join(fn for fn, _ in topics))
-
-    # single Opus classification pass
-    verdicts, ok = _run_classifier(items, topics)
-    if not ok:
-        # classifier call failed: leave inbox untouched, abnormal exit (retry next run).
-        print("[error] classifier failed — inbox.md preserved, abnormal exit (rc=1).", file=sys.stderr)
-        return CLASSIFY_RC_FAIL
-
-    # tally verdicts
-    assign = {}     # fname -> [item, ...]
-    new_groups = {} # label -> [item, ...]
-    dropped = []    # [item, ...]
-    keep_in_inbox = []  # missing verdict / unknown -> stay in inbox (safe)
-    for i, it in enumerate(items, 1):
+def _apply_chunk_verdicts(chunk_items, verdicts, topics_set):
+    """Tally verdicts for one chunk of items.
+    chunk_items: list of item strings (in the chunk, 1-indexed within this chunk).
+    verdicts: {1-based-idx: (kind, payload)} from _run_classifier for this chunk.
+    topics_set: set of valid topic filenames (for file-missing guard at write time).
+    Returns: (assign dict, new_groups dict, dropped list, keep_in_inbox list)
+      assign:        {fname: [item, ...]}  -- items routed to topic files
+      new_groups:    {label: [item, ...]}  -- NEW: label items (stay in inbox)
+      dropped:       [item, ...]           -- DROP items
+      keep_in_inbox: [item, ...]           -- new-topic holds + verdict-missing (safe)
+    """
+    assign = {}
+    new_groups = {}
+    dropped = []
+    keep_in_inbox = []
+    for i, it in enumerate(chunk_items, 1):
         v = verdicts.get(i)
         if not v:
             keep_in_inbox.append(it)
@@ -2114,44 +2119,141 @@ def cmd_classify_inbox(args):
             assign.setdefault(payload, []).append(it)
         elif kind == "NEW":
             new_groups.setdefault(payload, []).append(it)
-            keep_in_inbox.append(it)  # new topic: no file created, so item stays in inbox
+            keep_in_inbox.append(it)  # new topic: no file created, item stays in inbox
         elif kind == "DROP":
             dropped.append(it)
+    return assign, new_groups, dropped, keep_in_inbox
 
-    # preview output
-    print("\n== classification result ==")
-    for fn, lst in assign.items():
-        print(f"  [-> {fn}] {len(lst)} items")
-        for it in lst:
-            print(f"      . {it}")
-    if new_groups:
-        print("  [new topic candidates]")
-        for label, lst in new_groups.items():
-            mark = " *suggest" if len(lst) >= NEW_TOPIC_SUGGEST_MIN else ""
-            print(f"    NEW:{label} ({len(lst)} items){mark}")
-            for it in lst:
-                print(f"      . {it}")
-    if dropped:
-        print(f"  [dropped] {len(dropped)} items")
-        for it in dropped:
-            print(f"      . {it}")
-    if keep_in_inbox:
-        print(f"  [inbox retain] {len(keep_in_inbox)} items (new-topic/verdict-missing)")
+
+def cmd_classify_inbox(args):
+    """Weekly inbox classification -- chunked to avoid the 300s timeout death spiral.
+
+    Splits the inbox into CLASSIFY_CHUNK_SIZE batches (default 100, env-overridable).
+    Each chunk gets its own Opus call at 300s timeout. Verdicts are applied immediately
+    after each successful chunk (partial progress persists -- the inbox shrinks even if
+    later chunks fail). A failed chunk is logged and skipped; its items stay in the inbox
+    so they are retried on the next run.
+
+    Exit-code contract (preserved from original):
+      rc=0  real classification succeeded -- check wrapper writes the 7-day marker.
+      rc=2  no items to classify -- no marker written, retries daily.
+      rc=1  all chunks failed -- inbox untouched or partially drained (marker NOT written,
+            retries next run).
+    Partial success (some chunks ok, some failed) exits rc=0 and writes the marker;
+    failed-chunk items carry over to the next weekly run.
+    """
+    inbox_path = os.path.join(MEMORIES_DIR, "inbox.md")
+    if not os.path.isfile(inbox_path):
+        print("[classify-inbox] inbox.md not found — nothing to do (rc=2).")
+        return CLASSIFY_RC_EMPTY
+
+    items = _inbox_items(inbox_path)
+    if not items:
+        print("[classify-inbox] inbox empty (headers/comments/blank sections only) — done (no items, rc=2).")
+        return CLASSIFY_RC_EMPTY
+
+    n_total = len(items)
+    chunk_size = max(1, CLASSIFY_CHUNK_SIZE)
+    chunks = [items[i:i + chunk_size] for i in range(0, n_total, chunk_size)]
+    n_chunks = len(chunks)
+    print(f"[classify-inbox] inbox items: {n_total} — split into {n_chunks} chunk(s) of {chunk_size}")
+
+    topics = _classify_topics(MEMORIES_DIR)
+    if not topics:
+        print("[error] no topic files to assign to — inbox preserved, abnormal exit (rc=1).",
+              file=sys.stderr)
+        return CLASSIFY_RC_FAIL
+    print(f"[classify-inbox] topic candidates: {len(topics)}: " +
+          ", ".join(fn for fn, _ in topics))
+    topics_set = {fn for fn, _ in topics}
 
     if args.dry_run:
-        print("\n[dry-run] no file/inbox/reindex writes. above is preview only.")
+        # dry-run: classify every chunk, print verdicts, but touch nothing.
+        print("\n[dry-run] classifying all chunks (no writes)...")
+        for ci, chunk in enumerate(chunks, 1):
+            print(f"\n== chunk {ci}/{n_chunks} ({len(chunk)} items) ==")
+            verdicts, ok = _run_classifier(chunk, topics)
+            if not ok:
+                print(f"  [chunk {ci}] classifier failed — would stay in inbox")
+                continue
+            assign, new_groups, dropped, keep_in_inbox = _apply_chunk_verdicts(
+                chunk, verdicts, topics_set
+            )
+            for fn, lst in assign.items():
+                print(f"  [-> {fn}] {len(lst)} items")
+                for it in lst:
+                    print(f"      . {it}")
+            if new_groups:
+                print("  [new topic candidates]")
+                for label, lst in new_groups.items():
+                    mark = " *suggest" if len(lst) >= NEW_TOPIC_SUGGEST_MIN else ""
+                    print(f"    NEW:{label} ({len(lst)} items){mark}")
+                    for it in lst:
+                        print(f"      . {it}")
+            if dropped:
+                print(f"  [dropped] {len(dropped)} items")
+                for it in dropped:
+                    print(f"      . {it}")
+            if keep_in_inbox:
+                print(f"  [inbox retain] {len(keep_in_inbox)} items")
+        print("\n[dry-run] no file/inbox/reindex writes.")
         return CLASSIFY_RC_OK
 
-    # actual write: append to topic files (has_sep format auto-detected).
+    # ---- live run: process chunks, apply each immediately, rewrite inbox after each ----
     today = datetime.date.today().isoformat()
-    if assign:
-        bak = _backup_md(inbox_path)
-        if bak:
-            print(f"[classify-inbox] inbox backup: {os.path.basename(bak)}")
+
+    # One-time inbox backup before the first write (protects the full pre-run state).
+    bak = _backup_md(inbox_path)
+    if bak:
+        print(f"[classify-inbox] inbox backup: {os.path.basename(bak)}")
+
+    # Aggregate accumulators (for final report).
+    total_assign = {}   # fname -> [item, ...]
+    total_new_groups = {}  # label -> [item, ...]
+    total_dropped = []
+
+    # Working copy of items still in the inbox (updated after each successful chunk).
+    # Invariant: always reflects what is actually on disk at the end of each iteration.
+    remaining_items = list(items)
+
+    n_ok = 0
+    n_fail = 0
+    failed_chunk_sizes = []
+
+    for ci, chunk in enumerate(chunks, 1):
+        print(f"\n[classify-inbox] chunk {ci}/{n_chunks} ({len(chunk)} items)...")
+        verdicts, ok = _run_classifier(chunk, topics)
+        if not ok:
+            n_fail += 1
+            failed_chunk_sizes.append(len(chunk))
+            print(f"  [chunk {ci}] classifier failed — {len(chunk)} items kept in inbox",
+                  file=sys.stderr)
+            # Items in this chunk stay in remaining_items (already there); no inbox rewrite needed.
+            continue
+
+        assign, new_groups, dropped, keep_in_inbox = _apply_chunk_verdicts(
+            chunk, verdicts, topics_set
+        )
+
+        # Print per-chunk preview.
+        for fn, lst in assign.items():
+            print(f"  [-> {fn}] {len(lst)} items")
+            for it in lst:
+                print(f"      . {it}")
+        if new_groups:
+            for label, lst in new_groups.items():
+                mark = " *suggest" if len(lst) >= NEW_TOPIC_SUGGEST_MIN else ""
+                print(f"  [NEW:{label}] {len(lst)} items{mark}")
+        if dropped:
+            print(f"  [dropped] {len(dropped)} items")
+        if keep_in_inbox:
+            print(f"  [inbox retain] {len(keep_in_inbox)} items (new-topic/verdict-missing)")
+
+        # Write to topic files immediately for this chunk.
         for fn, lst in assign.items():
             target = os.path.join(MEMORIES_DIR, fn)
             if not os.path.isfile(target):
-                # file disappeared during classification (race) -> fall back to inbox (safe).
+                # target disappeared during run (race/manual edit) -> revert to inbox
                 keep_in_inbox.extend(lst)
                 print(f"  [warn] target file gone {fn} — reverting to inbox retain")
                 continue
@@ -2159,20 +2261,58 @@ def cmd_classify_inbox(args):
             where = append_notes_to_md(target, None, tagged)
             print(f"  [write] {fn}: {len(lst)} items — {where}")
 
-    # rewrite inbox: keep only retained items (assigned and dropped removed).
-    _rewrite_inbox(inbox_path, keep_in_inbox)
-    print(f"[classify-inbox] inbox rewritten: {len(keep_in_inbox)} items retained")
+        # Accumulate for the final report.
+        for fn, lst in assign.items():
+            total_assign.setdefault(fn, []).extend(lst)
+        for label, lst in new_groups.items():
+            total_new_groups.setdefault(label, []).extend(lst)
+        total_dropped.extend(dropped)
 
-    # new topic suggestions (only labels with 3+ items)
-    suggestions = [label for label, lst in new_groups.items()
+        # Compute the new set of items that should remain in inbox after this chunk:
+        # remove the chunk's items from remaining_items, then add back keep_in_inbox.
+        # remaining_items is ordered; we need to drop exactly this chunk's items.
+        # The chunk is a contiguous slice of the original `items` list.
+        # After earlier successful chunks already rewrote the inbox, remaining_items
+        # is always the current inbox state -- so we drop all chunk items that were
+        # NOT kept (i.e. assign+drop), i.e. keep only keep_in_inbox from this chunk.
+        chunk_set_id = set(id(it) for it in chunk)  # identity-based: object ids unique per item
+        # Rebuild: drop all items that are in this chunk (by object identity) from remaining,
+        # then append the keep_in_inbox items for this chunk at the end.
+        remaining_items = [it for it in remaining_items if id(it) not in chunk_set_id]
+        remaining_items.extend(keep_in_inbox)
+
+        # Rewrite inbox atomically to reflect partial progress (surviving items only).
+        _rewrite_inbox(inbox_path, remaining_items)
+        n_items_left = len(remaining_items)
+        print(f"  [chunk {ci}] inbox rewritten: {n_items_left} items remaining")
+        n_ok += 1
+
+    # ---- summary ----
+    n_assigned_total = sum(len(v) for v in total_assign.values())
+    print(f"\n[classify-inbox] done: {n_chunks} chunks total / {n_ok} ok / {n_fail} failed")
+    print(f"[classify-inbox] items filed: {n_assigned_total} / dropped: {len(total_dropped)} / "
+          f"inbox remaining: {len(remaining_items)}")
+    if n_fail:
+        carry_items = sum(failed_chunk_sizes)
+        print(f"[classify-inbox] {carry_items} items carried over from {n_fail} failed chunk(s)",
+              file=sys.stderr)
+
+    if n_ok == 0:
+        # All chunks failed: inbox is untouched (or backed up at start but no chunk wrote).
+        print("[error] all chunks failed — inbox.md preserved, abnormal exit (rc=1).", file=sys.stderr)
+        return CLASSIFY_RC_FAIL
+
+    # At least one chunk succeeded: partial or full success.
+    suggestions = [label for label, lst in total_new_groups.items()
                    if len(lst) >= NEW_TOPIC_SUGGEST_MIN]
 
-    # reindex (topic files changed by assignments)
+    # Reindex (topic files changed by assignments).
     print("[classify-inbox] reindexing...")
     cmd_index(argparse.Namespace(lock=None))
 
-    # report (silent push only if there is something to report)
-    report = _build_classify_report(assign, suggestions, dropped, today)
+    # Report: include chunk failure note if any chunks failed.
+    report = _build_classify_report(total_assign, suggestions, total_dropped, today,
+                                    n_ok=n_ok, n_chunks=n_chunks)
     if report:
         print("\n-- report --\n" + report)
         if not args.no_push:
@@ -2193,8 +2333,14 @@ def cmd_inbox_count(args):
     return CLASSIFY_RC_OK if n > 0 else CLASSIFY_RC_EMPTY
 
 
-def _build_classify_report(assign, suggestions, dropped, today):
-    """Weekly classification report (user-friendly, no bold/asterisk emphasis). Returns None if nothing changed."""
+def _build_classify_report(assign, suggestions, dropped, today, n_ok=None, n_chunks=None):
+    """Weekly classification report (user-friendly, no bold/asterisk emphasis).
+    assign: {fname: [item, ...]} -- items filed to topic files (aggregated across chunks).
+    suggestions: [new-topic label, ...] -- labels with 3+ items needing new files.
+    dropped: [item, ...] -- items dropped across all chunks.
+    today: ISO date string.
+    n_ok/n_chunks: chunk counts (optional; included in report when some chunks failed).
+    Returns None if nothing changed (nothing to send)."""
     n_assigned = sum(len(v) for v in assign.values())
     if n_assigned == 0 and not suggestions:
         return None
@@ -2208,6 +2354,10 @@ def _build_classify_report(assign, suggestions, dropped, today):
         lines.append(f"- {len(dropped)} items dropped")
     if suggestions:
         lines.append("- New topics accumulated, create new files? -> " + ", ".join(suggestions))
+    # Chunk failure note: surface when partial failure occurred so the next run is expected.
+    if n_ok is not None and n_chunks is not None and n_ok < n_chunks:
+        n_fail = n_chunks - n_ok
+        lines.append(f"- {n_ok}/{n_chunks} chunks ok, {n_fail} failed (carried over to next run)")
     return "\n".join(lines)
 
 
@@ -2315,6 +2465,13 @@ def _hook_body_state_line():
         g = _lk.compute_macro_goals(t["eff_goal"], stats)
         gm = stats.get("goal_mode", "")
         wt = stats.get("weight_kg", "")
+        # DGN-285 guard: goal_mode is only ever set by real user setup.
+        # Empty goal_mode = fresh instance -> lifekit would render CODE
+        # DEFAULTS (weight 70 etc.) as if they were user facts and tell the
+        # model "do not re-ask". Fabricated stats poison fresh onboarding/
+        # consult flows, so stay silent instead.
+        if not str(gm).strip():
+            return None
         # Format float residuals (e.g. 84.0) as integer when exact, for readability. Does not affect computed values.
         def _n(x):
             try:
