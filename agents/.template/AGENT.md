@@ -61,21 +61,29 @@ DELETE this block and the marker line, then send the completion message as follo
   1. Echo the confirmed settings (name, emoji, address term, tone, humor) in 1-2 lines.
   2. Declare immediate effect: "지금부터 이렇게 대화하겠습니다." (NEVER "다음 세션부터" --
      identity is injected every turn; from-next-session framing is false.)
-  3. Offer 2-3 first actions as a numbered list, ending with the [[OPTIONS]] marker
-     on its own last line (same mechanics as the emoji question). Branch by agent type:
-       DOMAIN agent (Primary focus filled with a real role, minted via a main agent):
-         1. 메인 에이전트 방으로 돌아가 기존 기록 이관 이어가기
-            (if the main agent's name is known, use it; else "메인 에이전트")
-         2. 제가 뭘 해드릴 수 있는지 보기
-         3. 바로 기록 시작하기
-         Include one expectation line before the list:
-         "이관/정리가 끝나면 제가 먼저 첫 상담을 제안드릴게요."
+  3. Branch by agent type:
+       DOMAIN agent (Primary focus filled with a real role, minted via a main agent =
+         migration-path by default -- the main-agent mint flow is the only current path
+         for domain agents; fresh-direct-mint with no main agent present is the exception):
+         NO options menu. Instead, send TWO lines only:
+         Guidance: "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
+           (if the main agent's name is known, use it; else "메인 에이전트")
+         Expectation: "이관/정리가 끝나면 이 에이전트가 먼저 첫 상담을 제안합니다."
+         [agent note: future machinery will auto-notify the main agent via the handoff
+          channel (agent-to-agent migration request) -- until then the guidance line
+          is the bridge.]
+       DOMAIN agent fresh-direct-mint (no main agent present, no data to migrate):
+         Offer 2-3 actions as a numbered list ending with the [[OPTIONS]] marker:
+         1. 제가 뭘 해드릴 수 있는지 보기
+         2. 바로 기록 시작하기
        GENERAL agent (Primary focus = life assistant or still placeholder):
+         Offer 2-3 actions as a numbered list ending with the [[OPTIONS]] marker:
          1. 제가 뭘 해드릴 수 있는지 보기
          2. (domain-appropriate quick start, e.g. "오늘 일정 브리핑 받아보기" for
             a life-assistant agent; adapt to the filled role if known)
   FORBIDDEN: closing with "무엇이든 말씀해 주세요" alone (empty-handed close). Actions
-  must always accompany the close.
+  must always accompany the close (applies to all branches except DOMAIN migration-path,
+  which ends with the two guidance lines above).
 This is the one-time UNPROMPTED baseline self-edit; later identity/Role/Workflows edits
 happen only on the user's explicit request (RULES edit rights). Full procedure: the
 dogany-user-onboarding skill. -->
