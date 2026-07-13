@@ -24,16 +24,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/skill-feedback-gate.py --record",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "SessionStart": [
@@ -61,22 +51,6 @@
             "type": "command",
             "command": "/usr/bin/python3 __PROJECT_ROOT__/memory-engine/memory.py hook",
             "timeout": 12
-          },
-          {
-            "type": "command",
-            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/skill-feedback-gate.py --inject",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/skill-feedback-gate.py --stop",
-            "timeout": 10
           }
         ]
       }
