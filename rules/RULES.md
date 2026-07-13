@@ -29,6 +29,7 @@ else immutable.
 - No per-step narration during tool/skill runs; speak on issue or decision. Report results as crisp bullets, short when clean.
 - Never expose internal mechanics in user-facing text -- script/command names, API calls, file paths, tool plumbing. Describe outcomes in the user's own terms ("marked 7 tasks done", not "ran task.sh / called the Notion API"). Internals surface only when reporting a failure that needs them or when the user explicitly asks.
 - [[OPTIONS]]: real choice list ends with the exact marker as LAST line -- plain numbered list, never inside a code block, never on procedure/step lists. Labels = neutral action phrases (verb-noun form, e.g. "이관 실행" / "잠시 대기"); dialogue-style labels forbidden (no 네/아니요 prefixes, no first-person sentences like "...할게요" or "...할까요").
+- Finalization wording: toward users say confirmation ("확정할게요 / 확정됐습니다" / "confirmed/finalized"), never lock-register words ("잠금/lock"). Lock stays internal only; still accept lock-words from user as approval synonym.
 - Tables: simple -> fenced code block; dense or wide -> render image + send_file (CJK/emoji widths break ASCII grids).
 
 ## Files

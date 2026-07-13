@@ -97,7 +97,7 @@ OS_KIND=""                            # macos | linux
 # Claude model for the minted instance settings.json. Chosen at the model step
 # (recommended from the subscription tier). Empty until then; template default
 # stays "sonnet" and is only overwritten post-mint when this is set.
-DOGANY_MODEL="${DOGANY_MODEL:-}"      # sonnet | opus
+DOGANY_MODEL="${DOGANY_MODEL:-}"      # sonnet | opus | haiku
 # Browser automation (agent-browser) opt-in. 0 = skip (default), 1 = install.
 # Presettable via env for dry-run / scripted testing.
 ENABLE_BROWSER="${DOGANY_BROWSER:-0}"  # 0 skip (default), 1 install
@@ -1834,7 +1834,7 @@ PYEOF
 
 step_model() {
   hr
-  msg "[4/9] 모델 추천" "[4/9] Model recommendation"
+  msg "[4/9] 모델 선택" "[4/9] Model selection"
   hr
 
   # If a model was preset via env (dry-run/testing), honor it and skip detection.
@@ -1845,82 +1845,109 @@ step_model() {
 
   local rec_out="" rec="" rec_bridge=""
   rec_out="$(recommend_model 2>/dev/null || true)"
-  # recommend_model prints two lines: line1=model, line2=bridge_models.
+  # recommend_model prints two lines: line1=recommended model, line2=bridge_models.
   rec="$(printf '%s\n' "$rec_out" | head -1)"
   rec_bridge="$(printf '%s\n' "$rec_out" | sed -n '2p')"
 
-  if [ -z "$rec" ]; then
-    # Detection failed (no python3 / no file / parse error) -> ask plainly.
+  # Determine in-tier model list and default from the tier probe result.
+  # max tier -> sonnet, opus, haiku (3 options; opus recommended).
+  # non-max / unknown -> sonnet, haiku (2 options; sonnet recommended).
+  local in_tier_models="" default_model="" bridge_fallback=""
+  if [ "$rec" = "opus" ]; then
+    in_tier_models="opus sonnet haiku"
+    default_model="opus"
+    bridge_fallback="${rec_bridge:-sonnet,opus,haiku}"
+    msg "구독 등급 기준 모델 (max tier -- opus 추천):" \
+        "Models available for your subscription (max tier -- opus recommended):"
+  elif [ -n "$rec" ]; then
+    in_tier_models="sonnet haiku"
+    default_model="sonnet"
+    bridge_fallback="${rec_bridge:-sonnet,haiku}"
+    msg "구독 등급 기준 모델 (sonnet 추천):" \
+        "Models available for your subscription (sonnet recommended):"
+  else
+    # Detection failed (no python3 / no file / parse error) -> show all three.
+    in_tier_models="sonnet opus haiku"
+    default_model="sonnet"
+    bridge_fallback="sonnet,opus,haiku"
     msg "구독 등급을 확인하지 못했습니다. 사용할 모델을 선택하세요:" \
         "Could not detect your subscription tier. Choose a model:"
-    # DGN-136: arrow-key selector on a TTY; typed numbered prompt otherwise.
-    if select_ui_available; then
-      local m_opt1 m_opt2 m_title
-      if [ "${DOGANY_LANG:-en}" = "ko" ]; then
-        m_title="사용할 모델을 선택하세요:"
-        m_opt1="sonnet (기본, 빠르고 경제적)"
-        m_opt2="opus   (더 강력한 추론, 더 느림/비쌈)"
-      else
-        m_title="Choose a model:"
-        m_opt1="sonnet (default, fast and economical)"
-        m_opt2="opus   (stronger reasoning, slower/costlier)"
-      fi
-      select_menu "$m_title" 0 "$m_opt1" "$m_opt2"
-      if [ "$SELECT_RESULT" = "1" ]; then
-        DOGANY_MODEL="opus"
-        BRIDGE_MODELS="sonnet,opus,haiku"
-      else
-        DOGANY_MODEL="sonnet"
-        BRIDGE_MODELS="sonnet,haiku"
-      fi
-    else
-      msg "  1) sonnet (기본, 빠르고 경제적)" "  1) sonnet (default, fast and economical)"
-      msg "  2) opus   (더 강력한 추론, 더 느림/비쌈)" "  2) opus   (stronger reasoning, slower/costlier)"
-      local choice=""
-      ask choice "번호 선택 [1]: " "Pick a number [1]: " "1"
-      case "$choice" in
-        2|opus)
-          DOGANY_MODEL="opus"
-          BRIDGE_MODELS="sonnet,opus,haiku"
-          ;;
-        *)
-          DOGANY_MODEL="sonnet"
-          BRIDGE_MODELS="sonnet,haiku"
-          ;;
-      esac
-    fi
-    msg "모델: $DOGANY_MODEL" "Model: $DOGANY_MODEL"
-    return 0
   fi
 
-  # Recommendation available. Show it; the default answer keeps the recommended
-  # model, but the user can switch explicitly.
-  # DGN-167: also capture the bridge model whitelist from the tier probe.
-  if [ "$rec" = "opus" ]; then
-    msg "구독 등급 기준 추천 모델: opus (강력한 추론)." \
-        "Recommended model for your subscription: opus (stronger reasoning)."
-    if confirm "opus 로 설정할까요? (n = sonnet)" "Use opus? (n = sonnet)" "y"; then
-      DOGANY_MODEL="opus"
-      # Max tier detected -> all three models available.
-      BRIDGE_MODELS="${rec_bridge:-sonnet,opus,haiku}"
+  # Build option labels (consistent one-line guidance per model).
+  _model_label() {
+    case "$1" in
+      sonnet) if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+                echo "sonnet -- 균형 잡힌 기본값 (빠르고 경제적)"
+              else
+                echo "sonnet -- balanced default (fast and economical)"
+              fi ;;
+      opus)   if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+                echo "opus   -- 최고 추론 성능 (더 느림/비쌈)"
+              else
+                echo "opus   -- strongest reasoning, higher cost (slower)"
+              fi ;;
+      haiku)  if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+                echo "haiku  -- 가볍고 저렴함 (단순 작업용)"
+              else
+                echo "haiku  -- light and cheap (simple tasks)"
+              fi ;;
+    esac
+  }
+
+  # Find the 1-based index of the default model in in_tier_models (for select_menu default).
+  local def_idx=0 idx=0
+  for m in $in_tier_models; do
+    if [ "$m" = "$default_model" ]; then def_idx=$idx; break; fi
+    idx=$((idx + 1))
+  done
+
+  # DGN-136: arrow-key selector on a TTY; typed numbered prompt otherwise.
+  if select_ui_available; then
+    local m_title m_opts
+    if [ "${DOGANY_LANG:-en}" = "ko" ]; then
+      m_title="모델을 선택하세요 (기본: $default_model):"
     else
-      DOGANY_MODEL="sonnet"
-      # User chose sonnet even on max tier -> still expose full model list.
-      BRIDGE_MODELS="${rec_bridge:-sonnet,opus,haiku}"
+      m_title="Choose a model (default: $default_model):"
     fi
+    m_opts=()
+    for m in $in_tier_models; do m_opts+=("$(_model_label "$m")"); done
+    select_menu "$m_title" "$def_idx" "${m_opts[@]}"
+    local chosen_idx="$SELECT_RESULT"
+    local chosen_m="" idx=0
+    for m in $in_tier_models; do
+      if [ "$idx" = "$chosen_idx" ]; then chosen_m="$m"; break; fi
+      idx=$((idx + 1))
+    done
+    DOGANY_MODEL="${chosen_m:-$default_model}"
   else
-    msg "구독 등급 기준 추천 모델: sonnet (빠르고 경제적)." \
-        "Recommended model for your subscription: sonnet (fast and economical)."
-    if confirm "sonnet 으로 설정할까요? (n = opus)" "Use sonnet? (n = opus)" "y"; then
-      DOGANY_MODEL="sonnet"
-      BRIDGE_MODELS="${rec_bridge:-sonnet,haiku}"
-    else
-      DOGANY_MODEL="opus"
-      # User overrode to opus on a non-max tier -> keep sonnet,haiku whitelist
-      # (opus will still work via full model id; /model picker stays economical).
-      BRIDGE_MODELS="${rec_bridge:-sonnet,haiku}"
-    fi
+    local n=1
+    for m in $in_tier_models; do
+      local lbl
+      lbl="$(_model_label "$m")"
+      if [ "$m" = "$default_model" ]; then
+        msg "  $n) $lbl [default]" "  $n) $lbl [default]"
+      else
+        msg "  $n) $lbl" "  $n) $lbl"
+      fi
+      n=$((n + 1))
+    done
+    local choice=""
+    ask choice "번호 선택 [1]: " "Pick a number [1]: " "1"
+    # Map the chosen number to the model name.
+    local chosen_m="" idx=1
+    for m in $in_tier_models; do
+      if [ "$choice" = "$idx" ] || [ "$choice" = "$m" ]; then chosen_m="$m"; break; fi
+      idx=$((idx + 1))
+    done
+    DOGANY_MODEL="${chosen_m:-$default_model}"
   fi
+
+  # BRIDGE_MODELS: for max tier always expose all three (the full model list stays
+  # even if the user picked sonnet/haiku as the default). For non-max keep the
+  # tier-derived whitelist regardless of which non-opus model was chosen.
+  BRIDGE_MODELS="$bridge_fallback"
+
   msg "모델: $DOGANY_MODEL" "Model: $DOGANY_MODEL"
 }
 
