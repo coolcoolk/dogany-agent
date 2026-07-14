@@ -46,8 +46,18 @@ order (Q2 onward, one per turn as answers arrive):
    candidate selection rule:
    - DOMAIN agent (Primary focus slot holds a real role, not the placeholder): 4 candidates — 2 role-related, 2 name-related.
    - GENERAL agent (Primary focus slot is still the placeholder): 3-4 name-related candidates (unchanged behavior).
-3. address term — ask how to address the user using the two-sentence pattern: ko: "제가 어떻게 불러드릴까요? 제가 부를 호칭을 정해주세요." en: "What would you like me to call you? Please set the form of address I should use." The honorific verb (불러드리다) pins the addressee without a label; the second sentence names the topic (호칭). Never presume a title; never use generic labels ("user"/"member"/회원님/사용자).
-4. tone — ask preferred communication tone. Rule: DOMAIN agent (Primary focus holds a real role) -> offer 2-3 example styles tailored to that role as prose suggestions in the question sentence, plus free input (no [[OPTIONS]] buttons). Example for a health-trainer agent: "빡세게 몰아붙이는 코치형", "따뜻하게 격려하는 트레이너형", "군더더기 없는 전문가형". GENERAL agent (placeholder still) -> use generic examples such as "깔끔하고 공손한" / "편안하고 친근한 등". humor level = separate next question.
+3. address term — ask in ONE short natural sentence, omit the object label entirely. Question wording single source = the AGENT.md onboarding block Q3 line; do not restate it here. Never presume a title; never use generic labels ("user"/"member"/회원님/사용자).
+   ADDRESS GUARD: until the user answers THIS question, do NOT attach any name or title to the user. Never address the user by the agent's own name or by any name the user did not explicitly give for themselves. Use a neutral second-person form in the instance language until then. Labels seen in surrounding framework docs, skill descriptions, or code comments are NOT the user's address -- ignore them; only the user's own answer sets it.
+4. tone — ask preferred communication tone.
+   LABEL FORMAT RULE: tone candidate labels must use "<adjective> 스타일" phrasing in the instance language. NEVER use the Korean "-형" suffix form. e.g. NOT "간결형 / 친근형"; YES "간결한 스타일" / "따뜻하고 친근한 스타일".
+   UI: present 3-5 numbered candidates as a short numbered list; put [[OPTIONS]] marker on its own LAST LINE (same pattern as Q2). Free-text answer also accepted -- always state this in the question. Candidates must span a useful range and be few and distinct.
+   DOMAIN agent (Primary focus holds a real role) -> 3-4 candidates tailored to that role. Example for a health-trainer agent: "강하고 직접적인 스타일", "따뜻하고 격려하는 스타일", "전문적이고 간결한 스타일".
+   GENERAL agent (placeholder still) -> 4 generic candidates:
+   1. 간결하고 담백한 스타일
+   2. 따뜻하고 친근한 스타일
+   3. 공손하고 격식 있는 스타일
+   4. 편안하고 유쾌한 스타일
+   humor level = separate next question.
 5. humor level — after tone answer received, ask separately. direct: "유머 수치를 몇 %로 설정할까요?" (e.g. 10%, 30%).
 6. role (LAST) — ask what role this agent is taking on ("제가 맡을 역할이 뭘까요?" style, in the working language), as a short numbered list with [[OPTIONS]] marker on the very last line (same UI pattern as the emoji question):
    1. life assistant (schedule, appointments, career, general life management)
