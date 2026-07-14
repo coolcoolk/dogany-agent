@@ -30,6 +30,9 @@
     </dict>
     <key>RunAtLoad</key>
     <false/>
+    <!-- headless claude jobs: Interactive dodges background App Nap / timer-coalescing throttling -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
     <key>StandardOutPath</key>
     <string>__ROOT__/runtime/logs/__NAME__.stdout.log</string>
     <key>StandardErrorPath</key>
