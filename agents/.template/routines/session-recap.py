@@ -9,7 +9,7 @@ stdout(JSON): {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": "..."}}
 No output = nothing injected (no previous session / not a target).
 """
-import sys, os, json, glob
+import sys, os, json, glob, re
 
 PAIRS = 4          # number of trailing user/assistant pairs from the last session
 MAX_MSGS = PAIRS * 2
@@ -80,7 +80,7 @@ def main():
         cur = os.path.basename(tp)
     else:
         cwd = data.get("cwd") or os.getcwd()
-        enc = cwd.replace("/", "-")
+        enc = re.sub(r"[^A-Za-z0-9]", "-", cwd)
         proj_dir = os.path.expanduser(f"~/.claude/projects/{enc}")
         cur = os.path.basename(tp) if tp else None
     if not os.path.isdir(proj_dir):

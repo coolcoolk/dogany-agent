@@ -9,6 +9,7 @@ import asyncio
 import html
 import logging
 import os
+import re
 import signal
 import subprocess
 import time
@@ -1246,7 +1247,7 @@ class TelegramBot:
 
     @property
     def _conversations_dir(self) -> Path:
-        project_dir_name = str(PROJECT_ROOT).replace("/", "-").replace("_", "-")
+        project_dir_name = re.sub(r"[^A-Za-z0-9]", "-", str(PROJECT_ROOT))
         return Path.home() / ".claude" / "projects" / project_dir_name
 
     def _list_sessions(self, limit: int = 10):

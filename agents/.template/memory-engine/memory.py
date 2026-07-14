@@ -372,6 +372,20 @@ def init_db(conn):
             value TEXT
         );
 
+        -- DGN-153: consolidate partial-failure retry queue. A chunk whose
+        -- first-pass compression fails is preserved here (instead of being
+        -- silently dropped while the watermark advances) and retried on the
+        -- next consolidate run. retry_count counts failed RETRY attempts
+        -- (0 = queued, not yet retried); at CONSOLIDATE_RETRY_MAX the chunk
+        -- moves to the dead-letter file (never deleted).
+        CREATE TABLE IF NOT EXISTS consolidate_retry_queue (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_text   TEXT NOT NULL,
+            first_failed TEXT NOT NULL,   -- ISO8601 of the run that queued it
+            retry_count  INTEGER NOT NULL DEFAULT 0,
+            last_error   TEXT
+        );
+
         -- Same-day rolling index: mechanically loads today's raw conversations not yet consolidated.
         -- Zero LLM. After the dawn distillation turns them into real notes, that day's rows are pruned (end of consolidate).
         CREATE TABLE IF NOT EXISTS transcript_notes (
@@ -946,7 +960,7 @@ def cmd_write(args):
 # Transcript location (Claude Code project logs). __AGENT_LABEL__ workspace sessions.
 TRANSCRIPT_GLOB = os.path.join(
     os.path.expanduser("~/.claude/projects"),
-    os.path.normpath(os.path.join(HERE, "..")).replace("/", "-"),
+    re.sub(r"[^A-Za-z0-9]", "-", os.path.normpath(os.path.join(HERE, ".."))),
     "*.jsonl",
 )
 TARGET_MEMORY_MD = os.path.join(MEMORIES_DIR, "inbox.md")
@@ -1490,11 +1504,12 @@ def _chunk_convo(convo, max_chars=CONSOLIDATE_CHUNK_CHARS):
 def compress_convo_chunked(convo):
     """Split a long conversation into chunks and compress each with CONSOLIDATE_PROMPT (Sonnet).
     First pass extracts liberally (recall-first); rule-filter and second-stage filter handle precision.
-    If one chunk fails, that chunk is skipped and processing continues (partial failure allowed).
-    Returns: (item list, number of failed chunks)."""
+    If one chunk fails, its raw text is returned to the caller so it can be queued
+    for retry (DGN-153) and processing continues (partial failure allowed).
+    Returns: (item list, list of (chunk_text, error str) for failed chunks)."""
     chunks = _chunk_convo(convo)
     all_items = []
-    failed = 0
+    failed_chunks = []
     seen = set()
     for i, ch in enumerate(chunks, 1):
         try:
@@ -1502,16 +1517,119 @@ def compress_convo_chunked(convo):
                 ch, prompt_prefix=CONSOLIDATE_PROMPT, model=CONSOLIDATE_MODEL
             )
         except RuntimeError as e:
-            failed += 1
-            print(f"  [warn] chunk {i}/{len(chunks)} compression failed (skipping): {e}", file=sys.stderr)
+            failed_chunks.append((ch, str(e)))
+            print(f"  [warn] chunk {i}/{len(chunks)} compression failed (will queue for retry): {e}", file=sys.stderr)
             continue
         for it in items:
             key = it.strip().lower()
             if key and key not in seen:
                 seen.add(key)
                 all_items.append(it)
-    print(f"[consolidate] {len(chunks) - failed}/{len(chunks)} chunks compressed successfully")
-    return all_items, failed
+    print(f"[consolidate] {len(chunks) - len(failed_chunks)}/{len(chunks)} chunks compressed successfully")
+    return all_items, failed_chunks
+
+
+# ----------------------------------------------------------------------
+# DGN-153: consolidate partial-failure retry queue.
+# A chunk whose first-pass compression fails is persisted to state.db
+# (consolidate_retry_queue) so the watermark can advance without silently
+# losing it; the next consolidate run retries it. A chunk that keeps failing
+# survives in the queue until CONSOLIDATE_RETRY_MAX failed retries, then moves
+# to the append-only dead-letter file below (never auto-deleted --
+# prune_raw_archive only touches *.jsonl.gz). If the dead-letter write fails,
+# the chunk stays in the queue: a failed chunk is NEVER silently dropped.
+# ----------------------------------------------------------------------
+CONSOLIDATE_RETRY_MAX = 5
+CONSOLIDATE_DEADLETTER_PATH = os.path.join(
+    RAW_ARCHIVE_DIR, "consolidate-dead-letter.jsonl"
+)
+
+
+def _retryq_load(conn):
+    """Load chunks queued for retry by previous runs (oldest first)."""
+    return conn.execute(
+        "SELECT id, chunk_text, first_failed, retry_count FROM consolidate_retry_queue ORDER BY id"
+    ).fetchall()
+
+
+def _retryq_add(conn, chunk_text, error, now):
+    """Persist a failed chunk so the next consolidate run retries it."""
+    conn.execute(
+        "INSERT INTO consolidate_retry_queue(chunk_text, first_failed, retry_count, last_error) "
+        "VALUES(?, ?, 0, ?)",
+        (chunk_text, now.strftime("%Y-%m-%dT%H:%M:%SZ"), str(error)[:500]),
+    )
+    conn.commit()
+
+
+def _retryq_deadletter(conn, row, error):
+    """Move a capped-out chunk to the dead-letter file (append-only jsonl),
+    then remove it from the queue. Returns True on success. On write failure
+    the row is kept in the queue instead (never silently dropped)."""
+    rec = {
+        "first_failed": row["first_failed"],
+        "retry_count": row["retry_count"] + 1,
+        "last_error": str(error)[:500],
+        "chunk_text": row["chunk_text"],
+    }
+    try:
+        os.makedirs(os.path.dirname(CONSOLIDATE_DEADLETTER_PATH), exist_ok=True)
+        with open(CONSOLIDATE_DEADLETTER_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(
+            f"  [warn] dead-letter write failed -- chunk id={row['id']} stays in retry queue: {e}",
+            file=sys.stderr,
+        )
+        return False
+    conn.execute("DELETE FROM consolidate_retry_queue WHERE id=?", (row["id"],))
+    conn.commit()
+    return True
+
+
+def _retryq_process(conn, rows):
+    """Retry compression for chunks queued by previous runs.
+    Success -> dequeue and return the extracted items. Failure -> retry_count+1;
+    at CONSOLIDATE_RETRY_MAX failed retries the chunk moves to the dead-letter
+    file. Returns: (item list, still-queued count)."""
+    items = []
+    drained = 0
+    still = 0
+    dead = 0
+    for row in rows:
+        try:
+            got = compress_with_haiku(
+                row["chunk_text"], prompt_prefix=CONSOLIDATE_PROMPT, model=CONSOLIDATE_MODEL
+            )
+        except RuntimeError as e:
+            attempts = row["retry_count"] + 1
+            print(
+                f"  [warn] retry of queued chunk id={row['id']} failed "
+                f"(attempt {attempts}/{CONSOLIDATE_RETRY_MAX}): {e}",
+                file=sys.stderr,
+            )
+            if attempts >= CONSOLIDATE_RETRY_MAX:
+                if _retryq_deadletter(conn, row, e):
+                    dead += 1
+                else:
+                    still += 1
+            else:
+                conn.execute(
+                    "UPDATE consolidate_retry_queue SET retry_count=?, last_error=? WHERE id=?",
+                    (attempts, str(e)[:500], row["id"]),
+                )
+                conn.commit()
+                still += 1
+            continue
+        conn.execute("DELETE FROM consolidate_retry_queue WHERE id=?", (row["id"],))
+        conn.commit()
+        drained += 1
+        items.extend(got)
+    line = f"[consolidate] retry queue: {drained} chunk(s) drained / {still} still queued for retry"
+    if dead:
+        line += f" / {dead} moved to dead-letter ({CONSOLIDATE_DEADLETTER_PATH})"
+    print(line)
+    return items, still
 
 
 def _load_taxonomy():
@@ -1702,37 +1820,78 @@ def cmd_consolidate(args):
 
     # 2) collect transcript incrementally
     convo, max_ts, n_msgs = collect_transcript(watermark, now)
-    if not convo:
+    # DGN-153: snapshot the retry queue BEFORE this run queues new failures,
+    # so a chunk is never retried in the same run it failed in.
+    pending_retries = _retryq_load(conn)
+    if not convo and not pending_retries:
         print("No new conversations to consolidate.")
         conn.close()
         return 0
-    print(f"[consolidate] {n_msgs} messages collected (max ts={max_ts})")
+    if convo:
+        print(f"[consolidate] {n_msgs} messages collected (max ts={max_ts})")
+    else:
+        print(f"[consolidate] no new conversations -- retry queue only ({len(pending_retries)} pending chunk(s))")
 
     # 2.5) raw transcript archive (DGN-093): before the watermark advance/prune discards them,
     # append the consumed span (TEXT ONLY) to a gzip monthly archive. Uses the same
     # source/watermark (_iter_transcript_rows) as collect_transcript so it does not read
     # beyond the consumed span. Skipped on dry-run (no state changes).
-    if not args.dry_run:
+    if convo and not args.dry_run:
         n_arch = archive_raw_transcript(watermark, now)
         print(f"[consolidate] raw archive: {n_arch} rows stored -> {RAW_ARCHIVE_DIR}")
 
     # 3) first-pass compression (Sonnet, extract liberally). Split into chunks if long.
-    candidates, compress_failed = compress_convo_chunked(convo)
-    print(f"[consolidate] first-pass candidates: {len(candidates)}")
+    if convo:
+        candidates, failed_chunks = compress_convo_chunked(convo)
+        print(f"[consolidate] first-pass candidates: {len(candidates)}")
+    else:
+        candidates, failed_chunks = [], []
+    compress_failed = len(failed_chunks)
+
+    # 3a) full-failure guard (pre-DGN-153 semantics kept): if ALL chunks failed and
+    # produced 0 candidates, do NOT advance the watermark -- the whole span is
+    # re-collected next night. Nothing is queued in this path (queueing plus a
+    # preserved watermark would double-process the span); pending retries are
+    # also left untouched for the next run.
+    if convo and not candidates and compress_failed and compress_failed == len(_chunk_convo(convo)):
+        print("All chunks failed compression -- watermark preserved (retry next run).")
+        if pending_retries:
+            print(f"[consolidate] retry queue untouched ({len(pending_retries)} chunk(s) still queued for retry)")
+        conn.close()
+        if not args.dry_run and not args.no_push:
+            rep = _build_consolidate_report([], 0, True, 0)
+            if rep:
+                _send_silent_report(rep)
+        return 1
+
+    # 3b) DGN-153 partial failure: persist failed chunks to the retry queue BEFORE
+    # the watermark advances, so the next run retries them instead of losing them.
+    if failed_chunks:
+        if args.dry_run:
+            print(f"[consolidate] [dry-run] {len(failed_chunks)} chunk(s) would be queued for retry")
+        else:
+            for ch_text, err in failed_chunks:
+                _retryq_add(conn, ch_text, err, now)
+            print(f"[consolidate] {len(failed_chunks)} chunk(s) queued for retry (next run)")
+
+    # 3c) DGN-153: retry chunks queued by previous runs; successes are dequeued and
+    # merged into this run's candidates (then flow through the normal
+    # filter/dedup/store pipeline). Failures stay queued (or dead-letter at cap).
+    if pending_retries:
+        if args.dry_run:
+            print(f"[consolidate] [dry-run] retry queue skipped ({len(pending_retries)} chunk(s) pending)")
+        else:
+            retried_items, _still = _retryq_process(conn, pending_retries)
+            merged_seen = {c.strip().lower() for c in candidates}
+            for it in retried_items:
+                key = it.strip().lower()
+                if key and key not in merged_seen:
+                    merged_seen.add(key)
+                    candidates.append(it)
 
     if not candidates:
-        # If ALL chunks failed compression and produced 0 candidates, do NOT advance the
-        # watermark (retry the same span next night). If there was simply nothing to remember, advance.
-        if compress_failed and compress_failed == len(_chunk_convo(convo)):
-            print("All chunks failed compression -- watermark preserved (retry next run).")
-            conn.close()
-            if not args.dry_run and not args.no_push:
-                rep = _build_consolidate_report([], 0, True, 0)
-                if rep:
-                    _send_silent_report(rep)
-            return 1
         print("No persistent facts worth remembering.")
-        if not args.dry_run:
+        if not args.dry_run and max_ts:
             _ts_save_watermark(conn, max_ts)
             prune_transcript_fts(conn, max_ts)
         conn.close()
@@ -1753,7 +1912,7 @@ def cmd_consolidate(args):
 
     if not candidates:
         print("No persistent facts passed the filter.")
-        if not args.dry_run:
+        if not args.dry_run and max_ts:
             _ts_save_watermark(conn, max_ts)
             prune_transcript_fts(conn, max_ts)
         conn.close()
@@ -1835,9 +1994,11 @@ def cmd_consolidate(args):
         print(f"[consolidate] {where}")
 
     # 6) advance watermark + prune same-day rolling index (delete raw rows with ts<=max_ts)
-    _ts_save_watermark(conn, max_ts)
-    pruned = prune_transcript_fts(conn, max_ts)
-    print(f"[consolidate] watermark advanced -> {max_ts} ({pruned} same-day raw rows pruned)")
+    # DGN-153: skipped on a retry-only run (no new span consumed -> max_ts is None).
+    if max_ts:
+        _ts_save_watermark(conn, max_ts)
+        pruned = prune_transcript_fts(conn, max_ts)
+        print(f"[consolidate] watermark advanced -> {max_ts} ({pruned} same-day raw rows pruned)")
     conn.close()
 
     # 6b) prune raw archive retention (DGN-093): delete monthly archives older than ~365 days.
