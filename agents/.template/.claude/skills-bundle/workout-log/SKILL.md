@@ -139,7 +139,7 @@ delivery path branch: card.py default output = `/tmp/diet_card.png`. /tmp outsid
 
 ```bash
 RENDER_PY="${RENDER_PYTHON:-}"
-[ -z "$RENDER_PY" ] && "$PROJECT_ROOT/bridge/venv/bin/python" -c 'import matplotlib' 2>/dev/null && RENDER_PY="$PROJECT_ROOT/bridge/venv/bin/python"
+[ -z "$RENDER_PY" ] && [ -x "$HOME/dogany/.venvs/render/bin/python" ] && RENDER_PY="$HOME/dogany/.venvs/render/bin/python"
 [ -z "$RENDER_PY" ] && command -v python3 >/dev/null && python3 -c 'import matplotlib' 2>/dev/null && RENDER_PY="$(command -v python3)"
 [ -z "$RENDER_PY" ] && RENDER_PY="python3"
 

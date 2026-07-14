@@ -237,14 +237,14 @@ card.py needs matplotlib. resolve interpreter:
 
 ```bash
 RENDER_PY="${RENDER_PYTHON:-}"
-[ -z "$RENDER_PY" ] && RENDER_PY="$($PROJECT_ROOT/bridge/venv/bin/python -c 'import matplotlib' 2>/dev/null && echo $PROJECT_ROOT/bridge/venv/bin/python)"
+[ -z "$RENDER_PY" ] && [ -x "$HOME/dogany/.venvs/render/bin/python" ] && RENDER_PY="$HOME/dogany/.venvs/render/bin/python"
 [ -z "$RENDER_PY" ] && command -v python3 >/dev/null && python3 -c 'import matplotlib' 2>/dev/null && RENDER_PY="$(command -v python3)"
 [ -z "$RENDER_PY" ] && RENDER_PY="python3"   # last fallback (card.py exits code 3 gracefully if missing)
 
 OUT=$("$RENDER_PY" .claude/skills/diet-log/card.py '{"output":"files/outbox/diet_card.png"}')
 ```
 
-- python resolution priority: `RENDER_PYTHON` (env) -> project bridge venv -> PATH python3 (only if matplotlib present) -> `python3`.
+- python resolution priority: `RENDER_PYTHON` (env) -> `~/dogany/.venvs/render` -> PATH python3 (only if matplotlib present) -> `python3`.
 - card.py: matplotlib not found -> exit code 3 + stderr message (graceful skip). report text-only: "카드 렌더 스킵 — matplotlib 미설치".
 - fonts: bundled `fonts/ASDGN_*.ttf` preferred (path-independent). absent -> try system TTC (`DIET_CARD_TTC` env or default candidates). also absent -> matplotlib default font (CJK may break, warning only).
 
