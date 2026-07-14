@@ -10,6 +10,11 @@ __USER_LABEL__ assigns recurring task -> agent registers it end-to-end. macOS = 
 ## trigger signals
 - "매일/매주 몇시에 X 해줘", "정기적으로", "크론 걸어줘", "루틴으로 만들어"
 
+## routing gate -- NOT this skill for user life schedules
+- cron/plist is ONLY for AGENT-SIDE system jobs: briefings, sweeps, syncs, notifications the agent fires autonomously.
+- if the recurring thing is __USER_LABEL__'s life schedule (commute, workout, meal, sleep, any human-calendar event they want visible/tracked), do NOT register a cron. route to the lifekit routine engine: `lifekit.sh routine add ...` (requires lifekit routine machinery).
+- litmus: "Would __USER_LABEL__ expect to SEE this on their calendar?" -> lifekit routine, not cron.
+
 ## core rules
 - do not just hand over code to __USER_LABEL__ — agent registers end-to-end.
 - exception: gateway/main bot restart/stop -> do not do alone (__USER_LABEL__ must approve). new routine job load -> agent does directly.
