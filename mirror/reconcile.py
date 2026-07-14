@@ -147,6 +147,12 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
 
     missing, mismatched, expected_tombstones = [], [], []
     owner_deleted = []
+    # DGN-302: abandoned rows whose gcal event is still confirmed (the cancel
+    # push was never enqueued). Tracked separately so repair can enqueue a
+    # sync via the normal outbox path (push_calendar projects abandoned ->
+    # cancelled). Foreign-item guard is unchanged: we only reach here via
+    # cal_by_ulid, which only contains our-ulid items.
+    abandoned_gcal_drift = []
     checked = 0
     sot_rows = {}
     for r in src_conn.execute("SELECT * FROM event").fetchall():
@@ -158,7 +164,8 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
         sot_rows[ev["ulid"]] = ev
         checked += 1
         target = A.route_surface(ev)
-        abandoned = (ev.get("settled_outcome") == "abandoned")
+        abandoned = (ev.get("settled_outcome") == "abandoned"
+                     or ev.get("status") == "abandoned")
 
         cal_it = cal_by_ulid.pop(ev["ulid"], None)
         task_it = task_by_ulid.pop(ev["ulid"], None)
@@ -168,9 +175,12 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             if cal_it is not None and cal_it.get("status") == "cancelled":
                 expected_tombstones.append(("abandoned-cal", ev["ulid"]))
             elif cal_it is not None:
-                mismatched.append(("calendar", ev["ulid"],
-                                   {"expected": "cancelled tombstone",
-                                    "got": cal_it.get("status")}))
+                # DGN-302: gcal event still confirmed for an abandoned row =
+                # drift. With repair=True we enqueue a sync so the drain
+                # pushes status=cancelled. Classified separately from
+                # mismatched so the repair path is targeted and the report
+                # is informative.
+                abandoned_gcal_drift.append(ev["ulid"])
             if task_it is not None and not task_it.get("deleted"):
                 mismatched.append(("tasks", ev["ulid"],
                                    {"expected": "deleted",
@@ -262,11 +272,21 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             if A.outbox_enqueue(state_conn, ulid):
                 repaired += 1
 
+    # DGN-302: enqueue a sync for each abandoned-gcal-drift row so the drain
+    # pushes the cancel. Dead-row guard applies here too (no revival loop).
+    abandoned_cancel_enqueued = 0
+    if repair:
+        for ulid in abandoned_gcal_drift:
+            if ulid not in dead_ulids:
+                if A.outbox_enqueue(state_conn, ulid):
+                    abandoned_cancel_enqueued += 1
+
     retry = retry_failed(state_conn, src_conn)
 
     # owner_deleted is auto-handled (dec-011 applied + notified) -> it does
     # not require attention by itself.
     verdict = ("CLEAN" if not missing and not mismatched and not orphans
+               and not abandoned_gcal_drift
                else "ATTENTION")
     summary = {
         "checked": checked,
@@ -285,6 +305,9 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
         "mismatch_detail": mismatched[:20],
         "orphan_detail": orphans[:20],
         "owner_deleted_detail": owner_deleted[:20],
+        "abandoned_gcal_drift": len(abandoned_gcal_drift),
+        "abandoned_cancel_enqueued": abandoned_cancel_enqueued,
+        "abandoned_gcal_drift_detail": abandoned_gcal_drift[:20],
     }
     # g6-13 (Metal ruling): CLEAN = silent. The weekly report reaches the
     # owner ONLY when something needs attention. Korean only (finding 6).

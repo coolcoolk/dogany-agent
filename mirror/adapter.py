@@ -1961,6 +1961,33 @@ def sweep_step(state_conn, src_conn):
             if new_status is not None and new_status != ev["status"]:
                 changed.append((ev["ulid"], new_status))
                 outbox_enqueue(state_conn, ev["ulid"])
+
+    # DGN-302: abandoned-transition tombstone scan.
+    # The main scan above is gated on settled_at IS NULL, which correctly
+    # excludes settled rows. But abandoned rows (settled_outcome='abandoned'
+    # OR status='abandoned') may still hold a push_snapshot from when they
+    # were last mirrored as 'confirmed'. The cancel push was never enqueued
+    # because the settlement happened outside the sweep window. Find every
+    # abandoned in-scope row that has a snapshot whose gcal_status is NOT
+    # already 'cancelled', and enqueue a sync so push_calendar projects the
+    # correct 'cancelled' status. Convergence: on the second sweep the
+    # snapshot is updated to gcal_status='cancelled' by the drain, so the
+    # hash comparison below finds nothing new and no re-enqueue happens.
+    abandoned_rows = src_conn.execute(
+        "SELECT * FROM event WHERE "
+        "(settled_outcome='abandoned' OR status='abandoned')").fetchall()
+    for r in abandoned_rows:
+        ev = dict(r)
+        if not in_mirror_scope(ev):
+            continue
+        snap_hash, snap = load_push_snapshot(state_conn, ev["ulid"])
+        if snap_hash is None:
+            continue  # no snapshot: row was never pushed, nothing to cancel
+        if snap.get("gcal_status") == "cancelled":
+            continue  # snapshot already reflects cancelled -- converged
+        if outbox_enqueue(state_conn, ev["ulid"]):
+            changed.append((ev["ulid"], "abandoned"))
+
     return changed
 
 
