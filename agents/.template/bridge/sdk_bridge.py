@@ -30,7 +30,12 @@ from claude_agent_sdk import (
 )
 
 from bridge import messages
-from bridge.config import CLAUDE_CLI_PATH, PROCESS_TIMEOUT, config
+from bridge.config import (
+    BRIDGE_SCAFFOLD_GUARD,
+    CLAUDE_CLI_PATH,
+    PROCESS_TIMEOUT,
+    config,
+)
 from bridge.options import OPTIONS_MARKER, classify_is_choice, has_numbered_list
 from bridge.permissions import extract_outside_paths, extract_protected_paths
 
@@ -124,6 +129,49 @@ def _no_pending_guard(tool_name: str, tool_input: Any):
     if protected or outside:
         return PermissionResultDeny(message=messages.OUTSIDE_PATH_DENY_NO_CONFIRM)
     return PermissionResultAllow()
+
+
+# DGN-285 (leak class 2): harness-owned injection-signature line prefixes.
+# Persona output can never legitimately OPEN a line with these -- they are
+# emitted by the harness's UserPromptSubmit hook plumbing. Observed verbatim
+# in model-side transcript-regurgitation leaks (Darkwarg + Warg, 2026-07-14),
+# where the poison arrived INSIDE a genuine text block and the block-type
+# filter could not help. Exact line-prefix match only, no fuzzy matching.
+_SCAFFOLD_SIGNATURES = (
+    "system UserPromptSubmit hook",
+    "UserPromptSubmit hook additional context",
+    "UserPromptSubmit hook success",
+)
+
+
+def _scaffold_guard(text: str) -> str:
+    """Truncate outgoing user-facing text at the first scaffold-signature line.
+
+    String-signature defense layer behind the structural block-type filter.
+    Gated by BRIDGE_SCAFFOLD_GUARD (default on; channels that legitimately
+    quote the signatures set it to 0). On truncation a WARNING with the
+    dropped tail length is logged. If truncation would empty the text, the
+    original is returned unchanged: the guard never blanks out a message.
+    """
+    if not BRIDGE_SCAFFOLD_GUARD or not text:
+        return text
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.startswith(_SCAFFOLD_SIGNATURES):
+            kept = "".join(lines[:i]).rstrip()
+            if not kept:
+                logger.warning(
+                    "Scaffold-leak guard: signature opens the text (%d chars); "
+                    "left unchanged to avoid an empty message",
+                    len(text),
+                )
+                return text
+            logger.warning(
+                "Scaffold-leak guard truncated outgoing text: dropped %d chars",
+                len(text) - len(kept),
+            )
+            return kept
+    return text
 
 
 def _format_ask_user_question(tool_input: dict) -> str:
@@ -424,10 +472,13 @@ class SdkBridge:
                     req.last_assistant_texts = []
                     for block in msg.content:
                         if isinstance(block, TextBlock):
-                            req.last_assistant_texts.append(block.text)
+                            # DGN-285: guard at ingestion so both the final
+                            # assembly and the live streaming drafts are clean.
+                            block_text = _scaffold_guard(block.text)
+                            req.last_assistant_texts.append(block_text)
                             if req.streaming_handler:
                                 try:
-                                    await req.streaming_handler.update_if_needed(block.text)
+                                    await req.streaming_handler.update_if_needed(block_text)
                                 except Exception as e:
                                     logger.error("Streaming update failed: %s", e)
                         elif isinstance(block, ToolUseBlock):
@@ -527,7 +578,7 @@ class SdkBridge:
                 return
             for block in msg.content:
                 if isinstance(block, TextBlock):
-                    state.proactive_texts.append(block.text)
+                    state.proactive_texts.append(_scaffold_guard(block.text))
             return
 
         if isinstance(msg, ResultMessage):
@@ -617,7 +668,21 @@ class SdkBridge:
     async def _finalize_result(
         self, user_id: int, state: _UserStreamState, req: _PendingRequest, msg: ResultMessage
     ) -> None:
-        result_text = msg.result or "\n".join(req.last_assistant_texts)
+        # DGN-285: assemble user-facing text from the reader loop's TextBlock
+        # capture (a structural block-type whitelist: thinking/tool blocks never
+        # enter it) instead of trusting msg.result, a CLI-composed string that
+        # sits outside that whitelist and can carry thinking/internal content
+        # under degraded conditions. msg.result stays primary on error results
+        # (it carries the error description) and remains the fallback for turns
+        # that produced no main-agent TextBlock.
+        block_text = "\n".join(req.last_assistant_texts)
+        if msg.is_error or not block_text.strip():
+            result_text = msg.result or block_text
+        else:
+            result_text = block_text
+        # DGN-285 (leak class 2): signature guard also covers the msg.result
+        # fallback path, which bypasses the guarded block capture above.
+        result_text = _scaffold_guard(result_text)
         if req.streaming_handler:
             try:
                 await req.streaming_handler.finalize_all()

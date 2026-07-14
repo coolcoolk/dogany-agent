@@ -222,6 +222,17 @@ AUTO_RESUME = os.getenv("CLAUDE_AUTO_RESUME", "0").strip().lower() not in (
     "",
 )
 AUTO_RESUME_MAX = max(0, int(os.getenv("CLAUDE_AUTO_RESUME_MAX", "2") or "2"))
+# DGN-285: scaffold-leak guard gate for outgoing user-facing text (see
+# sdk_bridge._scaffold_guard). Default ON when unset; set
+# BRIDGE_SCAFFOLD_GUARD=0 on channels that legitimately quote the guarded
+# signature strings (e.g. a dev channel pasting incident reports).
+BRIDGE_SCAFFOLD_GUARD = os.getenv("BRIDGE_SCAFFOLD_GUARD", "1").strip().lower() not in (
+    "0",
+    "false",
+    "off",
+    "no",
+    "",
+)
 CLAUDE_CLI_PATH = os.getenv("CLAUDE_CLI_PATH") or (
     str(config.claude_cli_path) if config.claude_cli_path else None
 )
