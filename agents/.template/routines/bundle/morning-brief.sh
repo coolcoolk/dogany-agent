@@ -44,16 +44,17 @@ TZ_OFFSET_H="$(grep -E '^AGENT_TZ_OFFSET_HOURS=' "$AGENT_DIR/config/agent.conf" 
 TZ_OFFSET_H="${TZ_OFFSET_H:-0}"
 
 # ---- (1) today's timed schedule (appointments + task blocks via event-window) ----
-# Local day boundary in UTC: local midnight = YDAY T(24-offset):00:00Z (for offset>=0, adjust for negative).
+# Window = [today 00:00 local, tomorrow 00:00 local) converted to UTC.
+# e.g. offset +9: (TODAY-1)T15:00:00Z .. TODAY T15:00:00Z.
 # Computed inline via python3 to avoid bash integer-overflow on edge offsets.
 read -r FROM_UTC TO_UTC < <(python3 -c "
 from datetime import datetime, timezone, timedelta
 off = int('$TZ_OFFSET_H')
 tz = timezone(timedelta(hours=off))
 today = datetime.strptime('$TODAY', '%Y-%m-%d').replace(tzinfo=tz)
-yday = datetime.strptime('$YDAY', '%Y-%m-%d').replace(tzinfo=tz)
-from_utc = yday.replace(hour=0, minute=0, second=0).astimezone(timezone.utc)
-to_utc   = today.replace(hour=0, minute=0, second=0).astimezone(timezone.utc)
+tmrw = today + timedelta(days=1)
+from_utc = today.astimezone(timezone.utc)
+to_utc   = tmrw.astimezone(timezone.utc)
 print(from_utc.strftime('%Y-%m-%dT%H:%M:%SZ') + ' ' + to_utc.strftime('%Y-%m-%dT%H:%M:%SZ'))
 ")
 SCHED_TXT="$("$LIFE_SH" event-window "$FROM_UTC" "$TO_UTC" 2>/dev/null | python3 -c "
