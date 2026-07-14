@@ -173,6 +173,25 @@ Framework-wide behavior belongs in RULES, not here. -->
   report it upstream; do not patch in place.
 - "Restart" instructions are restart-only -- they are not approval to modify code.
 
+### Baseline / infra / release editing (dispatch to dedicated subagents)
+- These routing pointers arm dev-agent / product-steward workflows. They
+  apply only when this instance takes on that stewardship; a plain
+  general instance may never invoke them, but the pointers must exist so
+  the subagent defs are routable.
+- Any edit to AGENT.md or any SKILL.md (and other baseline docs) goes
+  through the baseline-editor subagent (.claude/agents/baseline-editor.md);
+  the main session never edits these inline.
+- Any baseline infra change (bridge / memory-engine / routines / cron /
+  input handlers) or multi-repo product work goes through the
+  propagation-editor subagent (.claude/agents/propagation-editor.md); it
+  owns the full propagation ruleset (all live instances + template + OSS
+  sync, product-repo curation, cross-agent DB lockstep). Fixing only one
+  copy = incomplete.
+- Release-close ledger work (CHANGELOG + releases/vX.md + backlog
+  reconcile) goes through the release-closer subagent
+  (.claude/agents/release-closer.md). Actual release.sh run / tag / push
+  stays behind user approval and is executed by the main session.
+
 ### Self-restart notice (self-restart)
 - When restarting after a framework update or upstream-delivered fix, do not finish silently. Restart via
   `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>" --prefix <__AGENT_EMOJI__> --label <__LAUNCHD_LABEL__>`.
