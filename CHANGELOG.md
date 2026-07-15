@@ -3,6 +3,114 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-07-16
+
+### Added
+- Single-option [[OPTIONS]] buttons now render as a proper Telegram button
+  instead of being silently suppressed. The two-part fix covers the render
+  path and the TextBlock-precedence assembly; a scaffold-leak guard ensures
+  agent thinking text can no longer bleed into the button payload. (DGN-325,
+  DGN-285)
+- Self-restart now guards against interrupting a live user session. If a
+  session is active when a restart is triggered, the restart is deferred
+  until the session is idle. (DGN-328)
+- Project folder path sanitization now follows the Claude Code rule: all
+  non-alphanumeric characters (not just slashes) become dashes in the
+  transcript glob path. Fixes silent consolidation failure for usernames with
+  dots or underscores. (DGN-295)
+- Skills and routines now carry a user-facing display name in their
+  frontmatter. Agents use the display name in menus and confirmations instead
+  of the raw directory name. Existing skills have been backfilled; a short
+  i18n name tier is available for localized surfaces. (DGN-324)
+- Cron-guard failure notifications now lead with the friendly display name
+  instead of the raw job label, so the alert is readable without knowing the
+  cron internals.
+- Reminder cancel now works by index: the agent lists active reminders by
+  number and accepts an index to cancel, with no requirement to remember or
+  type the machine label. (DGN-324 GAP-6)
+- Onboarding batch: identity fields now start blank (no slug or user-label
+  pre-fill), the first message pairs the agent greeting with the first
+  question in a single turn, the migration-path completion branch now closes
+  cleanly with a single guidance line and no empty menu, and neutral button
+  labels are now enforced throughout. Role-adaptive quick-start options
+  (option 2 adapts to the filled role instead of being hard-coded to
+  record-keeping) are included in this batch. (DGN-277)
+- Onboarding address guard and ambient-label hardening: the agent now avoids
+  accidentally using the agent's own name as the user's address before the
+  user's name has been confirmed. Tone question style and button spec
+  tightened. (DGN-284)
+- Agent-to-agent migration request wired at onboarding completion: when a
+  user migrates from another agent, the onboarding flow now dispatches a
+  migration.request handoff so the source agent can forward data
+  automatically. (DGN-277 f9)
+- cron-register skill revision round: test-fire exception documented (skip
+  full re-register when only the schedule changes and the job ran cleanly
+  that day), time-rename rule documented (label/script/log must all be
+  renamed together and the old job trashed), ProcessType=Interactive added to
+  the template plist for macOS display-sleep safety, and the worker-script
+  pattern (task script as entrypoint, push.sh called internally) documented.
+  Seven previously undocumented practices backfilled in the same round.
+  (DGN-292)
+- upstream-report skill: agents can now file a structured framework proposal
+  as a GitHub issue on the canonical repos (dogany-agent or
+  claude-code-telegram routing, coolcoolk identity gate, outbox-draft
+  fallback). Self-maintained repos use an internal ticket + direct fix path
+  instead. (DGN-293)
+- Morning brief: title-prefix exclusion is now config-driven
+  (BRIEF_TITLE_EXCLUDE_PREFIXES) and off by default. Routine titles that
+  match a configured prefix are hidden from the brief schedule section without
+  affecting the underlying event. (DGN-323)
+- Daily retro: content-experience keyword matching is now config-driven
+  (RETRO_CONTENT_TITLE_KEYWORDS). Entries whose title matches a configured
+  keyword generate the content-impressions question instead of the default
+  productivity prompt. (DGN-326)
+- Morning brief task-lane and Warg-section embeds propagated to the template.
+  Timed task-kind blocks (e.g., work routine events) now appear in the
+  schedule section alongside appointments. Domain-agent morning sections
+  (like Warg's workout summary) are injected inline with icon rules and
+  timezone-generic layout. (DGN-282, DGN-283)
+- lifekit.sh path-resolution note pinned in all four bundle skills that
+  invoke it. The note now clarifies that the helper should be resolved
+  relative to the workspace root, not the skill directory. (DGN-321)
+
+### Fixed
+- diet-log: multi-item meal logging via --new is now documented with correct
+  splitting semantics; user-language-only splitting message propagated to the
+  template.
+- memory-engine: rrf_score=None no longer causes a crash in search output;
+  the field is now guarded and treated as zero for ranking.
+- Mirror engine: abandoned-transition leak fixed. When a recurring event
+  batch is replaced, the old batch is now swept for tombstone entries and the
+  corresponding calendar events are cancelled, eliminating duplicate calendar
+  entries. 22 regression checks added to the mirror test suite. (DGN-302)
+- diet-log and workout-log: render interpreter chain now points to the shared
+  render venv (~/dogany/.venvs/render) instead of the bridge venv. Fixes card
+  rendering failures on fresh instances where matplotlib is absent from the
+  bridge venv. Propagation completes the fix that was partially delivered in
+  v1.2.0 and subsequently overwritten by a skills-bundle refresh. (DGN-194)
+
+### Changed
+- upstream-report skill rerouted for self-maintained repos: dogany-agent and
+  claude-code-telegram proposals now go through an internal ticket + direct
+  fix rather than a public GitHub issue. Public issues are reserved for
+  third-party framework dependencies. (DGN-293 owner directive 2026-07-16)
+- notify policy (DGN-273), routine notify verbset, and remind engine: routine
+  events now support per-event notification preferences; silent routines
+  receive no reminder pushes. Template and 55-test suite updated.
+- Mirror productization (DGN-268): S1-S5 landed, covering config seam,
+  display-tz default pin, bootstrap adopt-or-create guard, onboarding UX,
+  Google-unified auth, delivery wiring, Linux parity, cron safety rails, and
+  poll-cycle per-step exception isolation. Merge-gate final-grill items
+  resolved.
+- install: model-choice step revised so newly minted agents default to an
+  appropriate model for their subscription tier. (DGN-281)
+- Baseline agent definitions (baseline-editor, propagation-editor,
+  release-closer) propagated to the template with routing pointers in
+  AGENT.md. New agents minted from the template inherit the full baseline
+  toolset. (DGN-181)
+- Retro and brief live-ahead improvements absorbed from Ag into the template
+  baseline. (DGN-261)
+
 ## [1.4.0] - 2026-07-11
 
 ### Added
