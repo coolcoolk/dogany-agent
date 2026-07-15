@@ -3,6 +3,20 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] - 1.5.1
+
+### Changed
+- Remote version check is now default ON. Instances on other machines will
+  automatically receive a nudge at session start when a newer framework version
+  is available, with no configuration required. To opt out, set
+  DOGANY_VERSION_CHECK=0 in your instance .telegram_bot/.env. The legacy opt-in
+  value (DOGANY_VERSION_CHECK=1) remains valid and keeps the check on. (DGN-335)
+
+### Added
+- Version-check throttle: the remote GET runs at most once every 6 hours. The
+  last successful result is cached in .telegram_bot/state/version-check-cache.
+  Cache read/write failures are silently ignored (fail-open). (DGN-335)
+
 ## [1.5.0] - 2026-07-16
 
 ### Added

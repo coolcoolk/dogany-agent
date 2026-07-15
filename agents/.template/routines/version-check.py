@@ -7,17 +7,23 @@ Two check modes (in order; both are fail-open and never block a session):
    DOGANY_FW_VERSION) against the local source repo VERSION file
    (DOGANY_REPO_ROOT). Useful when the user cloned the repo and updates it.
 
-2. Remote check (opt-in only): if DOGANY_VERSION_CHECK=1 is set in the
-   instance .env, fetches the raw VERSION file from the public GitHub repo
-   over HTTPS (2-second timeout, fail-silent) and nudges if a newer version
-   exists. This is a plain GET to a static file. Zero data is sent beyond the
-   HTTP request itself -- no token, no id, no payload. Documented below and in
-   .env.example.
+2. Remote check (default ON, opt-out): fetches the raw VERSION file from the
+   public GitHub repo over HTTPS (2-second timeout, fail-silent) and nudges if
+   a newer version exists. This is a plain GET to a static file. Zero data is
+   sent beyond the HTTP request itself -- no token, no id, no payload.
+   Set DOGANY_VERSION_CHECK=0 (or false/no/off, case-insensitive) in the
+   instance .env to disable. Documented below and in .env.example.
 
    PRIVACY: The remote check sends ONLY a GET request to
      https://raw.githubusercontent.com/coolcoolk/dogany-agent/main/VERSION
    No user data, no auth token, no instance metadata. The server sees only your
-   IP (the same it sees when you install via git clone). Default is OFF.
+   IP (the same it sees when you install via git clone). Default is ON.
+   To opt out, set DOGANY_VERSION_CHECK=0 in your instance .telegram_bot/.env.
+
+   Throttle: the result of a successful remote check is cached for 6 hours in
+   .telegram_bot/state/version-check-cache. If the cache is younger than 6
+   hours the cached version string is used and no network call is made. Cache
+   read/write failures are silently ignored (fail-open).
 
 Design: strictly fail-open. Any missing file, parse error, network error, or
 unexpected condition results in exit 0 with no output, so a session is NEVER
@@ -28,13 +34,15 @@ Output: JSON on stdout matching other SessionStart hooks.
 import json
 import os
 import sys
+import time
 
 
-# Public repo URL for the raw VERSION file (remote opt-in check).
+# Public repo URL for the raw VERSION file (remote check).
 _REMOTE_VERSION_URL = (
     "https://raw.githubusercontent.com/coolcoolk/dogany-agent/main/VERSION"
 )
 _REMOTE_TIMEOUT_S = 2
+_CACHE_TTL_S = 6 * 3600  # 6 hours
 
 
 def _read_conf(path):
@@ -76,11 +84,49 @@ def _fetch_remote_version(url, timeout):
         return ""
 
 
+def _cache_path(instance_root):
+    """Return the path to the version-check cache file."""
+    return os.path.join(instance_root, ".telegram_bot", "state", "version-check-cache")
+
+
+def _read_cache(instance_root):
+    """Return (timestamp, version_string) from cache, or (0, '') on any failure."""
+    try:
+        path = _cache_path(instance_root)
+        with open(path, "r", encoding="utf-8") as fh:
+            line = fh.readline().strip()
+        ts_str, _, ver = line.partition(" ")
+        return float(ts_str), ver.strip()
+    except Exception:
+        return 0.0, ""
+
+
+def _write_cache(instance_root, version_string):
+    """Persist (now, version_string) to cache. Fail silent on any error."""
+    try:
+        path = _cache_path(instance_root)
+        state_dir = os.path.dirname(path)
+        os.makedirs(state_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("{} {}\n".format(time.time(), version_string))
+    except Exception:
+        pass
+
+
 def _env_flag(instance_root, key):
     """Read a single env key from the instance .telegram_bot/.env. Fail silent."""
     env_path = os.path.join(instance_root, ".telegram_bot", ".env")
     conf = _read_conf(env_path)
     return conf.get(key, "")
+
+
+def _remote_check_enabled(instance_root):
+    """Return True unless DOGANY_VERSION_CHECK is set to a falsy value."""
+    val = _env_flag(instance_root, "DOGANY_VERSION_CHECK").strip().lower()
+    # Unset or empty -> ON (default). Explicit opt-out values -> OFF.
+    if val in ("0", "false", "no", "off"):
+        return False
+    return True
 
 
 def _emit_note(built_version, remote_version, source_label):
@@ -127,18 +173,28 @@ def main():
                        "the local source repo at " + repo_root)
             sys.exit(0)
 
-    # --- 2) Remote check (opt-in: DOGANY_VERSION_CHECK=1 in instance .env) ---
+    # --- 2) Remote check (default ON; opt-out: DOGANY_VERSION_CHECK=0 in instance .env) ---
     # PRIVACY: sends ONLY a GET to raw.githubusercontent.com/coolcoolk/dogany-agent/main/VERSION.
-    # No user data, no token, no instance metadata. Default OFF.
-    version_check_flag = _env_flag(instance_root, "DOGANY_VERSION_CHECK")
-    if version_check_flag.strip() == "1":
+    # No user data, no token, no instance metadata. Default ON.
+    if not _remote_check_enabled(instance_root):
+        sys.exit(0)
+
+    # Throttle: use cached result if younger than 6 hours.
+    cached_ts, cached_ver = _read_cache(instance_root)
+    now = time.time()
+    if cached_ver and (now - cached_ts) < _CACHE_TTL_S:
+        remote_version = cached_ver
+    else:
         remote_version = _fetch_remote_version(_REMOTE_VERSION_URL, _REMOTE_TIMEOUT_S)
-        if (remote_version
-                and remote_version != "unknown"
-                and remote_version != built_version):
-            _emit_note(built_version, remote_version,
-                       "the upstream dogany-agent public repo")
-            sys.exit(0)
+        if remote_version:
+            _write_cache(instance_root, remote_version)
+
+    if (remote_version
+            and remote_version != "unknown"
+            and remote_version != built_version):
+        _emit_note(built_version, remote_version,
+                   "the upstream dogany-agent public repo")
+        sys.exit(0)
 
     sys.exit(0)
 
