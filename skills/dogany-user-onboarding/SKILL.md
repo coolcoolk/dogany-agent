@@ -1,5 +1,6 @@
 ---
 name: dogany-user-onboarding
+display_name: 첫 만남 설정
 description: When a new agent first wakes up (an ONBOARDING_PENDING marker in AGENT.md, or name/tone/humor level still unset), proactively ask the user for its setup, fill the answers directly into the identity fields of its own AGENT.md, then delete the onboarding block. Also the procedure for ongoing self-update - when identity (name, form of address, tone, humor, emoji) changes, self-edit own AGENT.md continuously; when the user's persistent profile facts change, update USER.md. Recall this on a SessionStart "onboarding needed" signal, when my identity looks empty, when the user first tells me about themselves, or when previously known info has changed.
 ---
 

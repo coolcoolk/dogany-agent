@@ -1,5 +1,6 @@
 ---
 name: relationship
+display_name: 인연 기록
 description: >-
   Fires when __USER_LABEL__ looks up, registers, or finds a person/relationship by
   nickname. "what was their name", "who is OO", "add OO to my relationships", or

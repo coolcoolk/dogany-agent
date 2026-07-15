@@ -1,5 +1,6 @@
 ---
 name: dogany-lifekit-setup
+display_name: 생활관리 설정
 description: >-
   Conversational activation, deactivation, and modification of the lifekit
   (life-management) default bundle. Fires when __USER_LABEL__ says "set up life

@@ -101,6 +101,18 @@ NOTES=""
 [[ "$WO_CNT" -eq 0 ]] && NOTES+="NOTE: no workouts logged; lightly ask if today was a rest day. "
 [[ "$APPT_CNT" -gt 0 ]] && NOTES+="NOTE: there were appointments today; naturally ask how they went (mention you can record a short summary). "
 
+# Content-experience appointments (config-driven, default off): when an
+# appointment title matches a configured keyword (comma-separated in
+# RETRO_CONTENT_TITLE_KEYWORDS), instruct the model to ask for the user's
+# impressions/review of that content specifically. Empty/missing = off.
+CONTENT_KEYWORDS_RAW="$(grep -E '^RETRO_CONTENT_TITLE_KEYWORDS=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+if [[ "$APPT_CNT" -gt 0 && -n "$CONTENT_KEYWORDS_RAW" ]]; then
+  CONTENT_KEYWORDS_RE="${CONTENT_KEYWORDS_RAW//,/|}"
+  if printf '%s\n' "$APPT_TXT" | grep -qE "$CONTENT_KEYWORDS_RE"; then
+    NOTES+="NOTE: today's appointments include a content experience (title matches a configured keyword: movie/performance/exhibition/book etc). Ask specifically for the user's impressions and a short review of that content -- not just a generic 'how was it'. "
+  fi
+fi
+
 PROMPT="You are the user's personal assistant sending a 10 PM daily retrospective over Telegram.
 Write the retro in the user's language (locale: ${AGENT_LANG}). Address the user as: ${ADDRESS:-"(no fixed form of address; write naturally)"}.
 Tone rules: ${TONE}

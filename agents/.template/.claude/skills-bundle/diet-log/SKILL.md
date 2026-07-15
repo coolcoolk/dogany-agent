@@ -1,5 +1,6 @@
 ---
 name: diet-log
+display_name: 식단 기록
 description: >
   Handles BOTH diet logging AND diet/calorie status queries. Both cases go through
   this skill.

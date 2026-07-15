@@ -1,5 +1,6 @@
 ---
 name: workout-log
+display_name: 운동 기록
 description: >
   Handles workout logging AND that day's workout/calorie-balance queries.
   (1) Log: fires when __USER_LABEL__ says they worked out. "did 40 min at the gym",

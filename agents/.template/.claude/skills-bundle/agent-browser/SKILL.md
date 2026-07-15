@@ -1,5 +1,6 @@
 ---
 name: agent-browser
+display_name: 웹 브라우저
 description: >
   Headless browser automation via agent-browser CLI. Fires when the user asks to
   open a website, fill a form, click a button, take a screenshot, scrape data from

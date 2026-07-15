@@ -1,5 +1,6 @@
 ---
 name: appointment-log
+display_name: 일정 기록
 description: >-
   Fires when __USER_LABEL__ makes, looks up, or edits an appointment/schedule, or
   handles its participants. "I made plans with X", "I'm meeting so-and-so", "what

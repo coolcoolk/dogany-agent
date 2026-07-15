@@ -1,5 +1,6 @@
 ---
 name: dogany-reminder
+display_name: 리마인더
 description: One-shot (single-fire) reminders. Fires when the user asks to be reminded once at a future time — "remind me in 10 minutes", "remind me at 3pm", "tell me tomorrow at 9 to call the clinic". Korean triggers also fire it ("10분 뒤에 알려줘", "이따 2시에 전화하라고", "30분 뒤 알려줘"). Handles register / list / cancel. For RECURRING schedules use dogany-cron-register; for immediate push use dogany-proactive-push — this skill is strictly for a single delivery at a specific future time.
 ---
 

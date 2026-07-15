@@ -1,5 +1,6 @@
 ---
 name: dogany-skill-creator
+display_name: 스킬 만들기
 description: Meta-skill. Make new skills THIS system's way. Triggers: user says make / skillify a skill; agent packages a repeated procedure (cron / routine / workflow). Read before ANY skill / cron / routine. Enforces naming, path, caveman-English body, model routing, tests.
 ---
 
@@ -34,7 +35,9 @@ generic. Self-obeys (caveman body).
 - path: ~/<workspace>/.claude/skills/<name>/SKILL.md
 - name: kebab-case, verb-ish.
 - aux files (templates, scripts) -> same folder.
-- frontmatter: name + description only.
+- frontmatter: name + display_name + description. display_name = short user-facing
+  label (Korean for Korean-persona instances; user's language otherwise). never
+  speak the folder ID to the user -- use display_name instead.
 - description = match text, loaded every session = auto-trigger core. weak desc ->
   agent hand-codes instead of calling skill. make self-sufficient:
   1. list real trigger utterances (user language).
@@ -67,7 +70,9 @@ generic. Self-obeys (caveman body).
 
 ## build order (strict)
 1. decide: memory or skill.
-2. write folder + SKILL.md. keyword-rich desc.
+2. write folder + SKILL.md. keyword-rich desc. pick display_name (2-4 word
+   noun phrase; Korean for Korean-persona instances). add as frontmatter line
+   right after `name:`. never speak the folder ID to the user.
 3. write aux scripts / templates.
 4. real run test (not simulated). check output + delivery.
 5. report only after pass. fix by code, not manual patch.

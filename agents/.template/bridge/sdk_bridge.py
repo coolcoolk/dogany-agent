@@ -735,7 +735,11 @@ class SdkBridge:
         if req.synthetic_response is None:
             content = await self._maybe_mark_options(req.user_message, content)
 
-        has_options = req.synthetic_response is not None or has_numbered_list(content)
+        has_options = (
+            req.synthetic_response is not None
+            or OPTIONS_MARKER in content
+            or has_numbered_list(content)
+        )
         if not req.future.done():
             req.future.set_result(
                 ChatResponse(

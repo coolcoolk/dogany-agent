@@ -1,5 +1,6 @@
 ---
 name: task-update
+display_name: 할 일 정리
 description: >-
   When __USER_LABEL__ says they did something, the agent finds it in the Tasks DB and
   marks it done. Fires on utterances like "I did my vocab today", "finished the gym",

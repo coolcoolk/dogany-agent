@@ -1,5 +1,6 @@
 ---
 name: dogany-routine
+display_name: 생활 루틴
 description: >-
   Register, edit, list, pause/resume, and retire recurring routines in the
   lifekit ledger. Fires when __USER_LABEL__ says things like "register a
