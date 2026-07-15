@@ -53,6 +53,53 @@ TZ_OFFSET_H="${TZ_OFFSET_H:-0}"
 # `set -euo pipefail` would otherwise abort the whole brief.
 EXCLUDE_PREFIXES="$(grep -E '^BRIEF_EXCLUDE_TITLE_PREFIXES=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
 
+# ---- weather (Open-Meteo, no API key) ----
+# Both coords must be set; any error -> WEATHER_TXT="" and brief continues normally.
+AGENT_LAT="$(grep -E '^AGENT_LAT=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+AGENT_LNG="$(grep -E '^AGENT_LNG=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
+WEATHER_TXT=""
+if [[ -n "$AGENT_LAT" && -n "$AGENT_LNG" ]]; then
+  WEATHER_TXT="$(python3 -c "
+import sys, json
+from datetime import datetime, timezone, timedelta
+try:
+    from urllib.request import urlopen
+    from urllib.error import URLError
+    lat = '$AGENT_LAT'
+    lng = '$AGENT_LNG'
+    url = (
+        'https://api.open-meteo.com/v1/forecast'
+        '?latitude=' + lat +
+        '&longitude=' + lng +
+        '&hourly=precipitation_probability,temperature_2m'
+        '&timezone=auto&forecast_days=1'
+    )
+    with urlopen(url, timeout=5) as r:
+        if r.status != 200:
+            sys.exit(0)
+        data = json.loads(r.read())
+    times = data['hourly']['time']           # list of 'YYYY-MM-DDTHH:MM'
+    precip = data['hourly']['precipitation_probability']
+    temps  = data['hourly']['temperature_2m']
+    # max/min across the full day
+    t_max = max(t for t in temps if t is not None)
+    t_min = min(t for t in temps if t is not None)
+    lines = ['최고 ' + str(round(t_max)) + 'C / 최저 ' + str(round(t_min)) + 'C']
+    # key hours at 3h steps starting from the current local hour onward
+    now_local = datetime.now(tz=timezone(timedelta(hours=int('$TZ_OFFSET_H'))))
+    key_hours = [h for h in [9, 12, 15, 18, 21] if h >= now_local.hour]
+    for i, ts in enumerate(times):
+        dt = datetime.strptime(ts, '%Y-%m-%dT%H:%M')
+        if dt.hour in key_hours:
+            p = precip[i] if precip[i] is not None else 0
+            t = temps[i]  if temps[i]  is not None else 0
+            lines.append('- ' + str(dt.hour).zfill(2) + '시 ' + str(round(p)) + '% ' + str(round(t)) + 'C')
+    print('\n'.join(lines))
+except Exception:
+    pass
+" 2>/dev/null || true)"
+fi
+
 # ---- (1) today's timed schedule (appointments + task blocks via event-window) ----
 # Window = [today 00:00 local, tomorrow 00:00 local) converted to UTC.
 # e.g. offset +9: (TODAY-1)T15:00:00Z .. TODAY T15:00:00Z.
@@ -171,6 +218,13 @@ if [[ -n "$WARG_SECTION" ]]; then
   WARG_SECTION_NOTE="A Warg health section is included in the data below under '# warg health section (워그)'. Include it verbatim as its own short section attributed (워그). The Warg section is authoritative for diet/protein -- do not add a separate diet recap line; keep workout info from the yesterday recap if workout_cnt > 0."
 fi
 
+WEATHER_NOTE=""
+if [[ -n "$WEATHER_TXT" ]]; then
+  DATA+=$'\n'"# weather"$'\n'
+  DATA+="${WEATHER_TXT}"$'\n'
+  WEATHER_NOTE="A weather section is included in the data below under '# weather'. Render a single weather line near the schedule section; use 🌧️ if the max precipitation probability across the listed hours is >= 40%, otherwise use ☀️. Omit this line entirely when no weather data is present."
+fi
+
 EMPTY_NOTE=""
 if [[ "$SCHED_CNT" -eq 0 ]]; then
   EMPTY_NOTE="NOTE: no scheduled items today. Do not invent items; briefly note it is an open day and close with light encouragement."
@@ -194,6 +248,7 @@ Icon rules (fixed, apply the SAME icons every brief -- do not vary or substitute
 - closing line starts with ✨
 
 ${WARG_SECTION_NOTE}
+${WEATHER_NOTE}
 ${EMPTY_NOTE}
 Use only the data below; never invent schedules or numbers. Output the message body only.
 
