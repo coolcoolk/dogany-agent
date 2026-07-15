@@ -136,6 +136,13 @@ $PROJECT_ROOT/database/lifekit.sh meal-add \
   - carb = actual carb grams as-is. do not fold alcohol into carb (double-count).
 - output: `id<TAB>name<TAB>kcal` (kcal = DB auto-calculated).
 - convention: include amount in name with parentheses: "데일리견과 핑크 (20g)".
+- multi-item meal (composite, same date + meal slot): the reconcile guard blocks duplicate (date, meal) inserts after the first row (exits with code 3). for the 1st item use the standard command above (upsert). for every subsequent item in the same slot, append `--new` to force insert and bypass the guard:
+  ```bash
+  $PROJECT_ROOT/database/lifekit.sh meal-add \
+    "<YYYY-MM-DD>" "<끼니>" "<food_name (Xg)>" \
+    <carb> <protein> <fat> <fiber> <sugar> <alt_sugar> <grams> [alcohol] --new
+  ```
+- user-facing message when splitting a multi-item meal: use the user's language only (e.g. "여러 항목을 나눠서 기록할게요"). never expose internal flags, match keys, or English mechanics to the user (DGN-210 i18n baseline + RULES output rules).
 
 ### update existing record (meal-upd)
 
