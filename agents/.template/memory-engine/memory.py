@@ -702,7 +702,8 @@ def cmd_search(args):
     for i, r in enumerate(results, 1):
         cos = f"{r['cosine']:.3f}" if r["cosine"] is not None else "n/a"
         sect = r["section"] or "(no section)"
-        print(f"[{i}] {r['source_file']} > {sect}  (rrf={r['rrf_score']:.4f}, cos={cos})")
+        rrf = f"{r['rrf_score']:.4f}" if r["rrf_score"] is not None else "n/a"
+        print(f"[{i}] {r['source_file']} > {sect}  (rrf={rrf}, cos={cos})")
         # print body indented
         for ln in r["text"].splitlines():
             print(f"    {ln}")
