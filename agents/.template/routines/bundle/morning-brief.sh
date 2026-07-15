@@ -43,6 +43,16 @@ TONE="$(i18n_get tone_guide)"
 TZ_OFFSET_H="$(grep -E '^AGENT_TZ_OFFSET_HOURS=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]')"
 TZ_OFFSET_H="${TZ_OFFSET_H:-0}"
 
+# ---- schedule title-prefix exclusion (config-driven, default off) ----
+# Comma-separated list of title prefixes; a schedule event whose title (after
+# stripping leading whitespace) starts with any listed prefix is omitted from
+# the brief. Empty/missing = no filtering. Passed to python via env so config
+# values never appear as code literals. Only surrounding whitespace of the raw
+# value is trimmed here; per-item trim + split happen inside the python block.
+# Trailing `|| true`: key is optional (default off); a no-match grep under
+# `set -euo pipefail` would otherwise abort the whole brief.
+EXCLUDE_PREFIXES="$(grep -E '^BRIEF_EXCLUDE_TITLE_PREFIXES=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+
 # ---- (1) today's timed schedule (appointments + task blocks via event-window) ----
 # Window = [today 00:00 local, tomorrow 00:00 local) converted to UTC.
 # e.g. offset +9: (TODAY-1)T15:00:00Z .. TODAY T15:00:00Z.
@@ -57,15 +67,22 @@ from_utc = today.astimezone(timezone.utc)
 to_utc   = tmrw.astimezone(timezone.utc)
 print(from_utc.strftime('%Y-%m-%dT%H:%M:%SZ') + ' ' + to_utc.strftime('%Y-%m-%dT%H:%M:%SZ'))
 ")
-SCHED_TXT="$("$LIFE_SH" event-window "$FROM_UTC" "$TO_UTC" 2>/dev/null | python3 -c "
-import sys
+SCHED_TXT="$("$LIFE_SH" event-window "$FROM_UTC" "$TO_UTC" 2>/dev/null | BRIEF_EXCLUDE_TITLE_PREFIXES="$EXCLUDE_PREFIXES" python3 -c "
+import sys, os
 from datetime import datetime, timezone, timedelta
 LOCAL_TZ = timezone(timedelta(hours=int('$TZ_OFFSET_H')))
+# Title-prefix exclusion list (config-driven). Read from env so config values
+# never appear as code literals. Split on comma, trim each item, drop empties.
+_raw = os.environ.get('BRIEF_EXCLUDE_TITLE_PREFIXES', '')
+EXCLUDE_PREFIXES = [p.strip() for p in _raw.split(',') if p.strip()]
 for line in sys.stdin:
     cols = line.rstrip('\n').split('\t')
     if len(cols) < 5:
         continue
     title = cols[2]; sa = cols[3]; ea = cols[4]
+    # Skip events whose title starts with any excluded prefix (leading ws stripped).
+    if any(title.lstrip().startswith(p) for p in EXCLUDE_PREFIXES):
+        continue
     try:
         start = datetime.strptime(sa, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)
         s_str = start.strftime('%H:%M')
