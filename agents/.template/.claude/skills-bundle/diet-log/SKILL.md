@@ -35,7 +35,7 @@ All DB access via `lifekit.sh` (= lifekit.py core). No raw SQL.
 
 ## paths
 
-- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> walk up from skill dir to find database/)
+- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> `LKIT="${PROJECT_ROOT:-$(pwd)}/database/lifekit.sh"`; CWD must be workspace root)
 - skill files: `$PROJECT_ROOT/.claude/skills/diet-log/` (lookup.py, card.py, fonts/)
 - relative paths below assume cwd = PROJECT_ROOT. do not cd into skill dir.
 

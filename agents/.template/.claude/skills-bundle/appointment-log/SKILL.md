@@ -17,7 +17,7 @@ description: >-
 Manage __USER_LABEL__ appointments in lifekit.db -- register, update, query, link persons.
 All DB access via `lifekit.sh`. No raw SQL.
 
-- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> walk up from skill dir to find database/)
+- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> `LKIT="${PROJECT_ROOT:-$(pwd)}/database/lifekit.sh"`; CWD must be workspace root)
 - SoT: local lifekit.db. Safe to edit directly.
 - timezone: always __USER_LABEL__ local (Asia/Seoul, +09:00). Display times shown in local time.
 

@@ -11,7 +11,7 @@ description: >-
 
 Manage persons in lifekit.db persons table via lifekit.sh CLI. SQL-based standard.
 
-- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> walk up from skill dir to find database/)
+- helper: `$PROJECT_ROOT/database/lifekit.sh` (PROJECT_ROOT unset -> `LKIT="${PROJECT_ROOT:-$(pwd)}/database/lifekit.sh"`; CWD must be workspace root)
 - SoT: local `$PROJECT_ROOT/database/lifekit.db` (persons table)
 - aliases: stored in persons.aliases column, comma-separated — native support (unlike Notion)
 

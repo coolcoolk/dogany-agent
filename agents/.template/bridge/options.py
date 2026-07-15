@@ -82,13 +82,13 @@ def has_numbered_list(text: str) -> bool:
 def extract_options(text: str) -> List[str]:
     """Extract option labels from a numbered list.
 
-    Requires >=2 items numbered consecutively from 1. Returns [] otherwise.
+    Requires >=1 item numbered consecutively from 1. Returns [] otherwise.
     Code blocks are excluded so numbered items in code examples do not shadow
     the actual options list (DGN-085).
     """
     prose = _FENCED_CODE_RE.sub("", text)
     matches = _OPTION_RE.findall(prose)
-    if len(matches) < 2:
+    if not matches:
         return []
     nums = [int(m[0]) for m in matches]
     if nums != list(range(1, len(nums) + 1)):
