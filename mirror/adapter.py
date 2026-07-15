@@ -515,6 +515,44 @@ def _notify_overlap(state_conn, src_conn, ulid, detail):
                       title=_title_of(src_conn, ulid), detail=detail)
 
 
+# DGN-333 (MAJOR-5 rev): per-apply overlap DETECTION stays (audit line at the
+# apply site), but the user NOTIFICATION is deferred to the end of the sync
+# cycle -- mid-batch sequential applies create transient overlaps against
+# not-yet-moved rows (false alarms). Candidates collected here are re-checked
+# against the FINAL state by overlap_flush() (poll_cycle owns the flush; one
+# poller cycle = one process, so module state is cycle-local).
+_OVERLAP_PENDING = []  # list of (ulid, detail-at-detection)
+
+
+def _overlap_defer(ulid, detail):
+    if not any(u == ulid for u, _d in _OVERLAP_PENDING):
+        _OVERLAP_PENDING.append((ulid, detail))
+
+
+def overlap_flush(state_conn, src_conn):
+    """Batch-end recheck of deferred overlap candidates (DGN-333). Notifies
+    only overlaps that still exist in the final state; at most one notice
+    per overlap pair. Returns the number of notices queued."""
+    pending, _OVERLAP_PENDING[:] = list(_OVERLAP_PENDING), []
+    notified_pairs = set()
+    n = 0
+    for ulid, detail in pending:
+        hit, warning = sdk_bridge.mirror_overlap_recheck(src_conn, ulid)
+        if hit is None:
+            mirror_log(state_conn, "overlap_recheck_cleared", ulid,
+                       "transient mid-batch overlap resolved (was: %s)"
+                       % detail)
+            continue
+        pair = frozenset((ulid, hit))
+        if pair in notified_pairs:
+            continue
+        notified_pairs.add(pair)
+        mirror_log(state_conn, "overlap_recheck_confirmed", ulid, warning)
+        _notify_overlap(state_conn, src_conn, ulid, warning)
+        n += 1
+    return n
+
+
 # ---------------------------------------------------------------------------
 # F1: canonical surface projections (SAME dict on push and inbound sides)
 # All values in sqlite representation, canonicalized: None-note -> '',
@@ -1295,7 +1333,7 @@ def _apply_calendar_3way(item, state_conn, src_conn):
         (applied if res in VERB_OK else failures).append("schedule:%s" % res)
         if warning:
             mirror_log(state_conn, "bypass_overlap_notice", ulid, warning)
-            _notify_overlap(state_conn, src_conn, ulid, warning)
+            _overlap_defer(ulid, warning)  # DGN-333: notify at batch end
         if res in VERB_OK:
             # grill-4 finding 7: schedule edit may flip routing (e.g. timed
             # task dragged to all-day) -> re-converge surfaces via outbox.
@@ -1388,7 +1426,7 @@ def _adopt_foreign_calendar(item, cal_id, state_conn, src_conn):
                         calendar_projection_from_item(patched))
     notify_mod.notify(state_conn, "inbound_adopted", ulid, title=title)
     if overlap_warn:
-        _notify_overlap(state_conn, src_conn, ulid, overlap_warn)
+        _overlap_defer(ulid, overlap_warn)  # DGN-333: notify at batch end
     mirror_log(state_conn, "inbound_adopted", ulid,
                "surface id=%s" % item.get("id"))
     return {"ulid": ulid, "action": "adopted"}
@@ -1643,7 +1681,7 @@ def _apply_tasks_3way(item, tl_id, state_conn, src_conn):
             (applied if res in VERB_OK else failures).append("due:%s" % res)
             if warn:
                 mirror_log(state_conn, "bypass_overlap_notice", ulid, warn)
-                _notify_overlap(state_conn, src_conn, ulid, warn)
+                _overlap_defer(ulid, warn)  # DGN-333: notify at batch end
             if res in VERB_OK:
                 fresh = src_conn.execute(
                     "SELECT * FROM event WHERE ulid=?", (ulid,)).fetchone()
@@ -1668,7 +1706,7 @@ def _apply_tasks_3way(item, tl_id, state_conn, src_conn):
                 (applied if res in VERB_OK else failures).append("unsettle:%s" % res)
                 if warn:
                     mirror_log(state_conn, "bypass_overlap_notice", ulid, warn)
-                    _notify_overlap(state_conn, src_conn, ulid, warn)
+                    _overlap_defer(ulid, warn)  # DGN-333: notify at batch end
 
     if content_changes:
         res = _run_verb(lambda: sdk_bridge.content_update(
@@ -2049,6 +2087,9 @@ def poll_cycle(state_conn, src_conn, cal_id, tl_id):
     # skipped just because an inbound pull failed above.
     _run_cycle_step(out, "drain", state_conn,
                     lambda: outbox_drain(state_conn, src_conn, cal_id, tl_id))
+    # DGN-333 (MAJOR-5 rev): batch-end recheck of deferred overlap notices --
+    # only overlaps that survive the whole cycle reach the owner.
+    out["overlap_recheck"] = overlap_flush(state_conn, src_conn)
     return out
 
 

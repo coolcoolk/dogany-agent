@@ -1864,10 +1864,10 @@ def _ulid_lookup(conn, ulid):
     return None if row is None else (row[0], row[1])
 
 
-def _mirror_overlap_post_check(conn, eid):
-    """After a bypass-lane apply, detect whether the row now overlaps a live
-    exclusive blocker (v3 MAJOR-5: apply anyway, notify once). Returns a
-    warning string or None."""
+def _mirror_overlap_hit(conn, eid):
+    """Overlap detector shared by the per-apply post-check and the batch-end
+    recheck (DGN-333 MAJOR-5 rev): ulid of a live exclusive blocker the row
+    currently overlaps, or None."""
     row = conn.execute(
         "SELECT slot_exclusive, start_at, end_at, open_ended "
         "FROM event WHERE id=?;", (eid,)).fetchone()
@@ -1881,9 +1881,33 @@ def _mirror_overlap_post_check(conn, eid):
            " AND ? < " + EFF_END_SQL + " AND e.start_at < ? AND e.id != ? "
            "LIMIT 1;")
     hit = conn.execute(sql, (sa, cee, eid)).fetchone()
+    return hit[0] if hit else None
+
+
+def _mirror_overlap_post_check(conn, eid):
+    """After a bypass-lane apply, detect whether the row now overlaps a live
+    exclusive blocker (v3 MAJOR-5 as revised by DGN-333: apply anyway,
+    detect per-apply; the ADAPTER defers the notification to batch end and
+    re-checks via mirror_overlap_recheck). Returns a warning string or
+    None."""
+    hit = _mirror_overlap_hit(conn, eid)
     if hit:
-        return "overlap with event %s after bypass apply" % hit[0]
+        return "overlap with event %s after bypass apply" % hit
     return None
+
+
+def mirror_overlap_recheck(conn, ulid):
+    """DGN-333 (MAJOR-5 rev): batch-end re-check of a deferred overlap
+    candidate against the FINAL state of the sync cycle. Returns
+    (hit_ulid, warning) when the row still overlaps a live exclusive
+    blocker, else (None, None) -- the mid-batch overlap was transient."""
+    found = _ulid_lookup(conn, ulid)
+    if found is None:
+        return None, None
+    hit = _mirror_overlap_hit(conn, found[0])
+    if hit:
+        return hit, "overlap with event %s after bypass apply" % hit
+    return None, None
 
 
 def unsettle(conn, ulid, by):

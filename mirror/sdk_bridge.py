@@ -138,3 +138,5 @@ unsettle = ec.unsettle
 bypass_schedule_apply = ec.bypass_schedule_apply
 bypass_event_add = ec.bypass_event_add
 recompute = ec.recompute
+# DGN-333 (MAJOR-5 rev): batch-end overlap recheck for deferred notices.
+mirror_overlap_recheck = ec.mirror_overlap_recheck
