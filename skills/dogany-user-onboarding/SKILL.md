@@ -115,7 +115,10 @@ after saving, send the completion message:
    - DOMAIN agent -- fresh-direct-mint (no main agent present, no data to migrate):
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기
-     2. 바로 기록 시작하기
+     2. role-appropriate quick-start action phrased from the filled Primary focus (role is
+        always known at this point; e.g. "첫 투자 상담 시작하기" for advisor, "오늘 운동
+        기록하기" for fitness coach); fall back to "바로 기록 시작하기" only when no
+        role-appropriate action is derivable
    - GENERAL agent (life assistant or placeholder):
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기

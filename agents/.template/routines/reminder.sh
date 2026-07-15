@@ -145,7 +145,6 @@ cmd_add() {
     add_systemd "$label" "$target" "$msg"
   fi
   echo "registered: $human -- $msg"
-  echo "label: $label"
 }
 
 # ---- macOS: one-shot launchd job ----
@@ -231,19 +230,30 @@ add_systemd() {
     /bin/bash "$SCRIPT_DIR/reminder-fire.sh" "$label" "" "$msg" >/dev/null
 }
 
-cmd_list() {
+# ---- sorted meta list: echo "<epoch> <metafile>" lines sorted by epoch ----
+# Used by both cmd_list and cmd_cancel so both see the same index ordering.
+sorted_meta() {
   shopt -s nullglob
-  local found=0 now
-  now=$(date +%s)
+  local f
   for f in "$META_DIR"/*.meta; do
+    local epoch
+    IFS=$'\t' read -r epoch _ _ < "$f"
+    echo "$epoch $f"
+  done | sort -n
+}
+
+cmd_list() {
+  local found=0 idx=0 now
+  now=$(date +%s)
+  while IFS=' ' read -r epoch f; do
+    [[ -z "$f" ]] && continue
     found=1
-    local label target human msg
-    label=$(basename "$f" .meta)
+    idx=$(( idx + 1 ))
+    local target human msg
     IFS=$'\t' read -r target human msg < "$f"
     local left=$(( (target - now) / 60 ))
-    echo "- $human (in ${left}m) -- $msg"
-    echo "  $label"
-  done
+    echo "[$idx] $human (in ${left}m) -- $msg"
+  done < <(sorted_meta)
   [[ "$found" -eq 0 ]] && echo "no scheduled reminders"
 }
 
@@ -263,10 +273,11 @@ remove_job() {
 }
 
 cmd_cancel() {
-  local target="${1:-}"
-  [[ -z "$target" ]] && { echo "usage: reminder.sh cancel <label|all>" >&2; exit 1; }
+  local arg="${1:-}"
+  [[ -z "$arg" ]] && { echo "usage: reminder.sh cancel <[N]|N|label|all>" >&2; exit 1; }
   shopt -s nullglob
-  if [[ "$target" == "all" ]]; then
+  if [[ "$arg" == "all" ]]; then
+    local f
     for f in "$META_DIR"/*.meta; do
       local label; label=$(basename "$f" .meta)
       remove_job "$label"
@@ -275,9 +286,32 @@ cmd_cancel() {
     echo "all reminders cancelled"
     return 0
   fi
-  remove_job "$target"
-  rm -f "$META_DIR/$target.meta"
-  echo "cancelled: $target"
+
+  # Resolve short index: accept "[N]" or bare "N" (integer).
+  local resolved_label=""
+  local stripped="${arg#[}"
+  stripped="${stripped%]}"
+  if [[ "$stripped" =~ ^[0-9]+$ ]]; then
+    local idx=0 want="$stripped" epoch f
+    while IFS=' ' read -r epoch f; do
+      [[ -z "$f" ]] && continue
+      idx=$(( idx + 1 ))
+      if [[ "$idx" -eq "$want" ]]; then
+        resolved_label=$(basename "$f" .meta)
+        break
+      fi
+    done < <(sorted_meta)
+    if [[ -z "$resolved_label" ]]; then
+      echo "no reminder at index $want" >&2; exit 1
+    fi
+  else
+    # Full label passed (backward compat).
+    resolved_label="$arg"
+  fi
+
+  remove_job "$resolved_label"
+  rm -f "$META_DIR/$resolved_label.meta"
+  echo "cancelled: $resolved_label"
 }
 
 # ---- dispatch ----
@@ -286,6 +320,6 @@ case "$sub" in
   add)    shift; cmd_add "${1:-}" "${2:-}" ;;
   list)   cmd_list ;;
   cancel) shift; cmd_cancel "${1:-}" ;;
-  "" )    echo "usage: reminder.sh add <when> <message> | list | cancel <label|all>" >&2; exit 1 ;;
+  "" )    echo "usage: reminder.sh add <when> <message> | list | cancel <[N]|N|label|all>" >&2; exit 1 ;;
   * )     cmd_add "${1:-}" "${2:-}" ;;   # 'add' omitted form
 esac

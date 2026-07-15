@@ -11,6 +11,8 @@
         <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
         <string>--label</string>
         <string>com.telegram-skill-bot.__AGENT_NAME__.classify-inbox-0500</string>
+        <string>--friendly-name</string>
+        <string>classify-inbox</string>
         <string>--log</string>
         <string>__PROJECT_ROOT__/.telegram_bot/logs/classify-inbox-0500.stdout.log</string>
         <string>--</string>

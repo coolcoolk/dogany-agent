@@ -11,6 +11,8 @@
         <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
         <string>--label</string>
         <string>com.telegram-skill-bot.__AGENT_NAME__.cleanup-files</string>
+        <string>--friendly-name</string>
+        <string>cleanup-files</string>
         <string>--log</string>
         <string>__PROJECT_ROOT__/.telegram_bot/logs/cleanup-files.stdout.log</string>
         <string>--</string>

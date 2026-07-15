@@ -65,7 +65,7 @@ while [[ \$# -gt 0 ]]; do
   esac
 done
 # Write a single summary line (first 80 chars of text, no newlines)
-_summary="\$(printf '%s' "\$_text" | tr '\n' ' ' | cut -c1-80)"
+_summary="\$(printf '%s' "\$_text" | tr '\n' ' ' | cut -c1-200)"
 echo "PUSH: \${_summary}" >> "${PUSH_CALL_LOG}"
 exit 0
 STUB_EOF
@@ -140,11 +140,13 @@ dedup_file2="$DEDUP_DIR/${LABEL2}.${TODAY}"
 echo ""
 
 # ---- test 6: alert text sanity check ----
-echo "--- test 6: alert text contains label + exit keyword ---"
+echo "--- test 6: alert text contains label, exit keyword, and friendly headline ---"
 last_call="$(tail -1 "$PUSH_CALL_LOG")"
 echo "  last push call: $last_call"
 [[ "$last_call" == *"$LABEL2"* ]] && ok "alert contains label" || fail "alert missing label"
 [[ "$last_call" == *"exit"* ]] && ok "alert contains exit keyword" || fail "alert missing exit keyword"
+# When --friendly-name is absent, headline should be the last dot-segment of the label (cron-guard-other).
+[[ "$last_call" == *"ROUTINE FAILED: cron-guard-other"* ]] && ok "headline is last dot-segment (friendly-name fallback)" || fail "headline not last dot-segment; got: $last_call"
 echo ""
 
 # ---- test 7: no --log arg -> default log path derivation (no crash) ----

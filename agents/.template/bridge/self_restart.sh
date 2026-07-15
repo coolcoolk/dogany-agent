@@ -51,6 +51,8 @@ POLL_MARKER="Bot is running"
 PREFIX="__AGENT_PREFIX__"
 DRY_RUN=""
 WORKER=""
+FORCE=""
+IDLE_MINS=10
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +65,8 @@ while [[ $# -gt 0 ]]; do
     --env)     ENV_FILE="$2"; shift 2 ;;
     --prefix)  PREFIX="$2"; shift 2 ;;
     --dry-run) DRY_RUN="true"; shift 1 ;;
+    --force)      FORCE="true"; shift 1 ;;
+    --idle-mins)  IDLE_MINS="$2"; shift 2 ;;
     --_worker) WORKER="true"; shift 1 ;;
     *) echo "unknown arg: $1" >&2; exit 3 ;;
   esac
@@ -73,6 +77,51 @@ done
 
 notify() { "$PUSH" --env "$ENV_FILE" --text "$1" || echo "[self_restart] push failed" >&2; }
 cur_pid() { launchctl list | awk -v l="$LABEL" '$3==l && $1 ~ /^[0-9]+$/ {print $1}'; }
+
+# ---- Idle guard: refuse restart while the user is mid-session (DGN-328). ----
+# Derives the Claude Code project transcript dir from this instance's root path
+# using the same sanitize rule as Claude Code: replace every non-alphanumeric
+# character with '-'. Checks the newest-modified *.jsonl file; if it was
+# touched within IDLE_MINS minutes we treat the session as active and refuse.
+# Fail-open: if the transcript dir is missing or has no jsonl files, print a
+# warning and proceed so an emergency restart is never bricked.
+check_idle_guard() {
+  if [[ -n "$FORCE" ]]; then
+    echo "[self_restart] --force set; skipping idle guard"
+    return 0
+  fi
+  local instance_root
+  instance_root="$(cd "$(dirname "$0")/.." && pwd)"
+  local encoded_root
+  encoded_root="$(echo "$instance_root" | sed 's/[^a-zA-Z0-9]/-/g')"
+  local transcript_dir="${HOME}/.claude/projects/${encoded_root}"
+  if [[ ! -d "$transcript_dir" ]]; then
+    echo "[self_restart] WARN idle guard: transcript dir not found (${transcript_dir}); proceeding" >&2
+    return 0
+  fi
+  local newest_jsonl
+  newest_jsonl="$(find "$transcript_dir" -maxdepth 1 -name '*.jsonl' -type f \
+    -exec stat -f '%m %N' {} \; 2>/dev/null \
+    | sort -rn | head -1 | awk '{print $2}')"
+  if [[ -z "$newest_jsonl" ]]; then
+    echo "[self_restart] WARN idle guard: no jsonl transcripts found in ${transcript_dir}; proceeding" >&2
+    return 0
+  fi
+  local file_mtime now_epoch age_secs threshold_secs
+  file_mtime="$(stat -f '%m' "$newest_jsonl" 2>/dev/null || echo 0)"
+  now_epoch="$(date '+%s')"
+  age_secs=$(( now_epoch - file_mtime ))
+  threshold_secs=$(( IDLE_MINS * 60 ))
+  if [[ "$age_secs" -lt "$threshold_secs" ]]; then
+    local last_activity_ts
+    last_activity_ts="$(date -r "$file_mtime" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+      || date -d "@${file_mtime}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null \
+      || echo "epoch=${file_mtime}")"
+    echo "[self_restart] REFUSED: session active -- last activity ${last_activity_ts} (${age_secs}s ago, threshold ${IDLE_MINS}m). Use --force to override." >&2
+    exit 1
+  fi
+  echo "[self_restart] idle guard OK: last activity ${age_secs}s ago (threshold ${IDLE_MINS}m)"
+}
 
 SPOOL_DIR="__PROJECT_ROOT__/.telegram_bot/session-inbox"
 
@@ -114,6 +163,9 @@ EOF
 # ---- Detach: re-exec ourselves in a new session so killing the bridge does not
 # take this worker (or the caller's claude session) down with it. ----
 if [[ -z "$WORKER" ]]; then
+  # Idle guard (DGN-328): runs in the launcher, before detach; --dry-run included.
+  check_idle_guard
+
   ARGS=(--_worker --reason "$REASON" --model "$MODEL" --delay "$DELAY" --label "$LABEL" --env "$ENV_FILE" --prefix "$PREFIX")
   [[ -n "$NOTICE" ]]  && ARGS+=(--notice "$NOTICE")
   [[ -n "$VERIFY" ]]  && ARGS+=(--verify "$VERIFY")

@@ -8,7 +8,7 @@ Description=dogany mirror poll (__AGENT_NAME__) -- GCal/GTasks 5-min sync cycle
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.mirror-poll --log __PROJECT_ROOT__/.telegram_bot/logs/mirror-poll.stdout.log -- /bin/bash __PROJECT_ROOT__/routines/mirror-poll.sh
+ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.mirror-poll --friendly-name mirror-poll --log __PROJECT_ROOT__/.telegram_bot/logs/mirror-poll.stdout.log -- /bin/bash __PROJECT_ROOT__/routines/mirror-poll.sh
 WorkingDirectory=__PROJECT_ROOT__
 Environment=HOME=__HOME__
 Environment=PATH=__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.local/bin

@@ -2,14 +2,17 @@
 # cron-guard.sh -- exit!=0 visibility wrapper for launchd routines.
 #
 # Usage:
-#   cron-guard.sh --label <launchd-label> [--log <stdout-log>] [--env <dotenv>] \
+#   cron-guard.sh --label <launchd-label> [--friendly-name <text>] \
+#                 [--log <stdout-log>] [--env <dotenv>] \
 #                 -- <cmd> [args...]
 #
-#   --label   launchd job label (used as dedup key + alert prefix)
-#   --log     path to the job's stdout/stderr log (last N lines attached to alert)
-#             defaults to <AGENT_ROOT>/.telegram_bot/logs/<basename-label>.stdout.log
-#   --env     path to .env for push.sh (defaults to AGENT_ROOT/.telegram_bot/.env)
-#   --        separates wrapper args from the real command
+#   --label           launchd job label (used as dedup key; shown as detail in alerts)
+#   --friendly-name   human-readable job name for alert headline (optional).
+#                     If omitted, the label's last dot-segment is used as headline.
+#   --log             path to the job's stdout/stderr log (last N lines attached to alert)
+#                     defaults to <AGENT_ROOT>/.telegram_bot/logs/<basename-label>.stdout.log
+#   --env             path to .env for push.sh (defaults to AGENT_ROOT/.telegram_bot/.env)
+#   --                separates wrapper args from the real command
 #
 # Behaviour:
 #   1. Run the wrapped command, capture exit code.
@@ -32,6 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 LABEL=""
+FRIENDLY_NAME=""
 LOG_PATH=""
 ENV_PATH="$AGENT_ROOT/.telegram_bot/.env"
 DEDUP_DIR="/tmp/dogany-cron-guard"
@@ -39,10 +43,11 @@ DEDUP_DIR="/tmp/dogany-cron-guard"
 # ---- parse wrapper args (before --) ----
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --label) LABEL="$2"; shift 2 ;;
-    --log)   LOG_PATH="$2"; shift 2 ;;
-    --env)   ENV_PATH="$2"; shift 2 ;;
-    --)      shift; break ;;
+    --label)         LABEL="$2"; shift 2 ;;
+    --friendly-name) FRIENDLY_NAME="$2"; shift 2 ;;
+    --log)           LOG_PATH="$2"; shift 2 ;;
+    --env)           ENV_PATH="$2"; shift 2 ;;
+    --)              shift; break ;;
     *) echo "[cron-guard] unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -90,8 +95,16 @@ if [[ -s "$LOG_PATH" ]]; then
   LOG_TAIL="$(tail -10 "$LOG_PATH" 2>/dev/null || true)"
 fi
 
-# Compose alert text (ASCII only; no emojis per project rules)
-ALERT="[cron-guard] ROUTINE FAILED
+# Determine headline: friendly name if provided, else last dot-segment of label.
+if [[ -n "$FRIENDLY_NAME" ]]; then
+  HEADLINE="$FRIENDLY_NAME"
+else
+  HEADLINE="${LABEL##*.}"
+fi
+
+# Compose alert text (ASCII only; no emojis per project rules).
+# Headline = human-readable job name; label shown as secondary ops detail.
+ALERT="[cron-guard] ROUTINE FAILED: $HEADLINE
 label : $LABEL
 exit  : $EXIT_CODE
 date  : $(date '+%Y-%m-%d %H:%M:%S %Z')"
