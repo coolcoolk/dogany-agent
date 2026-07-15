@@ -38,10 +38,11 @@ Explicit timestamp:
 List / cancel:
 ```bash
 <repo>/routines/reminder.sh list
-<repo>/routines/reminder.sh cancel <label>     # label shown by `list`
+<repo>/routines/reminder.sh cancel <[N]|N|label|all>
 <repo>/routines/reminder.sh cancel all
 ```
-`add` is optional: `reminder.sh "10m" "take meds"` also works.
+Formats: `[N]` or bare `N` = index from list (easiest); `label` = full launchd label (backward compat); `all` = cancel everything.
+`add` is optional: `reminder.sh "10m" "take meds"` also works. Does not echo label.
 
 ## how the assistant should operate
 - extract time + content from user message and register directly. do not just hand over command — run it.
@@ -49,7 +50,8 @@ List / cancel:
 - after registering, confirm in one line: when + what.
   e.g. "Set a reminder for 3:30pm to prep the meeting materials."
 - delivered message auto-formatted as "<reminder_header>\n<content>"; header is localized. no extra tone shaping — pass content through as user gave it.
-- "cancel that reminder" / "never mind" -> find label via `list`, then cancel.
+- "cancel that reminder" / "never mind" -> call `list`, relay reminders by INDEX or text only (never machine label com.telegram-skill-bot...), then cancel by index.
+  Machine labels are internal only — user speaks by reminder text or index [1]/[2]/etc.
 
 ## mechanics (precision / durability)
 - macOS: launchd StartCalendarInterval (Month/Day/Hour/Minute) -> minute-level precision. after firing, plist/meta/job self-remove.
