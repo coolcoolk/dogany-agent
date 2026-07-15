@@ -3,7 +3,25 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] - 1.5.1
+## [1.5.1] - 2026-07-16
+
+### Added
+- Morning brief weather section: today's temperature range and hourly
+  precipitation probability are now shown at the top of the brief, sourced
+  from the Open-Meteo free API (no key required). The section is off by default;
+  set AGENT_LAT and AGENT_LNG in config/agent.conf to enable it. Fetch failures
+  are silently suppressed and never block the brief. (DGN-332)
+- Version-check throttle: the remote GET runs at most once every 6 hours. The
+  last successful result is cached in .telegram_bot/state/version-check-cache.
+  Cache read/write failures are silently ignored (fail-open). (DGN-335)
+
+### Fixed
+- Mirror engine: overlap warnings triggered by transient mid-batch state (events
+  moving together in the same sync cycle) are now suppressed. Detection still
+  happens per-apply, but notifications are deferred to the end of the poll cycle
+  and re-verified: only overlaps that persist in the final DB state are notified.
+  Transient overlaps (resolved within the same batch) are silently cleared.
+  17-case test suite added. (DGN-333)
 
 ### Changed
 - Remote version check is now default ON. Instances on other machines will
@@ -11,11 +29,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is available, with no configuration required. To opt out, set
   DOGANY_VERSION_CHECK=0 in your instance .telegram_bot/.env. The legacy opt-in
   value (DOGANY_VERSION_CHECK=1) remains valid and keeps the check on. (DGN-335)
-
-### Added
-- Version-check throttle: the remote GET runs at most once every 6 hours. The
-  last successful result is cached in .telegram_bot/state/version-check-cache.
-  Cache read/write failures are silently ignored (fail-open). (DGN-335)
 
 ## [1.5.0] - 2026-07-16
 
