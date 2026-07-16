@@ -107,23 +107,45 @@ verify scopes pass.
 
 ### step 4 -- calendar name
 Ask user: "What name should your calendar have?" Write the answer to
-`config/lifekit.conf` as `MIRROR_CAL_NAME=<name>`. Tasklist defaults to same
-name (no separate key needed unless user picks differently).
+`config/lifekit.conf` as `MIRROR_CAL_NAME=<name>`. This name becomes the
+display PREFIX of the category calendars created in step 5 (e.g.
+"<name>-appointments"). NOTE: `MIRROR_TASKLIST_NAME` is DEPRECATED for this
+path -- the checklist display name comes from the same prefix + i18n
+(`mirror.gtasks.checklist`); `MIRROR_TASKLIST_NAME` is still honored on
+legacy single-calendar instances but silently unused in multi mode.
 
-### step 5 -- bootstrap
-Call the mirror bootstrap. Two outcomes:
+### step 5 -- engrave (provision the mirror surfaces)
+Call `adapter.ensure_mirror_engraved(state)` (DGN-364). It routes by the
+resolver outcome (normative M3 table):
+
+- Targets already resolve (multi or legacy) -> no-op, proceed.
+- Nothing engraved (fresh mint) -> `provision_category_calendars`: creates
+  the 3 category calendars (appointments / tasks / travel, named
+  "<MIRROR_CAL_NAME>-<category>") + the checklist tasklist, engraves the 4
+  ids. Fresh mints default to MULTI (dec-033).
+- Partial V15 engrave -> provision again (idempotent; fills only holes).
+- Partial LEGACY engrave (one agent_* key lost) -> `bootstrap()` repairs in
+  legacy mode; provision is NEVER used as a legacy repair (it would orphan
+  the live calendar and duplicate rows).
+
+Two outcomes:
 
 - Clean -> proceed.
-- `adapter.BootstrapAmbiguous(candidates)` raised -> show the candidate(s)
-  (each has surface, candidate_id, summary -- an existing same-name
-  calendar/tasklist without our marker). Ask: "adopt this existing calendar,
-  or create a new one with a different name?"
+- `adapter.BootstrapAmbiguous(candidates)` raised -> a single run can
+  surface up to FOUR adopt candidates (three category calendars + one
+  tasklist); the exception carries the FULL candidate set. Show ALL of them
+  (each has surface, candidate_id, summary -- existing same-name surfaces
+  without our marker) and ask ONE question covering the whole set: "adopt
+  these existing ones, or create new ones under a different name?" Do not
+  assume a single candidate.
   - adopt -> set `MIRROR_ADOPT_UNMARKED=true` in `config/lifekit.conf`,
-    re-run bootstrap. On success, immediately unset it (set back to `false`
-    or remove the line). It is a one-shot answer: leaving it `true` permanently
-    would silently auto-adopt a same-name foreign calendar in the future (e.g.
-    if the marked calendar is deleted and a new same-name one exists).
-  - create -> ask for a new name, update `MIRROR_CAL_NAME`, re-run bootstrap.
+    re-run `ensure_mirror_engraved`. On success, immediately unset it (set
+    back to `false` or remove the line). It is a one-shot answer: leaving it
+    `true` permanently would silently auto-adopt same-name foreign surfaces
+    in the future (e.g. if a marked calendar is deleted and a new same-name
+    one exists).
+  - create -> ask for a new name, update `MIRROR_CAL_NAME`, re-run
+    `ensure_mirror_engraved`.
 
 ### step 6 -- enable mirror module
 Set `MIRROR_MODULE=on` in `config/lifekit.conf`.

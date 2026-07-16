@@ -34,5 +34,10 @@
   "mirror.overlap_notice": "Applying '{title}' overlaps with an existing event: {detail}",
   "mirror.repeated_failure": "Repeated sync failure: '{title}' has hit the retry limit. Manual review needed.",
   "mirror.reconcile_report": "Weekly sync check: {checked} checked, {missing} missing re-sent, {mismatch} mismatched, {orphan} out-of-scope, {deleted_held} deletion(s) held. {verdict}",
-  "mirror.reconcile_verdict_attention": "Attention needed"
+  "mirror.reconcile_verdict_attention": "Attention needed",
+  "mirror.ops.prefix": "[{label} calendar sync] ",
+  "mirror.cal.appointments": "{name}-appointments",
+  "mirror.cal.tasks": "{name}-tasks",
+  "mirror.cal.travel": "{name}-travel",
+  "mirror.gtasks.checklist": "{name}-checklist"
 }

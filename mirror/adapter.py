@@ -239,13 +239,234 @@ def route_surface(event: dict) -> str:
     raise ValueError("Unknown kind: %r" % event["kind"])
 
 
+# DGN-265: the 7.4 notion-import exclusion over-reached -- it dropped LIVE/future
+# import instances, not just history, so they never mirrored (invisible in GCal).
+# Carve back in only the still-live ones. BOTH bounds are FROZEN literals and must
+# NOT track now()/today: a moving bound would drop already-pushed rows out of scope
+# tomorrow and orphan their GCal surface objects. notion-import max rec_date is
+# 2026-07-12, so this matches exactly today's forward instances and self-terminates
+# (from 2026-07-13 on, roller rows cover everything). Ported verbatim in the
+# DGN-364 V15 promotion (spec 2.6): dead code on every non-Ag instance (no
+# notion-import rows exist); dropping it would orphan Ag's live import surface.
+NOTION_IMPORT_MIRROR_CUTOFF = "2026-07-12"                 # rec_date floor (history < this stays out)
+NOTION_IMPORT_MIRROR_MIN_START = "2026-07-12T02:00:00Z"    # start_at floor (owner: future only; same-day past chores excluded)
+
+
 def in_mirror_scope(event: dict) -> bool:
     """DGN-240 5.1 (T1, replaces the M9 safe default): materialized routine
-    instances ARE mirror scope. notion-import history stays out (7.4);
-    anchor-less routine rows stay out (N1 belt)."""
+    instances ARE mirror scope. notion-import history stays out (7.4) EXCEPT
+    live/future instances carved in per DGN-265; anchor-less routine rows stay
+    out (N1 belt)."""
     if event.get("recurrence_id"):
-        return event.get("created_by") != "notion-import"   # 7.4
+        if event.get("created_by") == "notion-import":
+            if (event.get("rec_date") or "") < NOTION_IMPORT_MIRROR_CUTOFF:
+                return False   # 7.4: import history stays out
+            return (event.get("start_at") or "") >= NOTION_IMPORT_MIRROR_MIN_START  # DGN-265: future only
+        return True   # non-import routine instances in scope
     return not event.get("is_routine")   # N1 belt: anchor-less stays out
+
+
+# ---------------------------------------------------------------------------
+# DGN-294 / DGN-364 (V15 promotion): 3-category calendar routing.
+# Calendar IDENTITY = id engraved in mirror config (mirror_state KV); names
+# come from i18n keys and are display-only (a user rename never affects
+# routing -- the name lookup happens once at creation/provision).
+# ---------------------------------------------------------------------------
+
+CAL_STATE_KEYS = {          # mirror config homes for the 4 engraved ids
+    "appt": "cal_id_appt",
+    "task": "cal_id_task",
+    "travel": "cal_id_travel",
+}
+CHECKLIST_STATE_KEY = "gtasks_checklist_id"
+
+# Legacy (single-calendar) state keys: the pre-V15 engrave shape. Kept as a
+# PERMANENT first-class read path (DGN-364 section 3), never a shim.
+LEGACY_CAL_STATE_KEY = "agent_calendar_id"
+LEGACY_TASKLIST_STATE_KEY = "agent_tasklist_id"
+
+# i18n keys for provision display names. The fallbacks are unicode-escaped
+# (source stays ASCII, A7) and OWN the naming pattern (DGN-364 4.1 / dec-033):
+# {name} = the user's chosen calendar name (MIRROR_CAL_NAME) used as display
+# PREFIX; absent config falls back to the "Dogany-*" i18n defaults.
+CAL_I18N = {
+    "appt": ("mirror.cal.appointments", u"{name}-\uc57d\uc18d"),
+    "task": ("mirror.cal.tasks", u"{name}-\ud0dc\uc2a4\ud06c"),
+    "travel": ("mirror.cal.travel", u"{name}-\uc774\ub3d9"),
+}
+CHECKLIST_I18N = ("mirror.gtasks.checklist",
+                  u"{name}-\uccb4\ud06c\ub9ac\uc2a4\ud2b8")
+
+# Default display prefix when MIRROR_CAL_NAME is absent: renders the i18n
+# defaults ("Dogany-...") byte-identically to the Ag V15 literals.
+_CATEGORY_NAME_DEFAULT_PREFIX = "Dogany"
+
+
+def route_cal_key(event: dict) -> str:
+    """Deterministic calendar-category key for a calendar-routed row
+    (spec 4.1 route(row), calendar side):
+        kind='appointment'                   -> 'appt'   (CAL_APPT)
+        kind='task' AND block_class='travel' -> 'travel' (CAL_TRAVEL)
+        kind='task' AND block_class IS NULL  -> 'task'   (CAL_TASK)
+    kind and block_class are insert-immutable -> no cross-calendar moves in
+    steady state; a row found in the wrong calendar is DRIFT (attention
+    line, never a silent move). The primary calendar is never read or
+    written."""
+    if event["kind"] == "appointment":
+        return "appt"
+    if event.get("block_class") == "travel":
+        return "travel"
+    return "task"
+
+
+def route(event: dict):
+    """spec 4.1 route(row) -> ('tasks', 'checklist') | ('calendar', key)."""
+    if route_surface(event) == "tasks":
+        return ("tasks", "checklist")
+    return ("calendar", route_cal_key(event))
+
+
+def _is_engraved(value):
+    """Engraved-ness (DGN-364 2.1, TM-5, normative): a key counts as engraved
+    only when its value is non-None AND non-empty after strip. The empty
+    string '' is NOT engraved -- everywhere: resolution, scan-set
+    construction, cleanup."""
+    return value is not None and str(value).strip() != ""
+
+
+def get_cal_ids(state_conn) -> dict:
+    """{'appt': id, 'task': id, 'travel': id} from the engraved config.
+    Legacy fan-out fallback (DGN-364 2.1): when NO V15 cal key is engraved
+    but the legacy agent_calendar_id is, that one id is fanned out to all
+    three categories -- an Ag-style call site is legacy-safe too. Never
+    raises; unconfigured returns the all-None dict (callers that want loud
+    failure use get_mirror_targets)."""
+    ids = {k: get_state(state_conn, v) for k, v in CAL_STATE_KEYS.items()}
+    if not any(_is_engraved(v) for v in ids.values()):
+        legacy = get_state(state_conn, LEGACY_CAL_STATE_KEY)
+        if _is_engraved(legacy):
+            return {"appt": legacy, "task": legacy, "travel": legacy}
+    return ids
+
+
+class MirrorUnconfigured(RuntimeError):
+    """No mirror calendar routing ids engraved. Message lists the exact
+    keys checked and the remedy (run lifekit-setup mirror provisioning)."""
+
+
+class MirrorConfigError(RuntimeError):
+    """Ids partially engraved (named keys missing). Non-retryable.
+    Attributes (normative, DGN-364 M3):
+      provenance:  'multi'  -- at least one V15 cal key present
+                   'legacy' -- no V15 cal key present, partial agent_* pair
+      missing_keys: tuple of the exact absent key names."""
+
+    def __init__(self, message, provenance, missing_keys):
+        super().__init__(message)
+        self.provenance = provenance
+        self.missing_keys = tuple(missing_keys)
+
+
+def get_mirror_targets(state_conn) -> dict:
+    """Resolve engraved surface ids with legacy fallback (DGN-364 2.1).
+    Returns {'mode': 'multi'|'legacy',
+             'cal_ids': {'appt': .., 'task': .., 'travel': ..},
+             'checklist_id': str}
+    Raises MirrorUnconfigured / MirrorConfigError (DGN-364 section 6).
+
+    Accuracy rule (R2-6, normative): the checklist keys (gtasks_checklist_id
+    / agent_tasklist_id-as-fallback) are DELIBERATELY not consulted when
+    determining configured-ness -- only the three CAL_STATE_KEYS and the
+    agent_* pair (five keys total) decide. A state with ONLY
+    gtasks_checklist_id engraved resolves as MirrorUnconfigured, and the
+    message claims only that no CALENDAR ROUTING ids are engraved."""
+    cal_vals = {k: get_state(state_conn, v) for k, v in CAL_STATE_KEYS.items()}
+    engraved = {k for k, v in cal_vals.items() if _is_engraved(v)}
+    if engraved:
+        # Any V15 cal key present -> mode='multi', V15 wholesale precedence.
+        missing = [CAL_STATE_KEYS[k] for k in ("appt", "task", "travel")
+                   if k not in engraved]
+        if missing:
+            raise MirrorConfigError(
+                "mirror calendar ids partially engraved; missing: %s; "
+                "remedy: re-run provisioning (provision_category_calendars "
+                "is idempotent and fills only missing ids)"
+                % ", ".join(missing),
+                provenance="multi", missing_keys=missing)
+        checklist = get_state(state_conn, CHECKLIST_STATE_KEY)
+        if not _is_engraved(checklist):
+            # Fallback chain (2.1 step 2): provision renames the legacy
+            # tasklist in place, so an upgraded legacy instance ends with
+            # both keys engraved and equal.
+            checklist = get_state(state_conn, LEGACY_TASKLIST_STATE_KEY)
+        if not _is_engraved(checklist):
+            missing = (CHECKLIST_STATE_KEY, LEGACY_TASKLIST_STATE_KEY)
+            raise MirrorConfigError(
+                "mirror checklist tasklist id not engraved; missing: %s; "
+                "remedy: re-run provisioning (provision_category_calendars "
+                "is idempotent and fills only missing ids)"
+                % ", ".join(missing),
+                provenance="multi", missing_keys=missing)
+        return {"mode": "multi",
+                "cal_ids": {k: cal_vals[k] for k in CAL_STATE_KEYS},
+                "checklist_id": checklist}
+
+    # No V15 key -> legacy pair.
+    cal_id = get_state(state_conn, LEGACY_CAL_STATE_KEY)
+    tl_id = get_state(state_conn, LEGACY_TASKLIST_STATE_KEY)
+    cal_ok, tl_ok = _is_engraved(cal_id), _is_engraved(tl_id)
+    if cal_ok and tl_ok:
+        return {"mode": "legacy",
+                "cal_ids": {"appt": cal_id, "task": cal_id, "travel": cal_id},
+                "checklist_id": tl_id}
+    if cal_ok or tl_ok:
+        missing = (LEGACY_TASKLIST_STATE_KEY,) if cal_ok \
+            else (LEGACY_CAL_STATE_KEY,)
+        raise MirrorConfigError(
+            "mirror legacy ids partially engraved; missing: %s; "
+            "remedy: repair via bootstrap() (legacy writer of record) -- "
+            "ensure_mirror_engraved routes this automatically"
+            % ", ".join(missing),
+            provenance="legacy", missing_keys=missing)
+    raise MirrorUnconfigured(
+        "no mirror calendar routing ids engraved; checked "
+        "cal_id_appt/cal_id_task/cal_id_travel and "
+        "agent_calendar_id/agent_tasklist_id; run lifekit-setup mirror "
+        "provisioning (ensure_mirror_engraved)")
+
+
+def _cal_ids_dict(cal_ids):
+    """Accept the 3-calendar dict or a legacy single id string (test /
+    transition callers) -- a string routes every category to that one id."""
+    if isinstance(cal_ids, dict):
+        return cal_ids
+    return {"appt": cal_ids, "task": cal_ids, "travel": cal_ids}
+
+
+def _calendar_scan_set(cal_ids):
+    """DGN-364 2.2 (normative, dict-shape-driven, no hidden mode flag):
+    calendar scan set from the dict alone. Returns [(cal_id, cal_key)]:
+      - unique ids = ordered de-dup of cal_ids values (appt, task, travel
+        order), skipping unengraved entries (None or empty-string).
+      - ALL engraved entries one identical id -> single pull with
+        cal_key=None -> plain 'cal_sync_token' cursor (byte-identical
+        legacy behavior).
+      - else one pull per unique id with cal_key = the first category that
+        maps to that id -> 'cal_sync_token:<key>' cursors (byte-identical
+        Ag V15 behavior). A duplicate-id multi dict yields namespaced
+        cursors only, no plain-cursor pull."""
+    scan = []
+    seen = []
+    for key in ("appt", "task", "travel"):
+        cid = cal_ids.get(key)
+        if not _is_engraved(cid):
+            continue
+        if cid not in seen:
+            seen.append(cid)
+            scan.append((cid, key))
+    if len(scan) == 1:
+        return [(scan[0][0], None)]
+    return scan
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +626,11 @@ def open_state_db() -> sqlite3.Connection:
         conn.execute(
             "ALTER TABLE mirror_outbox ADD COLUMN dead "
             "INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:  # DGN-294/DGN-364 (V15): target calendar id bookkeeping (additive)
+        conn.execute(
+            "ALTER TABLE push_snapshot ADD COLUMN calendar_id TEXT")
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -649,15 +875,31 @@ def compute_push_hash(surface: str, event: dict) -> str:
     return projection_hash(proj)
 
 
-def store_push_snapshot(conn, event_ulid, surface, proj: dict):
+def store_push_snapshot(conn, event_ulid, surface, proj: dict,
+                        calendar_id=None):
+    """DGN-294/DGN-364 (V15): push_snapshot carries the target calendar id --
+    the bookkeeping dimension tombstones/updates need to hit the RIGHT
+    calendar. calendar_id=None preserves the stored value via COALESCE
+    (tasks-surface writes / legacy callers)."""
     conn.execute(
-        "INSERT INTO push_snapshot(event_ulid, surface, field_hash, field_json, pushed_at) "
-        "VALUES(?,?,?,?,?) ON CONFLICT(event_ulid) DO UPDATE SET "
+        "INSERT INTO push_snapshot(event_ulid, surface, field_hash, "
+        "field_json, pushed_at, calendar_id) VALUES(?,?,?,?,?,?) "
+        "ON CONFLICT(event_ulid) DO UPDATE SET "
         "surface=excluded.surface, field_hash=excluded.field_hash, "
-        "field_json=excluded.field_json, pushed_at=excluded.pushed_at",
+        "field_json=excluded.field_json, pushed_at=excluded.pushed_at, "
+        "calendar_id=COALESCE(excluded.calendar_id, "
+        "push_snapshot.calendar_id)",
         (event_ulid, surface, projection_hash(proj),
-         json.dumps(proj, sort_keys=True), _now_iso()))
+         json.dumps(proj, sort_keys=True, ensure_ascii=False), _now_iso(),
+         calendar_id))
     conn.commit()
+
+
+def snapshot_calendar_id(conn, event_ulid):
+    row = conn.execute(
+        "SELECT calendar_id FROM push_snapshot WHERE event_ulid=?",
+        (event_ulid,)).fetchone()
+    return row["calendar_id"] if row else None
 
 
 def load_push_snapshot(conn, event_ulid):
@@ -862,6 +1104,238 @@ def _stamp_calendar_marker(cal_id, cal_marker):
     gws("calendar", "calendars", "patch",
         "--params", json.dumps({"calendarId": cal_id}),
         body={"description": new_desc})
+
+
+# ---------------------------------------------------------------------------
+# DGN-364 4.1: V15 provision (fresh-mint engrave path) + engrave router.
+# bootstrap() above is DEMOTED to legacy-maintenance API: nothing in the
+# fresh-mint path calls it, but it IS the routed target for legacy-provenance
+# repair (M3 routing table in ensure_mirror_engraved). It remains the writer
+# of record for agent_* keys on existing legacy instances.
+# ---------------------------------------------------------------------------
+
+def _category_marker_line(cal_marker, key):
+    """Category calendar description: '<frozen cal_marker> category=<key>'."""
+    return "%s category=%s" % (cal_marker, key)
+
+
+def _has_category_token(description, key):
+    """M4 rule 2 (normative): category token match is EXACT-TOKEN equality --
+    the description is whitespace-split and one token must equal
+    'category=<key>' verbatim. Substring/containment matching is FORBIDDEN
+    (a first-containment scan can cross-bind categories, producing a
+    permanent wrong-calendar drift storm)."""
+    return ("category=%s" % key) in (description or "").split()
+
+
+def _stamp_category_marker(cal_id, cal_marker, key):
+    """Gated adopt of an unmarked same-name calendar: stamp marker + category
+    token (S2 semantics, per category). Preserves existing description."""
+    try:
+        cur = gws("calendar", "calendars", "get",
+                  "--params", json.dumps({"calendarId": cal_id}))
+    except Exception:
+        cur = {}
+    existing = (cur.get("description") or "").strip()
+    if cal_marker in existing and _has_category_token(existing, key):
+        return
+    marker_line = _category_marker_line(cal_marker, key)
+    new_desc = (existing + "\n" + marker_line) if existing else marker_line
+    gws("calendar", "calendars", "patch",
+        "--params", json.dumps({"calendarId": cal_id}),
+        body={"description": new_desc})
+
+
+def _resolve_category_names(i18n_t=None):
+    """Prefix-over-i18n naming (4.1, dec-033): MIRROR_CAL_NAME (user's chosen
+    name from lifekit-setup step 4) becomes the display PREFIX of the
+    category names; the pattern is owned by the i18n strings; absent config
+    falls back to the i18n defaults (prefix 'Dogany'). Returns
+    ({key: name}, checklist_name).
+
+    Name-set coupling (OQC-1, normative): the S2 same-name ambiguity guard's
+    name set derives from THIS function -- the same source as the creation
+    names -- never a second hardcoded list. NOTE (m5): MIRROR_TASKLIST_NAME
+    is DEPRECATED for the multi path -- the checklist display name comes from
+    prefix-over-i18n here; MIRROR_TASKLIST_NAME is consulted ONLY by legacy
+    bootstrap()."""
+    if i18n_t is None:
+        try:
+            from mirror_i18n import t as i18n_t
+        except Exception:
+            i18n_t = lambda key, fallback, **kw: fallback.format(**kw) \
+                if kw else fallback
+    prefix = _load_conf().get("MIRROR_CAL_NAME") \
+        or _CATEGORY_NAME_DEFAULT_PREFIX
+    names = {key: i18n_t(i18n_key, fallback, name=prefix)
+             for key, (i18n_key, fallback) in CAL_I18N.items()}
+    checklist_name = i18n_t(CHECKLIST_I18N[0], CHECKLIST_I18N[1], name=prefix)
+    return names, checklist_name
+
+
+def provision_category_calendars(state_conn, i18n_t=None):
+    """C2 generalized (DGN-364 4.1, idempotent per key): resolve-or-create the
+    3 category calendars + the checklist tasklist, engrave the 4 V15 ids.
+    Re-runs fill only holes (also the remedy for a V15-partial engrave, 6.2).
+
+    Adopt rules (NORMATIVE, M4):
+      1. Marked-orphan adopt is MANDATORY: before creating, look for a
+         calendar whose description carries the frozen cal_marker AND the
+         exact category token -- found -> adopt (engrave its id), never a
+         twin, never a raise (closes the provision crash window, TM-4).
+      2. Category token match = EXACT-TOKEN equality (see
+         _has_category_token).
+      3. Unmarked same-name calendar: BootstrapAmbiguous exactly like
+         bootstrap(), unless MIRROR_ADOPT_UNMARKED authorizes adoption; on
+         gated adopt the marker + category token are stamped.
+      4. Tasklist adopt stays title+gate (no description field): reuse-and-
+         rename when a legacy tasklist id is engraved (generic key
+         agent_tasklist_id), else title match under the same S2 guard/gate,
+         else create.
+    Multi-candidate gate scope (m6): a single run can surface up to FOUR
+    adopt candidates (3 calendars + 1 tasklist); they collect into ONE
+    BootstrapAmbiguous signal so the step-5 dialog consents to the full SET
+    in one exchange. No state mutation happens while any ambiguity stands."""
+    cal_marker = _frozen_cal_marker(state_conn)
+    adopt_unmarked = _adopt_unmarked_enabled()
+    names, checklist_name = _resolve_category_names(i18n_t)
+
+    # --- Phase 1: resolve without mutating state (bootstrap discipline). ---
+    ambiguous = []
+    cal_actions = {}   # key -> ("keep"|"adopt"|"adopt_unmarked"|"create", id)
+    cal_list = None
+    for key in ("appt", "task", "travel"):
+        cal_id = get_state(state_conn, CAL_STATE_KEYS[key])
+        if _is_engraved(cal_id):
+            cal_actions[key] = ("keep", cal_id)
+            continue
+        if cal_list is None:
+            cal_list = gws("calendar", "calendarList", "list").get("items", [])
+        marker_hit = summary_hit = None
+        for item in cal_list:
+            desc = item.get("description") or ""
+            if cal_marker in desc and _has_category_token(desc, key):
+                marker_hit = item["id"]
+                break
+            if item.get("summary") == names[key] and summary_hit is None:
+                summary_hit = item["id"]
+        if marker_hit:
+            cal_actions[key] = ("adopt", marker_hit)
+        elif summary_hit and adopt_unmarked:
+            cal_actions[key] = ("adopt_unmarked", summary_hit)
+        elif summary_hit:
+            ambiguous.append({"surface": "calendar",
+                              "candidate_id": summary_hit,
+                              "summary": names[key]})
+        else:
+            cal_actions[key] = ("create", None)
+
+    tl_action = None   # ("keep"|"reuse_legacy"|"adopt_unmarked"|"create", id)
+    tl_id = get_state(state_conn, CHECKLIST_STATE_KEY)
+    if _is_engraved(tl_id):
+        tl_action = ("keep", tl_id)
+    else:
+        # Rule 4: reuse-and-rename the engraved legacy tasklist (generic key
+        # agent_tasklist_id -- replaces Ag's literal ag_tasklist_id read).
+        legacy = get_state(state_conn, LEGACY_TASKLIST_STATE_KEY)
+        if _is_engraved(legacy):
+            tl_action = ("reuse_legacy", legacy)
+        else:
+            tl_list = gws("tasks", "tasklists", "list").get("items", [])
+            title_hit = None
+            for item in tl_list:
+                if item.get("title") == checklist_name:
+                    title_hit = item["id"]
+                    break
+            if title_hit and adopt_unmarked:
+                tl_action = ("adopt_unmarked", title_hit)
+            elif title_hit:
+                ambiguous.append({"surface": "tasklist",
+                                  "candidate_id": title_hit,
+                                  "summary": checklist_name})
+            else:
+                tl_action = ("create", None)
+
+    if ambiguous:
+        # Gate off + foreign same-name surface(s): signal the FULL candidate
+        # set (m6), mutate nothing this run (no partial provision).
+        raise BootstrapAmbiguous(ambiguous)
+
+    # --- Phase 2: commit the resolved actions (all unambiguous now). ---
+    ids = {}
+    for key in ("appt", "task", "travel"):
+        verb, hit = cal_actions[key]
+        if verb == "keep":
+            cal_id = hit
+        elif verb == "adopt":
+            cal_id = hit
+            print("[provision] Adopted marked-orphan calendar (%s): %s"
+                  % (key, cal_id))
+        elif verb == "adopt_unmarked":
+            cal_id = hit
+            _stamp_category_marker(cal_id, cal_marker, key)
+            print("[provision] Adopted unmarked calendar + stamped (%s): %s"
+                  % (key, cal_id))
+        else:  # create
+            resp = gws("calendar", "calendars", "insert",
+                       body={"summary": names[key],
+                             "description": _category_marker_line(
+                                 cal_marker, key)})
+            cal_id = resp["id"]
+            print("[provision] Created calendar (%s): %s" % (key, cal_id))
+        if verb != "keep":
+            set_state(state_conn, CAL_STATE_KEYS[key], cal_id)
+        ids[key] = cal_id
+
+    verb, hit = tl_action
+    if verb == "keep":
+        tl_id = hit
+    elif verb == "reuse_legacy":
+        gws("tasks", "tasklists", "update", "--params",
+            json.dumps({"tasklist": hit}),
+            body={"id": hit, "title": checklist_name})
+        tl_id = hit
+        print("[provision] Renamed legacy tasklist in place: %s" % tl_id)
+    elif verb == "adopt_unmarked":
+        tl_id = hit
+        print("[provision] Adopted unmarked tasklist: %s" % tl_id)
+    else:  # create
+        resp = gws("tasks", "tasklists", "insert",
+                   body={"title": checklist_name})
+        tl_id = resp["id"]
+        print("[provision] Created tasklist: %s" % tl_id)
+    if verb != "keep":
+        set_state(state_conn, CHECKLIST_STATE_KEY, tl_id)
+    ids["checklist"] = tl_id
+    return ids
+
+
+def ensure_mirror_engraved(state_conn) -> dict:
+    """Fresh-setup engrave path (DGN-364 4.1). Routing table (normative, M3):
+    resolver outcome                         action
+    ---------------------------------------  -----------------------------
+    targets resolve (multi or legacy)        return unchanged (no-op)
+    MirrorUnconfigured (nothing engraved)    provision_category_calendars
+    MirrorConfigError provenance='multi'     provision (fills holes only)
+    MirrorConfigError provenance='legacy'    bootstrap()  -- NEVER provision
+    Returns the resolved targets after the action.
+
+    Rationale for the legacy row (M3): a legacy instance that lost one
+    agent_* key must be repaired IN legacy mode -- provisioning there would
+    create new calendars, flip precedence to multi, orphan the live populated
+    calendar, and duplicate every row. bootstrap() stays the legacy
+    writer-of-record. An operator who WANTS category calendars uses the
+    opt-in upgrade lane (DGN-364 section 8), never a repair path."""
+    try:
+        return get_mirror_targets(state_conn)
+    except MirrorUnconfigured:
+        provision_category_calendars(state_conn)
+    except MirrorConfigError as e:
+        if e.provenance == "legacy":
+            bootstrap(state_conn)
+        else:
+            provision_category_calendars(state_conn)
+    return get_mirror_targets(state_conn)
 
 
 # ---------------------------------------------------------------------------
@@ -1139,9 +1613,13 @@ def _find_task_by_sentinel(ulid, tl_id):
 # sync(ulid): single outbox op (W6)
 # ---------------------------------------------------------------------------
 
-def sync_event(event, cal_id, tl_id, state_conn, src_conn=None):
+def sync_event(event, cal_ids, tl_id, state_conn, src_conn=None):
     """1. route  2. upsert to target  3. clean residual on the other surface.
-    M9: routine/recurrence rows are refused (not mirror scope)."""
+    M9: routine/recurrence rows are refused (not mirror scope).
+    DGN-294/DGN-364 (V15): cal_ids = {'appt','task','travel'} category ids;
+    the target calendar comes from route_cal_key(event). The primary
+    calendar is never touched."""
+    cal_ids = _cal_ids_dict(cal_ids)
     ulid = event["ulid"]
     if not in_mirror_scope(event):
         mirror_log(state_conn, "routine_skip", ulid,
@@ -1153,7 +1631,52 @@ def sync_event(event, cal_id, tl_id, state_conn, src_conn=None):
     result = {"ulid": ulid, "target": target, "status": "ok", "error": None}
 
     if target == "calendar":
-        resp = push_calendar(event, cal_id, state_conn, src_conn)
+        cal_key = route_cal_key(event)
+        routed_id = cal_ids[cal_key]
+        cal_id = routed_id
+        result["calendar_key"] = cal_key
+        # DGN-364 M5 (bounded snapshot-unpin, REVISES Ag's unconditional
+        # push-follows-snapshot): updates/tombstones must hit the calendar
+        # the surface object actually LIVES on (snapshot bookkeeping) -- but
+        # ONLY while that calendar is still among the currently-engraved
+        # ids. A snapshot pinned to a dead (unengraved) calendar would
+        # otherwise self-renew a 404 wedge and kill the outbox row.
+        engraved_ids = {v for v in cal_ids.values() if _is_engraved(v)}
+        snap_cal = snapshot_calendar_id(state_conn, ulid)
+        pinned = False
+        if snap_cal and snap_cal != routed_id:
+            if snap_cal in engraved_ids:
+                # Legitimate multi-mode drift (user moved the event across
+                # category calendars): push follows snapshot, ONE drift line.
+                mirror_log(state_conn, "calendar_drift_outbound", ulid,
+                           "snapshot=%s routed=%s (push follows snapshot)"
+                           % (snap_cal, routed_id))
+                cal_id = snap_cal
+                pinned = True
+            else:
+                # Snapshot-unpin: dead/unengraved pin -> push follows the
+                # ROUTED id; the snapshot's calendar_id is refreshed to the
+                # routed id at store time (end of this function). No retry
+                # is consumed chasing a dead calendar.
+                mirror_log(state_conn, "calendar_snapshot_unpin", ulid,
+                           "old=%s new=%s" % (snap_cal, routed_id))
+        try:
+            resp = push_calendar(event, cal_id, state_conn, src_conn)
+        except GwsError as e:
+            # M5 addendum: calendar-level 404/410 during a push aimed at a
+            # snapshot-pinned calendar clears the stored calendar_id (NULL)
+            # BEFORE retry accounting, so the next drain routes fresh.
+            # (Event-level 404 is handled inside push_calendar and never
+            # propagates here.)
+            if pinned and e.http_code in (404, 410):
+                state_conn.execute(
+                    "UPDATE push_snapshot SET calendar_id=NULL "
+                    "WHERE event_ulid=?", (ulid,))
+                state_conn.commit()
+                mirror_log(state_conn, "calendar_pin_cleared", ulid,
+                           "calendar-level %d on pinned push; cleared %s"
+                           % (e.http_code, cal_id))
+            raise
         gtask_id = bk_get(state_conn, src_conn, ulid, "gtask_id")
         if gtask_id:
             # m13: 404 = already gone -> clear bookkeeping either way.
@@ -1169,12 +1692,16 @@ def sync_event(event, cal_id, tl_id, state_conn, src_conn=None):
     else:
         resp = push_tasks(event, tl_id, state_conn, src_conn)
         surface_id = _cal_surface_id(state_conn, ulid, src_conn)
+        # V15: flip residue lives on the calendar the row was last pushed
+        # to (snapshot bookkeeping); fall back to the routed category.
+        resid_cal = (snapshot_calendar_id(state_conn, ulid)
+                     or cal_ids[route_cal_key(event)])
         try:
             existing = gws("calendar", "events", "get", "--params",
-                           json.dumps({"calendarId": cal_id, "eventId": surface_id}))
+                           json.dumps({"calendarId": resid_cal, "eventId": surface_id}))
             if existing.get("status") != "cancelled":
                 gws("calendar", "events", "update", "--params",
-                    json.dumps({"calendarId": cal_id, "eventId": surface_id}),
+                    json.dumps({"calendarId": resid_cal, "eventId": surface_id}),
                     body={**existing, "status": "cancelled"})
         except GwsError:
             pass  # not present -> nothing to clean
@@ -1200,7 +1727,9 @@ def sync_event(event, cal_id, tl_id, state_conn, src_conn=None):
             event = dict(fresh)
     proj = (calendar_projection_from_event(event) if target == "calendar"
             else tasks_projection_from_event(event))
-    store_push_snapshot(state_conn, ulid, target, proj)
+    store_push_snapshot(state_conn, ulid, target, proj,
+                        calendar_id=(cal_id if target == "calendar"
+                                     else None))
     return result
 
 
@@ -1432,31 +1961,39 @@ def _adopt_foreign_calendar(item, cal_id, state_conn, src_conn):
     return {"ulid": ulid, "action": "adopted"}
 
 
-def pull_calendar(cal_id, state_conn, src_conn):
+def pull_calendar(cal_id, state_conn, src_conn, cal_key=None):
     """Public entry: acquires the single mirror lock shared with the drain
     (grill-4 finding 5a) -- pull and drain never interleave. If the lock is
-    held, this poll is skipped (next poll catches up; cursors unmoved)."""
+    held, this poll is skipped (next poll catches up; cursors unmoved).
+    cal_key (V15): category key of this calendar; enables the per-calendar
+    sync cursor + drift attention."""
     if not _acquire_drain_lock(state_conn):
         mirror_log(state_conn, "pull_skipped_locked", None, "calendar poll")
         return []
     try:
-        return _pull_calendar_locked(cal_id, state_conn, src_conn)
+        return _pull_calendar_locked(cal_id, state_conn, src_conn,
+                                     cal_key=cal_key)
     finally:
         _release_drain_lock(state_conn)
 
 
-def _pull_calendar_locked(cal_id, state_conn, src_conn):
+def _pull_calendar_locked(cal_id, state_conn, src_conn, cal_key=None):
     """syncToken incremental pull. F2: pageToken loop, nextSyncToken saved
     only after the final page. F3: foreign guard + per-item try/except.
     W10: mass-cancelled circuit breaker (finding 3: on trip the token is NOT
     saved so held deltas redeliver; own cancel echoes excluded from count).
-    Finding 13: invalid-token 400 handled like 410 (reset + one retry)."""
+    Finding 13: invalid-token 400 handled like 410 (reset + one retry).
+    Cursor-reset containment (DGN-364 TM-6): a 410 (or bounded 400-as-410)
+    on a namespaced pull resets ONLY that pull's cursor key
+    'cal_sync_token:<key>'; sibling cursors and the plain legacy cursor are
+    never touched."""
     results = []
     items = []
     next_sync_token = None
 
+    token_key = ("cal_sync_token:%s" % cal_key) if cal_key else "cal_sync_token"
     for attempt in range(2):
-        sync_token = get_state(state_conn, "cal_sync_token")
+        sync_token = get_state(state_conn, token_key)
         items = []
         page_token = None
         try:
@@ -1482,7 +2019,7 @@ def _pull_calendar_locked(cal_id, state_conn, src_conn):
         except GwsError as e:
             # 410 GONE or invalid-token 400 -> reset + full resync (once).
             if e.http_code in (410, 400) and sync_token and attempt == 0:
-                set_state(state_conn, "cal_sync_token", "")
+                set_state(state_conn, token_key, "")
                 continue
             raise
 
@@ -1549,6 +2086,21 @@ def _pull_calendar_locked(cal_id, state_conn, src_conn):
                                        "inbound cancel apply=%s" % res)
                 results.append({"ulid": ulid, "action": action})
                 continue
+            # V15 drift attention (4.1): kind/block_class are insert-
+            # immutable, so a row surfacing in a calendar its route does
+            # not map to = drift -> ONE attention line, NEVER a silent
+            # move (and no apply from the drifted copy).
+            if cal_key is not None and src_conn is not None:
+                drow = src_conn.execute(
+                    "SELECT * FROM event WHERE ulid=?", (ulid,)).fetchone()
+                if (drow is not None
+                        and route_cal_key(dict(drow)) != cal_key):
+                    mirror_log(state_conn, "calendar_drift", ulid,
+                               "found_in=%s expected=%s"
+                               % (cal_key, route_cal_key(dict(drow))))
+                    results.append({"ulid": ulid,
+                                    "action": "drift_attention"})
+                    continue
             action = _apply_calendar_3way(item, state_conn, src_conn)
             results.append({"ulid": ulid, "action": action})
         except Exception as e:  # F3: one bad item never kills the poll
@@ -1560,7 +2112,7 @@ def _pull_calendar_locked(cal_id, state_conn, src_conn):
     # Finding 3: on breaker trip the token is NOT advanced -- the held
     # cancelled deltas redeliver on the next poll (W12 backstop absent).
     if next_sync_token and not breaker_tripped:
-        set_state(state_conn, "cal_sync_token", next_sync_token)
+        set_state(state_conn, token_key, next_sync_token)
     return results
 
 
@@ -1841,7 +2393,7 @@ def _release_drain_lock(state_conn):
     state_conn.commit()
 
 
-def outbox_drain(state_conn, src_conn, cal_id, tl_id, max_items=50,
+def outbox_drain(state_conn, src_conn, cal_ids, tl_id, max_items=50,
                  backoff_base=1.0, sleep_fn=time.sleep):
     """Drain the outbox: claim -> sync -> pushed | retry(backoff) | failed.
     - claim/lease: stale claims (lease expired) are reclaimed.
@@ -1883,7 +2435,7 @@ def outbox_drain(state_conn, src_conn, cal_id, tl_id, max_items=50,
                 failed += 1
                 continue
             try:
-                sync_event(dict(ev_row), cal_id, tl_id, state_conn, src_conn)
+                sync_event(dict(ev_row), cal_ids, tl_id, state_conn, src_conn)
                 state_conn.execute(
                     "UPDATE mirror_outbox SET status='pushed', updated_at=? "
                     "WHERE id=?", (_now_iso(), row["id"]))
@@ -2065,28 +2617,44 @@ def _run_cycle_step(out, key, state_conn, fn):
         return False
 
 
-def poll_cycle(state_conn, src_conn, cal_id, tl_id):
+def poll_cycle(state_conn, src_conn, cal_ids, tl_id):
     """One full poller cycle (the cron target at cutover):
-    sweep -> inbound pulls -> outbox drain.
+    sweep -> inbound pulls (dict-shape scan set, V15) -> outbox drain.
 
     DGN-268 S5: each step is isolated (see _run_cycle_step). The outbound DRAIN
     always runs even if an inbound pull raised -- the outbound path must never
     be held hostage to an inbound 404 (the 2026-07-12 09:21 live-instance
     starvation: a transient pull_calendar 404 aborted the whole cycle before
     drain could push).
-    Ordering (sweep -> pulls -> drain) and idempotency are unchanged; on the
-    all-success path the returned dict is byte-identical to the pre-S5 shape."""
+
+    DGN-364 2.3 (V15 loop MERGED with S5 isolation): the calendar scan set
+    comes from _calendar_scan_set (2.2). Legacy mode (single unique id) emits
+    the pre-promotion output keys byte-identically
+    (sweep/calendar/tasks/drain/overlap_recheck) and calls pull_calendar in
+    the pre-promotion 3-arg form. Multi mode emits calendar:appt /
+    calendar:task / calendar:travel -- a pull failure on one category never
+    blocks the others nor the drain; cursor resets stay per-key (TM-6)."""
+    cal_ids = _cal_ids_dict(cal_ids)
     out = {}
     _run_cycle_step(out, "sweep", state_conn,
                     lambda: sweep_step(state_conn, src_conn))
-    _run_cycle_step(out, "calendar", state_conn,
-                    lambda: pull_calendar(cal_id, state_conn, src_conn))
+    for cid, cal_key in _calendar_scan_set(cal_ids):
+        if cal_key is None:
+            # Legacy branch: byte-identical pre-promotion call shape.
+            _run_cycle_step(out, "calendar", state_conn,
+                            lambda cid=cid:
+                                pull_calendar(cid, state_conn, src_conn))
+        else:
+            _run_cycle_step(out, "calendar:%s" % cal_key, state_conn,
+                            lambda cid=cid, k=cal_key:
+                                pull_calendar(cid, state_conn, src_conn,
+                                              cal_key=k))
     _run_cycle_step(out, "tasks", state_conn,
                     lambda: pull_tasks(tl_id, state_conn, src_conn))
     # Drain runs unconditionally -- it is the outbound lane and must not be
     # skipped just because an inbound pull failed above.
     _run_cycle_step(out, "drain", state_conn,
-                    lambda: outbox_drain(state_conn, src_conn, cal_id, tl_id))
+                    lambda: outbox_drain(state_conn, src_conn, cal_ids, tl_id))
     # DGN-333 (MAJOR-5 rev): batch-end recheck of deferred overlap notices --
     # only overlaps that survive the whole cycle reach the owner.
     out["overlap_recheck"] = overlap_flush(state_conn, src_conn)
@@ -2098,23 +2666,43 @@ def poll_cycle(state_conn, src_conn, cal_id, tl_id):
 # ---------------------------------------------------------------------------
 
 def cleanup(conn):
-    result = {"calendar": None, "tasklist": None}
-    cal_id = get_state(conn, "agent_calendar_id")
-    tl_id = get_state(conn, "agent_tasklist_id")
-    if cal_id:
+    """Teardown (DGN-364 2.5, normative): reads the generic state keys
+    DIRECTLY -- it does NOT route through get_mirror_targets (which raises on
+    partial states; cleanup needs the partial ids themselves).
+      - Calendar deletions: every DISTINCT engraved id among
+        {cal_id_appt, cal_id_task, cal_id_travel, agent_calendar_id}.
+      - Tasklist deletions: every DISTINCT engraved id among
+        {gtasks_checklist_id, agent_tasklist_id}.
+    Partial/mixed states are handled by construction (whatever ids exist get
+    deleted; missing keys are skipped silently -- cleanup is a teardown, not
+    a validator). Explicit (m2): the Ag-literal keys ag_calendar_id /
+    ag_tasklist_id are NEVER read by generic cleanup."""
+    result = {"calendar": [], "tasklist": []}
+    cal_ids = []
+    for key in ("cal_id_appt", "cal_id_task", "cal_id_travel",
+                LEGACY_CAL_STATE_KEY):
+        v = get_state(conn, key)
+        if _is_engraved(v) and v not in cal_ids:
+            cal_ids.append(v)
+    tl_ids = []
+    for key in (CHECKLIST_STATE_KEY, LEGACY_TASKLIST_STATE_KEY):
+        v = get_state(conn, key)
+        if _is_engraved(v) and v not in tl_ids:
+            tl_ids.append(v)
+    for cal_id in cal_ids:
         try:
             gws_delete("calendar", "calendars", "delete",
                        "--params", json.dumps({"calendarId": cal_id}))
-            result["calendar"] = "deleted:%s" % cal_id
+            result["calendar"].append("deleted:%s" % cal_id)
         except Exception as e:
-            result["calendar"] = "ERROR:%s" % e
-    if tl_id:
+            result["calendar"].append("ERROR:%s" % e)
+    for tl_id in tl_ids:
         try:
             gws_delete("tasks", "tasklists", "delete",
                        "--params", json.dumps({"tasklist": tl_id}))
-            result["tasklist"] = "deleted:%s" % tl_id
+            result["tasklist"].append("deleted:%s" % tl_id)
         except Exception as e:
-            result["tasklist"] = "ERROR:%s" % e
+            result["tasklist"].append("ERROR:%s" % e)
     return result
 
 

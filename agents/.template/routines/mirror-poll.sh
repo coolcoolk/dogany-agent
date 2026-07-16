@@ -49,14 +49,48 @@ if [ -x "/opt/homebrew/bin/python3" ]; then
 else
     PY=python3
 fi
+# DGN-364: target resolution goes through the single resolver
+# (get_mirror_targets) -- NO raw state-key reads in shell-embedded python
+# (the DGN-363 anti-pattern is dead). Unengraved/partial config maps to the
+# exit-3 sentinel handled by the rail below: loud (stderr every run + one
+# user push per day) but exit 0, so cron health does not flap and there is
+# no 5-minute 400 hammer against Google. Any OTHER nonzero python exit
+# propagates unchanged (real failures stay visible).
+set +e
 "$PY" - <<'PY'
+import sys
 import adapter, notify
 state = adapter.open_state_db()
 src = adapter.get_src_conn()
-cal_id = adapter.get_state(state, "agent_calendar_id")
-tl_id = adapter.get_state(state, "agent_tasklist_id")
-out = adapter.poll_cycle(state, src, cal_id, tl_id)
+try:
+    t = adapter.get_mirror_targets(state)
+except adapter.MirrorUnconfigured as e:
+    print("MIRROR_UNCONFIGURED: %s" % e, file=sys.stderr)
+    sys.exit(3)
+except adapter.MirrorConfigError as e:
+    print("MIRROR_CONFIG_ERROR: %s" % e, file=sys.stderr)
+    sys.exit(3)
+out = adapter.poll_cycle(state, src, t["cal_ids"], t["checklist_id"])
 n = notify.deliver_pending(state, deliver_fn=notify.push_sh_deliver)
 print("cycle:", {k: (len(v) if isinstance(v, list) else v)
                  for k, v in out.items()}, "notified:", n)
 PY
+_RC=$?
+set -e
+if [ "$_RC" = "3" ]; then
+  # Unengraved rail (DGN-364 section 5, dec-033): once-daily user push,
+  # STAMP-AFTER-PUSH (m3) -- the stamp is written ONLY after push.sh exits 0,
+  # so a failed push leaves no stamp and retries next cycle (the day's alert
+  # can never be eaten by a stamp written before a failed push).
+  _STAMP="$_AGENT_ROOT/.telegram_bot/mirror-unengraved.stamp"
+  _TODAY="$(date -u +%Y-%m-%d)"
+  if [ "$(cat "$_STAMP" 2>/dev/null || true)" != "$_TODAY" ]; then
+    if "$_AGENT_ROOT/routines/push.sh" --text \
+      "Calendar sync is on but its calendars are not set up yet. Ask me to finish calendar setup." \
+      >/dev/null 2>&1; then
+      printf '%s' "$_TODAY" > "$_STAMP" 2>/dev/null || true
+    fi
+  fi
+  exit 0
+fi
+exit "$_RC"

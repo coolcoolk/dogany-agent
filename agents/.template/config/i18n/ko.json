@@ -34,5 +34,10 @@
   "mirror.overlap_notice": "'{title}' 일정을 적용한 자리에 기존 일정과 겹침이 있습니다: {detail}",
   "mirror.repeated_failure": "동기화 실패 반복: '{title}' 항목이 재시도 한도에 도달했습니다. 수동 확인이 필요합니다.",
   "mirror.reconcile_report": "주간 동기화 점검: 총 {checked}건 점검, 누락 {missing}건 재전송, 불일치 {mismatch}건, 관리 밖 항목 {orphan}건, 삭제 감지 보류 {deleted_held}건. {verdict}",
-  "mirror.reconcile_verdict_attention": "확인 필요"
+  "mirror.reconcile_verdict_attention": "확인 필요",
+  "mirror.ops.prefix": "[{label} 캘린더 동기화] ",
+  "mirror.cal.appointments": "{name}-약속",
+  "mirror.cal.tasks": "{name}-태스크",
+  "mirror.cal.travel": "{name}-이동",
+  "mirror.gtasks.checklist": "{name}-체크리스트"
 }

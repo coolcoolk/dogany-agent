@@ -91,16 +91,82 @@ def notify(state_conn, kind, event_ulid=None, dedup=True, **kwargs):
     return True
 
 
-def push_sh_deliver(message):
+# Operator-facing report kinds (DGN-306 fold, DGN-364 2.8; owner directive
+# 2026-07-15): system/ops reports route to the OPERATOR channel, never the
+# persona channel -- end users must not receive sync-ops noise. The operator
+# channel is config-derived (conf key MIRROR_OPS_ENV_FILE); unset or missing
+# file -> ALL kinds deliver to the persona channel (zero-delta for instances
+# without an operator channel).
+OPS_KINDS = frozenset(["reconcile_report"])
+
+# Ops prefix: i18n key mirror.ops.prefix parameterized with the agent label.
+# The label SOURCE is the S1 conf key DOGANY_AGENT_LABEL (R2-2: the named
+# parameter source -- no other conf key resolves the label). The ko fallback
+# below is unicode-escaped (source stays ASCII, A7):
+# "[<label> calendar sync] ".
+_OPS_PREFIX_FALLBACK = u"[{label} \uce98\ub9b0\ub354 \ub3d9\uae30\ud654] "
+
+
+def _notify_conf():
+    """Minimal shell-style conf reader (DGN-364 2.8: must stay
+    circular-import-free -- adapter imports notify, so notify never imports
+    adapter). Same sources + precedence as adapter._load_conf:
+    ../config/lifekit.conf first, then ../.instance.conf; earlier source
+    wins; missing files are no-ops."""
+    import os
+    conf = {}
+    base = os.path.dirname(os.path.abspath(__file__))
+    for parts in (("..", "config", "lifekit.conf"), ("..", ".instance.conf")):
+        path = os.path.normpath(os.path.join(base, *parts))
+        try:
+            with open(path, "r") as fh:
+                lines = fh.readlines()
+        except (OSError, IOError):
+            continue
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            if not key or key in conf:
+                continue
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            conf[key] = val
+    return conf
+
+
+def _ops_prefix(conf):
+    """Resolved ops prefix: i18n mirror.ops.prefix with {label} from the
+    DOGANY_AGENT_LABEL conf value ('agent' keeps the string well-formed on a
+    bare checkout)."""
+    label = conf.get("DOGANY_AGENT_LABEL") or "agent"
+    return mirror_i18n.t("mirror.ops.prefix", _OPS_PREFIX_FALLBACK,
+                         label=label)
+
+
+def push_sh_deliver(message, kind=None):
     """PRODUCTION delivery (patch 03): route through the instance's own
     push.sh (self-locating: mirror/ -> ../routines/push.sh). Raises on
-    non-zero exit so the row stays undelivered and retries next cycle."""
+    non-zero exit so the row stays undelivered and retries next cycle.
+    Ops-report kinds (OPS_KINDS) route to the operator channel via
+    push.sh --env when MIRROR_OPS_ENV_FILE resolves to an existing file,
+    with the agent-labeled ops prefix; otherwise fall back to the persona
+    channel (report must not be lost)."""
     import os
     import subprocess
     push = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "routines", "push.sh"))
-    r = subprocess.run([push, "--text", message],
-                       capture_output=True, text=True, timeout=60)
+    cmd = [push, "--text", message]
+    if kind in OPS_KINDS:
+        conf = _notify_conf()
+        ops_env = conf.get("MIRROR_OPS_ENV_FILE") or ""
+        if ops_env and os.path.isfile(ops_env):
+            cmd = [push, "--env", ops_env, "--text",
+                   _ops_prefix(conf) + message]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise RuntimeError("push.sh exit %d: %s" % (r.returncode,
                                                     r.stderr[:200]))
@@ -109,15 +175,25 @@ def push_sh_deliver(message):
 def deliver_pending(state_conn, deliver_fn=None):
     """Cutover seam: drain undelivered notifications through deliver_fn
     (live = routines/push.sh wrapper). SANDBOX: no-op unless a deliver_fn
-    is supplied."""
+    is supplied. DGN-306/DGN-364 2.8: the row's kind is passed to a 2-arg
+    deliver_fn so ops kinds can route to the operator channel; a 1-arg
+    deliver_fn stays backward compatible (sandbox unaffected)."""
     if deliver_fn is None:
         return 0
+    import inspect
+    try:
+        multi_arg = len(inspect.signature(deliver_fn).parameters) >= 2
+    except (TypeError, ValueError):
+        multi_arg = False
     rows = state_conn.execute(
-        "SELECT id, message FROM notify_outbox WHERE delivered=0 ORDER BY id"
+        "SELECT id, kind, message FROM notify_outbox WHERE delivered=0 ORDER BY id"
     ).fetchall()
     n = 0
     for r in rows:
-        deliver_fn(r["message"])
+        if multi_arg:
+            deliver_fn(r["message"], r["kind"])
+        else:
+            deliver_fn(r["message"])
         # g10: commit PER ROW -- a failure at row k must not redeliver
         # rows 1..k-1 on the next cycle (duplicate flood guard).
         state_conn.execute(

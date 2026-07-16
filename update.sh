@@ -299,7 +299,11 @@ print(m.group(1))
 " "$f" 2>/dev/null
 }
 
-# Extractor: parse max(ALLOWED_USER_VERSIONS = [...]) from an sdk_bridge.py.
+# Extractor: parse max(ALLOWED_USER_VERSIONS = (...) or [...]) from an
+# sdk_bridge.py. DGN-364 2.7b fix: the previous regex parsed ONLY list
+# syntax '[...]' while every live pin uses tuple syntax '(7, 8)' -- the
+# guard as written could never engage. Accept tuple OR list via
+# ast.literal_eval on either bracket form.
 # Prints the integer on stdout; exits non-zero on parse failure.
 extract_ver_sdk_bridge_py() {
   local f="$1"
@@ -307,11 +311,12 @@ extract_ver_sdk_bridge_py() {
   python3 -c "
 import re, sys, ast
 txt = open(sys.argv[1]).read()
-m = re.search(r'^ALLOWED_USER_VERSIONS\s*=\s*(\[[^\]]*\])', txt, re.MULTILINE)
+m = re.search(r'^ALLOWED_USER_VERSIONS\s*=\s*(\([^)]*\)|\[[^\]]*\])',
+              txt, re.MULTILINE)
 if not m: sys.exit(1)
-lst = ast.literal_eval(m.group(1))
-if not lst: sys.exit(1)
-print(max(int(x) for x in lst))
+vals = ast.literal_eval(m.group(1))
+if not vals: sys.exit(1)
+print(max(int(x) for x in vals))
 " "$f" 2>/dev/null
 }
 
@@ -322,7 +327,13 @@ print(max(int(x) for x in lst))
 # function above.
 GUARDED_FILES=(
   "database/lifekit.py:lifekit_py"
-  # "database/sdk_bridge.py:sdk_bridge_py"   # uncomment when sdk_bridge gets a version pin
+  # DGN-364 2.7b (F1): the sdk_bridge version pin is guarded at its REAL
+  # path (mirror/sdk_bridge.py -- the old commented entry named the wrong
+  # path database/sdk_bridge.py). Because section 3e-mirror is a wholesale
+  # rsync, this entry engages as a PRE-RSYNC check there (anchored
+  # --exclude '/sdk_bridge.py' on a SKIP verdict), not via the 3f
+  # per-file loop.
+  "mirror/sdk_bridge.py:sdk_bridge_py"
 )
 
 # drift_guard_file RELPATH FW_SRC INST_DEST EXTRACTOR_KEY
@@ -636,6 +647,65 @@ if [ -d "$TEMPLATE/bridge" ]; then
   UPDATED+=("bridge/")
 fi
 
+# 3e-mirror) mirror/ engine (DGN-268 S3), hoisted at repo root (single home;
+#     not in the template). Refresh CODE + schema ONLY. The instance's
+#     mirror_state.db holds live sync bookkeeping (surface ids / etags /
+#     cursors) and MUST survive a refresh -- COMMON_EXCLUDES already drops
+#     *.db, and we add the WAL sidecars (*.db-wal / *.db-shm) belt-and-braces
+#     so a mid-poll refresh never truncates in-flight state. Always-ship: the
+#     cron flag-gate (MIRROR_MODULE) already silences opted-out users, so an
+#     unconditional code refresh is correct and matches how service/ ships.
+#
+#     SECTION-ORDER SWAP (DGN-364 m7): this block runs BEFORE the routines/
+#     rsync (3b) so the new adapter is always on disk before the new scripts
+#     -- the scripts call get_mirror_targets; in the old order a 5-minute
+#     poll firing between routines landing and mirror landing would
+#     AttributeError once. Mirror-first is safe in both directions because
+#     the promoted adapter keeps every old entry point (get_state etc.) the
+#     old scripts use.
+#
+#     Reverse-drift guard (DGN-364 2.7b, F1): because this section is a
+#     wholesale rsync (not per-file copies like 3f), the mirror/sdk_bridge.py
+#     guard engages as a PRE-RSYNC check: on a SKIP verdict the exclude is
+#     ANCHORED to the transfer root ('/sdk_bridge.py', leading slash -- an
+#     unanchored pattern would also match a same-named file in any future
+#     subdirectory of mirror/). Missing instance file = first-install
+#     PROCEED (no exclude, the canonical file lands). Dry-run replicates the
+#     3f reporting branch: the guard still evaluates and prints the would-be
+#     verdict without mutating anything.
+if [ -d "$REPO_ROOT/mirror" ]; then
+  build_preserve_excludes "mirror"
+  MIRROR_GUARD_EX=()
+  _sb_fw="$REPO_ROOT/mirror/sdk_bridge.py"
+  _sb_inst="$INSTANCE/mirror/sdk_bridge.py"
+  if [ -f "$_sb_fw" ] && [ -f "$_sb_inst" ]; then
+    if [ "$DRY_RUN" = "1" ]; then
+      # Dry-run reporting branch (3f-style): evaluate + print, mutate nothing.
+      _sb_fw_v="$( extract_ver_sdk_bridge_py "$_sb_fw"   2>/dev/null)" || true
+      _sb_in_v="$( extract_ver_sdk_bridge_py "$_sb_inst" 2>/dev/null)" || true
+      if [[ "$_sb_fw_v" =~ ^[0-9]+$ ]] && [[ "$_sb_in_v" =~ ^[0-9]+$ ]] && [ "$_sb_in_v" -gt "$_sb_fw_v" ]; then
+        msg "  [dry-run][경고] 역주행 가드: mirror/sdk_bridge.py 갱신 건너뜀 예정 (인스턴스 v${_sb_in_v} > 프레임워크 v${_sb_fw_v})" \
+            "  [dry-run][WARN] reverse-drift guard: would SKIP mirror/sdk_bridge.py (instance v${_sb_in_v} > framework v${_sb_fw_v})"
+        MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
+      else
+        msg "  [dry-run] mirror/sdk_bridge.py 갱신 예정" \
+            "  [dry-run] would refresh mirror/sdk_bridge.py"
+      fi
+    else
+      drift_guard_file "mirror/sdk_bridge.py" "$_sb_fw" "$_sb_inst" "sdk_bridge_py" \
+        || MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
+    fi
+  fi
+  # Missing instance file: first-install PROCEED -- no exclude added.
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+    ${MIRROR_GUARD_EX[@]+"${MIRROR_GUARD_EX[@]}"} \
+    --exclude '*.db-wal' \
+    --exclude '*.db-shm' \
+    --exclude '*.db.bak*' \
+    "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
+  UPDATED+=("mirror/ (code+schema; *.db preserved)")
+fi
+
 # 3b) routines (framework schedulers/scripts). Preserve-list excludes guard
 #     instance-customized routine scripts (DGN-359/DGN-363 clobber class).
 if [ -d "$TEMPLATE/routines" ]; then
@@ -686,24 +756,6 @@ if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     "$REPO_ROOT/service/" "$INSTANCE/service/"
   UPDATED+=("service/")
-fi
-
-# 3e-mirror) mirror/ engine (DGN-268 S3), hoisted at repo root (single home;
-#     not in the template). Refresh CODE + schema ONLY. The instance's
-#     mirror_state.db holds live sync bookkeeping (surface ids / etags /
-#     cursors) and MUST survive a refresh -- COMMON_EXCLUDES already drops
-#     *.db, and we add the WAL sidecars (*.db-wal / *.db-shm) belt-and-braces
-#     so a mid-poll refresh never truncates in-flight state. Always-ship: the
-#     cron flag-gate (MIRROR_MODULE) already silences opted-out users, so an
-#     unconditional code refresh is correct and matches how service/ ships.
-if [ -d "$REPO_ROOT/mirror" ]; then
-  build_preserve_excludes "mirror"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    --exclude '*.db-wal' \
-    --exclude '*.db-shm' \
-    --exclude '*.db.bak*' \
-    "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
-  UPDATED+=("mirror/ (code+schema; *.db preserved)")
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).

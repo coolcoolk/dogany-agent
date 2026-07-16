@@ -13,6 +13,9 @@ fulldiff.py.
   (requeues < MAX_REQUEUES -> back to queued with reset attempts); at the
   cap -> repeated_failure notification. No infinite silent dead rows.
 - Summary lands on the notification interface (sandbox notify_outbox).
+- DGN-294/DGN-364 (V15): run_reconcile takes the cal_ids DICT (string shim
+  accepted); the scan set covers ALL engraved category calendars; per-ulid
+  LISTS + calendar_dup detection; wrong-calendar drift attention.
 
 Usage: python3 reconcile.py [--state <state_db>] [--repair] [--drain]
 English/ASCII only.
@@ -25,9 +28,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 import adapter as A
+import mirror_i18n
 import notify as notify_mod
 import sdk_bridge
-import mirror_i18n
 
 MAX_REQUEUES = 3
 
@@ -102,33 +105,51 @@ def retry_failed(state_conn, src_conn, max_requeues=MAX_REQUEUES):
             "dead_skipped": dead_skipped}
 
 
-def run_reconcile(state_conn, src_conn, cal_id, tl_id, repair=True,
+def run_reconcile(state_conn, src_conn, cal_ids, tl_id, repair=True,
                   scope_ulids=None):
     """scope_ulids: when provided, only these SoT ulids are reconciled
     (targeted reconcile / sample-scale test). None = full DB (cutover job).
     g6-12: classification runs under the single mirror lock (poll/drain
-    excluded while we read surfaces + apply dec-011)."""
+    excluded while we read surfaces + apply dec-011).
+    cal_ids (V15): the category dict; a legacy single id string is accepted
+    via the _cal_ids_dict shim."""
     if not A._acquire_drain_lock(state_conn):
         return {"verdict": "LOCKED", "status": "locked"}
     try:
-        return _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id,
+        return _run_reconcile_locked(state_conn, src_conn, cal_ids, tl_id,
                                      repair, scope_ulids)
     finally:
         A._release_drain_lock(state_conn)
 
 
-def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
+def _run_reconcile_locked(state_conn, src_conn, cal_ids, tl_id, repair,
                           scope_ulids):
-    cal_items = _fetch_all_calendar(cal_id)
+    # DGN-294/DGN-364 (V15): reconcile = full scan of ALL engraved category
+    # calendars. The scan set comes from the same 2.2 dict-shape rule as
+    # poll_cycle (_calendar_scan_set): a legacy/all-identical dict collapses
+    # to ONE fetch with no category attribution (no drift attention in
+    # legacy mode). Track WHICH calendar each item came from for drift
+    # attention (multi mode only).
+    cal_ids = A._cal_ids_dict(cal_ids)
+    cal_items = []
+    item_cal_key = {}
+    for cid, key in A._calendar_scan_set(cal_ids):
+        for it in _fetch_all_calendar(cid):
+            cal_items.append(it)
+            if key is not None and it.get("id"):
+                item_cal_key[it["id"]] = key
     task_items = _fetch_all_tasks(tl_id)
 
+    # grill m1: per-ulid LISTS -- a dict would silently collapse the same
+    # ulid appearing on two calendars (exactly the drift/duplication case
+    # reconcile exists to catch).
     cal_by_ulid, foreign_cal = {}, 0
     for it in cal_items:
         u = A._extract_ulid(it)
         if u is None:
             foreign_cal += 1
         else:
-            cal_by_ulid[u] = it
+            cal_by_ulid.setdefault(u, []).append(it)
     # grill-5 finding 2: keep the deleted-tombstone id set (matched by the
     # gtask_id bookkeeping column, NOT by sentinel -- tombstone notes
     # preservation is unproven, finding 8).
@@ -146,13 +167,13 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             foreign_task += 1
 
     missing, mismatched, expected_tombstones = [], [], []
-    owner_deleted = []
     # DGN-302: abandoned rows whose gcal event is still confirmed (the cancel
     # push was never enqueued). Tracked separately so repair can enqueue a
     # sync via the normal outbox path (push_calendar projects abandoned ->
     # cancelled). Foreign-item guard is unchanged: we only reach here via
     # cal_by_ulid, which only contains our-ulid items.
     abandoned_gcal_drift = []
+    owner_deleted = []
     checked = 0
     sot_rows = {}
     for r in src_conn.execute("SELECT * FROM event").fetchall():
@@ -167,20 +188,41 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
         abandoned = (ev.get("settled_outcome") == "abandoned"
                      or ev.get("status") == "abandoned")
 
-        cal_it = cal_by_ulid.pop(ev["ulid"], None)
+        cal_list = cal_by_ulid.pop(ev["ulid"], [])
+        if len(cal_list) > 1:
+            # m1: same ulid on >1 calendar = duplication drift -> report,
+            # never silently pick-and-hide. Classification continues with
+            # the copy on the EXPECTED calendar when present.
+            homes = sorted(item_cal_key.get(i.get("id"), "?")
+                           for i in cal_list)
+            A.mirror_log(state_conn, "calendar_dup", ev["ulid"],
+                         "copies=%s" % ",".join(homes))
+            mismatched.append(("calendar_dup", ev["ulid"],
+                               {"copies": homes}))
+        want_key = A.route_cal_key(ev)
+        cal_it = None
+        for i in cal_list:
+            if item_cal_key.get(i.get("id")) == want_key:
+                cal_it = i
+                break
+        if cal_it is None and cal_list:
+            cal_it = cal_list[0]
         task_it = task_by_ulid.pop(ev["ulid"], None)
 
         if abandoned:
             # Expected: calendar tombstone-or-absent, task absent.
-            if cal_it is not None and cal_it.get("status") == "cancelled":
-                expected_tombstones.append(("abandoned-cal", ev["ulid"]))
-            elif cal_it is not None:
-                # DGN-302: gcal event still confirmed for an abandoned row =
-                # drift. With repair=True we enqueue a sync so the drain
-                # pushes status=cancelled. Classified separately from
-                # mismatched so the repair path is targeted and the report
-                # is informative.
-                abandoned_gcal_drift.append(ev["ulid"])
+            # DGN-302 (V15 re-graft): consider ALL calendar copies for this
+            # ulid -- if ANY copy is still non-cancelled the cancel push
+            # never landed = drift. With repair=True we enqueue a sync so
+            # the drain pushes status=cancelled (ONE entry per ulid, never
+            # per copy; classified separately from mismatched so the repair
+            # path is targeted and the report is informative). All copies
+            # cancelled stays the expected-tombstone case.
+            if cal_list:
+                if any(i.get("status") != "cancelled" for i in cal_list):
+                    abandoned_gcal_drift.append(ev["ulid"])
+                else:
+                    expected_tombstones.append(("abandoned-cal", ev["ulid"]))
             if task_it is not None and not task_it.get("deleted"):
                 mismatched.append(("tasks", ev["ulid"],
                                    {"expected": "deleted",
@@ -195,6 +237,17 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             if cal_it is None:
                 missing.append(("calendar", ev["ulid"]))
                 continue
+            # V15 drift attention: found in a calendar route() does not map
+            # this row to -> ONE report line, no silent move.
+            found_key = item_cal_key.get(cal_it.get("id"))
+            if found_key is not None and found_key != want_key:
+                A.mirror_log(state_conn, "calendar_drift", ev["ulid"],
+                             "found_in=%s expected=%s"
+                             % (found_key, want_key))
+                mismatched.append(("calendar_drift", ev["ulid"],
+                                   {"found_in": found_key,
+                                    "expected": want_key}))
+                continue
             if cal_it.get("status") == "cancelled":
                 # live row but tombstoned surface = drift (owner cancel
                 # awaiting decision, or W3 revive pending) -> report only.
@@ -208,6 +261,12 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
             if p_ev != p_it:
                 diffs = {k: (p_ev.get(k), p_it.get(k)) for k in p_ev
                          if p_ev.get(k) != p_it.get(k)}
+                # Owner decision 2026-07-14: cosmetic surface appearance
+                # (color markers) quietly accepts the Google side as truth.
+                # color_id drift is NOT a mismatch and never repaired.
+                diffs.pop("color_id", None)
+                if not diffs:
+                    continue
                 mismatched.append(("calendar", ev["ulid"], diffs))
         else:
             # Tasks-routed: a cancelled calendar leftover = flip tombstone.
@@ -298,6 +357,9 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
         "dead_held": len(dead_held),
         "dead_held_detail": dead_held[:20],
         "expected_tombstones": len(expected_tombstones),
+        "abandoned_gcal_drift": len(abandoned_gcal_drift),
+        "abandoned_cancel_enqueued": abandoned_cancel_enqueued,
+        "abandoned_gcal_drift_detail": abandoned_gcal_drift[:20],
         "foreign": {"calendar": foreign_cal, "tasks": foreign_task},
         "retry": retry,
         "verdict": verdict,
@@ -305,9 +367,6 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
         "mismatch_detail": mismatched[:20],
         "orphan_detail": orphans[:20],
         "owner_deleted_detail": owner_deleted[:20],
-        "abandoned_gcal_drift": len(abandoned_gcal_drift),
-        "abandoned_cancel_enqueued": abandoned_cancel_enqueued,
-        "abandoned_gcal_drift_detail": abandoned_gcal_drift[:20],
     }
     # g6-13 (Metal ruling): CLEAN = silent. The weekly report reaches the
     # owner ONLY when something needs attention. Korean only (finding 6).
@@ -322,17 +381,20 @@ def _run_reconcile_locked(state_conn, src_conn, cal_id, tl_id, repair,
 
 
 if __name__ == "__main__":
+    # DGN-364: target resolution goes through the single resolver -- no raw
+    # state-key reads in entry points (the DGN-363 anti-pattern is dead).
     args = sys.argv[1:]
     if "--state" in args:
         A.STATE_DB_PATH = args[args.index("--state") + 1]
     state = A.open_state_db()
     src = A.get_src_conn()
-    cal_id = A.get_state(state, "agent_calendar_id")
-    tl_id = A.get_state(state, "agent_tasklist_id")
-    summary = run_reconcile(state, src, cal_id, tl_id,
+    targets = A.get_mirror_targets(state)
+    summary = run_reconcile(state, src, targets["cal_ids"],
+                            targets["checklist_id"],
                             repair="--repair" in args)
     if "--drain" in args:
-        summary["drain"] = A.outbox_drain(state, src, cal_id, tl_id)
+        summary["drain"] = A.outbox_drain(state, src, targets["cal_ids"],
+                                          targets["checklist_id"])
     for k, v in summary.items():
         print("%s: %s" % (k, v))
     src.close()
