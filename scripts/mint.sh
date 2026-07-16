@@ -137,7 +137,7 @@ env_render() {
   printf '# Extra path-guard roots (os.pathsep-separated). Empty for the product.\n'
   printf 'EXTRA_ALLOWED_ROOTS=\n'
   # DGN-167: bridge model whitelist seeded from subscription tier at install time.
-  # max tier -> sonnet,opus,haiku; non-max -> sonnet,haiku. Controls /model picker.
+  # max tier -> fable,opus,sonnet,haiku (DGN-346); non-max -> sonnet,haiku. Controls /model picker.
   if [ -n "${BRIDGE_MODELS_ENV}" ]; then
     printf '# --- Bridge model whitelist (controls /model picker). Set by installer.\n'
     printf 'BRIDGE_MODELS=%s\n' "${BRIDGE_MODELS_ENV}"

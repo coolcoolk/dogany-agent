@@ -1021,7 +1021,7 @@ fi
 
 # Probe $HOME/.claude.json for the subscription tier (same logic as
 # install.sh recommend_model / step_model). Returns the bridge model list
-# on stdout: "sonnet,opus,haiku" for max tier, "sonnet,haiku" otherwise.
+# on stdout: "fable,opus,sonnet,haiku" for max tier, "sonnet,haiku" otherwise. (DGN-346)
 # Exits non-zero on any failure (no python3 / missing file / parse error).
 # This is a LOCAL read of the current machine's Claude CLI credential file;
 # it makes no network call. Conservative fallback when the probe fails is
@@ -1037,7 +1037,7 @@ try:
     tier  = str(oa.get("organizationRateLimitTier") or "").lower()
     otype = str(oa.get("organizationType") or "").lower()
     if "max" in tier or "max" in otype:
-        print("sonnet,opus,haiku")
+        print("fable,opus,sonnet,haiku")  # DGN-346: fable-first
     else:
         print("sonnet,haiku")
 except Exception:
@@ -1062,11 +1062,11 @@ backfill_env_key() {
   local value
   if ! value="$("$resolver" 2>/dev/null)"; then
     # Probe failed: use full model list so the user is never left with less
-    # than they would get from a fresh max-tier install.
-    value="sonnet,opus,haiku"
+    # than they would get from a fresh max-tier install. DGN-346: fable-first.
+    value="fable,opus,sonnet,haiku"
   fi
   # Guard: resolver returned empty.
-  [ -n "$value" ] || value="sonnet,opus,haiku"
+  [ -n "$value" ] || value="fable,opus,sonnet,haiku"
 
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] .env 백필 예정: ${key}=${value}" \

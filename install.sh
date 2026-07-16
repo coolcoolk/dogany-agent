@@ -102,7 +102,7 @@ DOGANY_MODEL="${DOGANY_MODEL:-}"      # sonnet | opus | haiku
 # Presettable via env for dry-run / scripted testing.
 ENABLE_BROWSER="${DOGANY_BROWSER:-0}"  # 0 skip (default), 1 install
 # DGN-167: bridge model whitelist seeded from subscription tier.
-# Max tier -> "sonnet,opus,haiku"; else "sonnet,haiku". Written into .env as
+# Max tier -> "fable,opus,sonnet,haiku" (DGN-346); else "sonnet,haiku". Written into .env as
 # BRIDGE_MODELS so the /model picker shows the right set on first launch.
 # Empty until step_model runs; mint's env_render skips the line when empty.
 BRIDGE_MODELS="${BRIDGE_MODELS:-}"
@@ -1821,8 +1821,9 @@ try:
     otype = str(oa.get("organizationType") or "").lower()
     if "max" in tier or "max" in otype:
         print("opus")
-        # DGN-167: max tier gets all three models in the /model picker.
-        print("sonnet,opus,haiku")
+        # DGN-167: max tier gets the full model set in the /model picker.
+        # DGN-346: fable-first order.
+        print("fable,opus,sonnet,haiku")
     else:
         print("sonnet")
         # DGN-167: non-max tier: sonnet + haiku (no opus in the picker).
@@ -1850,13 +1851,13 @@ step_model() {
   rec_bridge="$(printf '%s\n' "$rec_out" | sed -n '2p')"
 
   # Determine in-tier model list and default from the tier probe result.
-  # max tier -> sonnet, opus, haiku (3 options; opus recommended).
+  # max tier -> fable, opus, sonnet, haiku (4 options; opus recommended). DGN-346.
   # non-max / unknown -> sonnet, haiku (2 options; sonnet recommended).
   local in_tier_models="" default_model="" bridge_fallback=""
   if [ "$rec" = "opus" ]; then
-    in_tier_models="opus sonnet haiku"
+    in_tier_models="fable opus sonnet haiku"
     default_model="opus"
-    bridge_fallback="${rec_bridge:-sonnet,opus,haiku}"
+    bridge_fallback="${rec_bridge:-fable,opus,sonnet,haiku}"
     msg "구독 등급 기준 모델 (max tier -- opus 추천):" \
         "Models available for your subscription (max tier -- opus recommended):"
   elif [ -n "$rec" ]; then
@@ -1866,10 +1867,10 @@ step_model() {
     msg "구독 등급 기준 모델 (sonnet 추천):" \
         "Models available for your subscription (sonnet recommended):"
   else
-    # Detection failed (no python3 / no file / parse error) -> show all three.
-    in_tier_models="sonnet opus haiku"
+    # Detection failed (no python3 / no file / parse error) -> show all; DGN-346: fable-first.
+    in_tier_models="fable opus sonnet haiku"
     default_model="sonnet"
-    bridge_fallback="sonnet,opus,haiku"
+    bridge_fallback="fable,opus,sonnet,haiku"
     msg "구독 등급을 확인하지 못했습니다. 사용할 모델을 선택하세요:" \
         "Could not detect your subscription tier. Choose a model:"
   fi
