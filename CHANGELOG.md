@@ -3,6 +3,30 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.3] - 2026-07-16
+
+### Fixed
+- Running update.sh against the repo clone itself (instance root == repo
+  root) now produces a named, actionable error message with a pointer to
+  the standard layout, instead of a generic root-guard refusal. The
+  dogfood-layout is not supported; the guard now says so explicitly.
+  (DGN-341)
+- Memory scaffold text in fresh mints no longer reads as an agent write
+  instruction. The ownership voice now makes clear that memories/ is
+  engine-owned and the agent never writes there directly, preventing the
+  live incident pattern where a first session hand-created inbox.md and
+  misrouted user facts. (DGN-344)
+- Onboarding closing message now matches the instance's actual wiring.
+  Standalone mints (no HANDOFF_PEER_AG in config) are never told to
+  return to a main agent; that branch fires only when the key is present.
+  Previously the branch was inferred from role name, so fresh-direct
+  mints could receive the migration-path closing guidance incorrectly.
+  (DGN-345)
+- Mint checklist now includes a persona-seeding order note: specialist
+  Role seeding must happen before token/launchd steps. Prevents a
+  crash-safety gap where an incomplete mint could reach live state before
+  identity was seeded. (DGN-342)
+
 ## [1.5.2] - 2026-07-16
 
 ### Changed
