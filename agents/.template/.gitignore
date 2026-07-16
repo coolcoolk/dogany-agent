@@ -1,0 +1,58 @@
+# Dogany agent instance -- local continuity repo.
+# Secrets and runtime state are NEVER committed; structured data and
+# identity markdown are committed (the repo's whole purpose is continuity).
+
+# secrets / runtime
+.env
+**/.env
+.telegram_bot/
+**/sessions.json
+**/runtime/
+**/logs/
+*.log
+*.pid
+
+# memory: commit MEMORY.md + inbox.md only; raw stream + drafts stay local
+memories/*
+!memories/MEMORY.md
+!memories/inbox.md
+memory-engine/state.db
+memory-engine/state.db-*
+memory-engine/*.db
+
+# scratch / archive (never commit)
+files/_archive/
+files/tmp/
+
+# structured databases
+database/*.db
+database/*.db-wal
+database/*.db-shm
+
+# mirror engine state (code committed; state excluded)
+mirror/*.db
+mirror/*.db-wal
+mirror/*.db-shm
+
+# .claude runtime markers
+.claude/.last-skill.json
+.claude/.token-gate-approved
+**/health*.json
+
+# python / OS / editor
+__pycache__/
+*.pyc
+venv/
+.venv/
+.DS_Store
+bridge/.pytest_cache/
+
+# backups
+*.bak
+*.bak-*
+*.bak.*
+.claude/skill-backups/
+
+# runtime markers
+.classify_inbox_last
+routines/.reminders/

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claude-usage.sh -- Claude Code rate-limit (live) + stats-cache.json parser
 # Default: live rate-limit only (short). With --full: also the cache report.
-# NOTE: Live section requires Claude Code credentials in macOS Keychain.
+# NOTE: Live section gets credentials from ~/.claude/.credentials.json or macOS Keychain.
 #
 # Usage: claude-usage.sh [--full]   (default: live-only)
 # Exit codes: 0 ok / 1 no data
@@ -30,19 +30,37 @@ CACHE_FILE="${HOME}/.claude/stats-cache.json"
 
 _live_token=""
 _live_err=""
+_access_token=""
 
-# Fetch token from macOS Keychain -- value stays in variable only, never echoed
-if ! _live_token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null); then
-  _live_err="Keychain lookup failed (Claude Code-credentials not found)"
-fi
-
-if [[ -z "$_live_err" && -z "$_live_token" ]]; then
-  _live_err="Token empty from Keychain"
-fi
-
-if [[ -z "$_live_err" ]]; then
-  # Extract accessToken from JSON via python3 (token value never written to file or echoed)
+# Try to get token from ~/.claude/.credentials.json first
+_creds_file="${HOME}/.claude/.credentials.json"
+if [[ -f "$_creds_file" ]] && [[ -r "$_creds_file" ]]; then
   _access_token=$(python3 -c "
+import json, sys
+try:
+    with open('$_creds_file', encoding='utf-8') as f:
+        d = json.load(f)
+    t = d.get('claudeAiOauth', {}).get('accessToken', '')
+    if t:
+        print(t, end='')
+        sys.exit(0)
+    sys.exit(2)
+except Exception:
+    sys.exit(1)
+") || {
+    _access_token=""
+  }
+fi
+
+# If credentials file did not yield a token, fall back to macOS Keychain
+if [[ -z "$_access_token" ]]; then
+  if ! _live_token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null); then
+    _live_err="Both ~/.claude/.credentials.json and Keychain lookup failed (no token source available)"
+  elif [[ -z "$_live_token" ]]; then
+    _live_err="Token empty from Keychain"
+  else
+    # Extract accessToken from JSON via python3 (token value never written to file or echoed)
+    _access_token=$(python3 -c "
 import json, sys
 raw = sys.stdin.read()
 try:
@@ -54,9 +72,10 @@ try:
 except Exception:
     sys.exit(1)
 " <<< "$_live_token") || {
-    _live_err="Failed to extract accessToken from Keychain JSON"
-    _access_token=""
-  }
+      _live_err="Failed to extract accessToken from Keychain JSON"
+      _access_token=""
+    }
+  fi
 fi
 
 if [[ -z "$_live_err" && -z "${_access_token:-}" ]]; then

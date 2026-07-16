@@ -490,6 +490,30 @@ if [ -n "$ANGLE" ]; then
   echo "[mint][WARN] angle-bracket placeholder survivors in:" >&2; echo "$ANGLE" >&2
 fi
 
+# 8) initialize a local git repo for continuity.
+#    Local-only: no remote is added (remote/push wiring is owner-gated).
+#    Idempotent on re-mint: if .git already exists, skip entirely.
+#    The .gitignore was copied with the template (step 1); it excludes secrets
+#    (.env / tokens / venv / logs) and runtime state while keeping memories/,
+#    config, worklog, and identity markdown.
+if [ -d "$PROJECT_ROOT/.git" ]; then
+  echo "[mint] .git exists -> skip git init (idempotent)"
+elif ! command -v git >/dev/null 2>&1; then
+  echo "[mint][WARN] git not found -- skipping repo init" >&2
+else
+  (
+    cd "$PROJECT_ROOT"
+    git init -q
+    git add --all
+    GIT_AUTHOR_NAME="dogany-mint" \
+    GIT_AUTHOR_EMAIL="mint@dogany.local" \
+    GIT_COMMITTER_NAME="dogany-mint" \
+    GIT_COMMITTER_EMAIL="mint@dogany.local" \
+    git commit -q -m "init: mint ${AGENT_NAME} (dogany-agent ${FW_VERSION})"
+  )
+  echo "[mint] git repo initialized at $PROJECT_ROOT (.git)"
+fi
+
 cat <<DONE
 
 [mint] DONE -> $PROJECT_ROOT
