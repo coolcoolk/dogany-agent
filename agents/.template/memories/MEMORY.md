@@ -1,5 +1,5 @@
 # MEMORY (cold store)
 
-Append core facts only, one line each, with (YYYY-MM-DD, source).
-
-<!-- General topic file (cold). Facts land in inbox.md first; weekly classify-inbox routes them into topic files here. Not the primary write target. -->
+<!-- Engine-owned. The agent NEVER writes under memories/ -- the engine lands facts
+     in inbox.md (nightly consolidate) and routes them weekly (classify-inbox).
+     Durable user facts -> USER.md; agent identity -> AGENT.md. -->

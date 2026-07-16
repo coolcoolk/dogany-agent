@@ -498,6 +498,12 @@ Next steps (manual / require approval):
   1. Review the config:  $ENV_DST (written by mint; edit if needed)
   2. Fill identity:      AGENT.md onboarding skeleton; first SessionStart runs
                          onboarding-check.py to set name/emoji/tone.
+     NOTE: for specialist agents, seed persona/Role in AGENT.md NOW, before
+     proceeding to token/launchd steps. Role seeding is a manual step with no
+     persistent record; a crashed or interrupted builder session cannot recover
+     it -- the bot wakes generic and runs generic onboarding. Record the
+     specialist Role text in AGENT.md first, then continue below.
+     (v2 mint-agent path owns first-class role seeding; this note covers v1.)
   3. (optional) voice:   bridge/venv/bin/pip install faster-whisper
   4. Load launchd:       cp bridge/*.plist routines/*.plist ~/Library/LaunchAgents/
                          then launchctl bootstrap (LIVE op -- get approval first).
