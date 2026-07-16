@@ -32,6 +32,14 @@
 #                           user facts -- instance-owned, see IDENTITY GUARD below)
 #   - CLAUDE.md            (thin entrypoint that @-includes RULES/AGENT/USER)
 #   - NON-dogany skills under .claude/skills/     (user-authored skills)
+#   - .claude/settings.local.json  (instance-local harness config -- hooks and
+#                           settings the instance adds for itself. Claude Code
+#                           merges it with settings.json natively, so instance
+#                           hooks belong THERE, never in the framework-owned
+#                           settings.json. DGN-359)
+#   - preserve-list entries (.claude/.dogany-preserve -- instance-root-relative
+#                           paths the operator declared as locally customized;
+#                           see the INSTANCE-PRESERVE LIST section. DGN-359)
 #
 # It is idempotent: running it twice with no upstream changes is a no-op refresh.
 #
@@ -196,7 +204,10 @@ fi
 #   mirror/                 GCal/GTasks mirror engine code + schema; NEVER *.db
 #                           (mirror_state.db is per-instance sync bookkeeping)
 #   database/               schema.sql + lifekit.py/.sh/README; NEVER *.db
-#   .claude/settings.json   harness config (instance model choice preserved)
+#   .claude/settings.json   harness config (instance model choice preserved;
+#                           FRAMEWORK hooks only -- instance-local hooks live
+#                           in .claude/settings.local.json, which this script
+#                           NEVER writes; Claude Code merges both natively)
 #   worklog/_TEMPLATE.md    ticket template only; never existing tickets
 #   skills/dogany-*         official framework skills (edit-detect + backup)
 #   .claude/skills-bundle/  dormant lifekit bundle skills
@@ -378,6 +389,112 @@ db_drift_nag() {
 }
 
 # ---------------------------------------------------------------------------
+# INSTANCE-PRESERVE LIST (DGN-359): protect instance-local customizations from
+# the framework refresh. Three live clobber incidents (DGN-290, DGN-359,
+# DGN-363: Ag mirror down 5.5h) share one cause -- update.sh overwrote files
+# an instance had deliberately customized. The structural fix has two halves:
+#
+#   1. HOOKS SPLIT: .claude/settings.json is framework-owned (this script may
+#      rewrite it wholesale); instance-added hooks live in
+#      .claude/settings.local.json, which Claude Code merges natively and this
+#      script NEVER writes. No code is needed for that half -- nothing below
+#      touches settings.local.json; this comment is the greppable guard.
+#      Do not add settings.local.json to any refresh path.
+#
+#   2. PRESERVE LIST (this section): $INSTANCE/.claude/.dogany-preserve is an
+#      OPTIONAL, instance-owned file listing instance-root-relative paths that
+#      update.sh must not overwrite. Format: one path per line; '#' comments
+#      and blank lines ignored; a trailing '/' preserves a whole directory.
+#      Example:
+#          routines/cron-guard.sh          # local patch not yet upstreamed
+#          routines/bundle/                # whole dir
+#      Mechanism: entries become anchored rsync --exclude patterns for the
+#      section-3 rsync blocks, and skip checks for the single-file cp blocks.
+#      The active list is printed on every run so preserved drift stays
+#      visible, and entries missing on disk are flagged (typo nag).
+#
+#      Why an explicit list (not divergence detection / 3-way merge): the
+#      placeholder re-substitution (section 4) makes EVERY instance file
+#      differ from its template source, so naive checksum comparison
+#      false-positives on all files; a post-install sha manifest across all
+#      synced dirs or a 3-way merge is heavy machinery for the same outcome.
+#      An explicit list is zero-false-positive, auditable, and matches this
+#      script's allowlist philosophy. The known cost: it is opt-in -- a local
+#      customization is protected only once it is registered. Protocol: any
+#      live instance patch that diverges from the framework template MUST add
+#      its path here in the same change.
+#
+#      Deliberately NOT covered: RULES.md (framework constitution, has its own
+#      edit-detect + backup channel, section 3k) and skills/dogany-* (own
+#      backup-on-modify channel, section 3i -- never silently clobbered).
+# ---------------------------------------------------------------------------
+PRESERVE_FILE="$INSTANCE/.claude/.dogany-preserve"
+PRESERVE_ENTRIES=()
+if [ -f "$PRESERVE_FILE" ]; then
+  while IFS= read -r _pline || [ -n "$_pline" ]; do
+    _pline="${_pline%%#*}"
+    # Trim surrounding whitespace (bash-3.2-safe).
+    _pline="$(printf '%s' "$_pline" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$_pline" ] || continue
+    _pline="${_pline#./}"
+    _pline="${_pline#/}"
+    case "$_pline" in
+      *..*)
+        msg "[update][경고] 보존 목록의 안전하지 않은 항목 무시: $_pline" \
+            "[update][WARN] ignoring unsafe preserve entry: $_pline" >&2
+        continue ;;
+    esac
+    PRESERVE_ENTRIES+=("$_pline")
+  done < "$PRESERVE_FILE"
+fi
+
+if [ "${#PRESERVE_ENTRIES[@]}" -gt 0 ]; then
+  msg "[update] 인스턴스 보존 목록 활성 (.claude/.dogany-preserve): ${#PRESERVE_ENTRIES[@]}개 항목은 갱신하지 않습니다:" \
+      "[update] instance preserve list active (.claude/.dogany-preserve): ${#PRESERVE_ENTRIES[@]} entries will NOT be refreshed:"
+  for _pe in "${PRESERVE_ENTRIES[@]}"; do
+    if [ -e "$INSTANCE/$_pe" ]; then
+      printf '  - %s\n' "$_pe"
+    else
+      msg "  - $_pe  [경고: 디스크에 없음 -- 오타?]" \
+          "  - $_pe  [WARN: not on disk -- typo?]"
+    fi
+  done
+fi
+
+# is_preserved RELPATH -> 0 when RELPATH (instance-root-relative) is on the
+# preserve list: exact file match, or under a trailing-slash directory entry.
+is_preserved() {
+  local rel="$1" e
+  for e in ${PRESERVE_ENTRIES[@]+"${PRESERVE_ENTRIES[@]}"}; do
+    [ "$e" = "$rel" ] && return 0
+    case "$e" in
+      */) case "$rel" in "$e"*) return 0 ;; esac ;;
+    esac
+  done
+  return 1
+}
+
+# build_preserve_excludes PREFIX -- fill the global array PEX with rsync
+# --exclude args for preserve entries under the instance-relative dir PREFIX
+# (no trailing slash). Patterns are anchored ("/rel/path") to the rsync
+# transfer root, which the section-3 blocks always set to $INSTANCE/PREFIX/.
+# Callers expand it with the bash-3.2-safe empty-array idiom:
+#   ${PEX[@]+"${PEX[@]}"}
+PEX=()
+build_preserve_excludes() {
+  local prefix="$1" e rel
+  PEX=()
+  for e in ${PRESERVE_ENTRIES[@]+"${PRESERVE_ENTRIES[@]}"}; do
+    case "$e" in
+      "$prefix"/?*)
+        rel="${e#"$prefix"/}"
+        PEX+=(--exclude "/$rel")
+        ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
 # 1) Sync the repo to the latest PUBLISHED RELEASE (DGN-221).
 #    Instances consume release tags (v*), never main HEAD -- pushing dev
 #    commits to main must not stealth-patch users whose VERSION still shows
@@ -513,21 +630,27 @@ UPDATED=()
 
 # 3a) bridge code (framework), but keep the built venv and the live .env.
 if [ -d "$TEMPLATE/bridge" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "bridge"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     "$TEMPLATE/bridge/" "$INSTANCE/bridge/"
   UPDATED+=("bridge/")
 fi
 
-# 3b) routines (framework schedulers/scripts).
+# 3b) routines (framework schedulers/scripts). Preserve-list excludes guard
+#     instance-customized routine scripts (DGN-359/DGN-363 clobber class).
 if [ -d "$TEMPLATE/routines" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "routines"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     "$TEMPLATE/routines/" "$INSTANCE/routines/"
   UPDATED+=("routines/")
 fi
 
 # 3c) memory engine code ONLY (*.py + taxonomy doc) -- never memory markdown/db.
+#     Preserve excludes must precede the include chain (rsync filter rules are
+#     order-sensitive: first match wins).
 if [ -d "$TEMPLATE/memory-engine" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "memory-engine"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     --include '*/' --include '*.py' --include '*.md' --exclude '*' \
     "$TEMPLATE/memory-engine/" "$INSTANCE/memory-engine/"
   UPDATED+=("memory-engine/*.py")
@@ -539,7 +662,8 @@ fi
 #     in mint.sh: an update must NEVER reset user choices back to template
 #     defaults (e.g. LIFEKIT=pending, AGENT_LANG=ko).
 if [ -d "$TEMPLATE/config" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "config"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     --exclude 'agent.conf' \
     --exclude 'lifekit.conf' \
     "$TEMPLATE/config/" "$INSTANCE/config/"
@@ -558,7 +682,8 @@ fi
 
 # 3e) service SDK facade (hoisted at repo root, bundled into the instance).
 if [ -d "$REPO_ROOT/service" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "service"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     "$REPO_ROOT/service/" "$INSTANCE/service/"
   UPDATED+=("service/")
 fi
@@ -572,7 +697,8 @@ fi
 #     cron flag-gate (MIRROR_MODULE) already silences opted-out users, so an
 #     unconditional code refresh is correct and matches how service/ ships.
 if [ -d "$REPO_ROOT/mirror" ]; then
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes "mirror"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     --exclude '*.db-wal' \
     --exclude '*.db-shm' \
     --exclude '*.db.bak*' \
@@ -594,6 +720,13 @@ db_drift_nag "$INSTANCE/database/lifekit.db" "$REPO_ROOT/database/lifekit.py"
 
 for f in schema.sql lifekit.py lifekit.sh README.md remind_select.py routine_roller.py routine_projection.py; do
   [ -f "$REPO_ROOT/database/$f" ] || continue
+
+  # Instance-preserve list (DGN-359): skip files the operator declared local.
+  if is_preserved "database/$f"; then
+    msg "  [update] 보존: database/$f (.dogany-preserve)" \
+        "  [update] preserved: database/$f (.dogany-preserve)"
+    continue
+  fi
 
   # Reverse-drift guard: check GUARDED_FILES for this filename.
   _guarded_skip=0
@@ -700,6 +833,11 @@ subst_one() {
 }
 
 # 3g) harness config: .claude/settings.json (framework), keep the skills dir intact.
+#     FRAMEWORK HOOKS ONLY (DGN-359): this file is framework-owned and rewritten
+#     wholesale, so instance-local hooks placed here are clobbered on every
+#     update (live incidents: DGN-290, DGN-359). Instance hooks belong in
+#     .claude/settings.local.json, which Claude Code merges natively and this
+#     script NEVER writes.
 #     Two defects handled here:
 #       * model reset: the instance may run a model different from the template
 #         default. We read the instance's current "model" value first and re-apply
@@ -708,7 +846,10 @@ subst_one() {
 #         substitution pass would read a raw __PROJECT_ROOT__ placeholder. We build
 #         the fully substituted (and model-restored) content in a temp file, then
 #         atomically mv it into place, so the live file is never in a raw state.
-if [ -f "$TEMPLATE/.claude/settings.json" ]; then
+if [ -f "$TEMPLATE/.claude/settings.json" ] && is_preserved ".claude/settings.json"; then
+  msg "  [update] 보존: .claude/settings.json (.dogany-preserve)" \
+      "  [update] preserved: .claude/settings.json (.dogany-preserve)"
+elif [ -f "$TEMPLATE/.claude/settings.json" ]; then
   ensure_dir "$INSTANCE/.claude"
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] .claude/settings.json 갱신 예정" "  [dry-run] would refresh .claude/settings.json"
@@ -745,7 +886,10 @@ with open(p, "w") as fh:
 fi
 
 # 3h) worklog template (framework), never existing worklog tickets.
-if [ -f "$TEMPLATE/worklog/_TEMPLATE.md" ]; then
+if [ -f "$TEMPLATE/worklog/_TEMPLATE.md" ] && is_preserved "worklog/_TEMPLATE.md"; then
+  msg "  [update] 보존: worklog/_TEMPLATE.md (.dogany-preserve)" \
+      "  [update] preserved: worklog/_TEMPLATE.md (.dogany-preserve)"
+elif [ -f "$TEMPLATE/worklog/_TEMPLATE.md" ]; then
   ensure_dir "$INSTANCE/worklog"
   if [ "$DRY_RUN" = "1" ]; then
     msg "  [dry-run] worklog/_TEMPLATE.md 갱신 예정" "  [dry-run] would refresh worklog/_TEMPLATE.md"
@@ -915,7 +1059,8 @@ fi
 #     in .claude/skills/ are untouched and any user files are never pruned.
 if [ -d "$TEMPLATE/.claude/skills-bundle" ]; then
   ensure_dir "$INSTANCE/.claude/skills-bundle"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" \
+  build_preserve_excludes ".claude/skills-bundle"
+  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
     "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
   UPDATED+=(".claude/skills-bundle/")
 fi
