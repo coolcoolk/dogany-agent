@@ -26,17 +26,63 @@ Fill ALL sections; thin evidence -> gather first, then report.
 6. severity guess -- fatal / major / minor / idea.
 
 ## repo routing
-- framework surfaces (skills/, routines, agents/.template, memory-engine,
-  mint/update/install scripts, docs) -> `coolcoolk/dogany-agent` (SELF-MAINTAINED)
-- bridge surfaces (telegram gateway, bridge/ code) -> `coolcoolk/claude-code-telegram` (SELF-MAINTAINED)
-- unsure -> `coolcoolk/dogany-agent` (framework owns triage).
-- genuinely third-party repos (projects the integration agent does NOT maintain):
-  public GitHub issue path (see third-party section below).
 
-Self-maintained = coolcoolk/* repos that the integration agent directly commits
-to. Do NOT open public GitHub issues on self-maintained repos -- the integration
-agent is the maintainer; a public issue is pointless ceremony against your own
-repo.
+### surface -> repo mapping heuristic
+- framework surfaces (skills/, routines, agents/.template, memory-engine,
+  mint/update/install scripts, docs) -> `coolcoolk/dogany-agent`
+- bridge surfaces (telegram gateway, bridge/ code) -> `coolcoolk/claude-code-telegram`
+- unsure -> `coolcoolk/dogany-agent` (framework owns triage).
+
+### Layer A -- universal rule (no ledger required; applies on every instance)
+Self-maintained = repos the integration agent directly commits to.
+
+BACKSTOP (hardcoded, unconditional): `coolcoolk/*` repos NEVER receive a
+public GitHub issue via any path -- regardless of ledger existence, ledger
+parse state, or any lookup result. This rule cannot be overridden by any
+ledger row.
+
+For self-maintained repos: always internal worklog ticket + direct fix
+(upstream-first). No public post. No pre-send confirm.
+
+For third-party repos (repos the integration agent does NOT maintain):
+public GitHub issue path (see third-party section below) -- subject to all
+guards (identity gate, PII scrub, pre-send confirm, outbox fallback).
+
+### Layer B -- conditional ledger overlay (instances with product/PORTFOLIO.md only)
+Instances without the ledger or without routines/lib/portfolio-parse.sh skip
+Layer B entirely (file absence = natural skip). Layer A alone applies; semantics
+identical to pre-ledger behavior.
+
+When the ledger is present:
+
+step 1 -- parse check (run BEFORE reading the ledger body):
+```bash
+bash routines/lib/portfolio-parse.sh
+```
+Nonzero exit OR output containing `PORTFOLIO-PARSE-FAIL` -> immediately take
+the fail-closed path (rule 1 below). Do NOT read the ledger body. This blocks
+the LLM from silently tolerating a broken table.
+
+step 2 -- row lookup (only after parse passes):
+Look up the repo identifier in the ledger (product/PORTFOLIO.md). Lookup key
+matches when it is a suffix of the row's `repo` cell value. Route by the
+matched row's `role` and `defect_intake` column per the following lanes:
+- role=maintainer -> internal DGN ticket + direct fix. NEVER a public issue.
+- role=version-consumer -> local fix if instance-local; promote to maintainer
+  lane (upstream-first) if framework defect.
+- role=steward-delegate -> smith handoff channel -> Metal triage -> maintainer
+  lane.
+- role=semi-managed -> owner manual report -> DGN ticket.
+- role=frozen -> outbox draft + WARN even on lookup HIT. No public issue.
+
+### fail-closed rules (all three are absolute)
+1. Parse failure (nonzero exit or PORTFOLIO-PARSE-FAIL token) -> write outbox
+   draft + emit WARN report. Public-issue branch forbidden.
+2. Lookup miss (repo not registered in ledger) -> write outbox draft + WARN
+   ("needs row registration or third-party confirmation"). Public-issue branch
+   forbidden -- public path only after HUMAN third-party confirmation.
+3. No ledger result can override the Layer A backstop. Even if a coolcoolk/*
+   row were missing or corrupted in the ledger, no public issue is opened.
 
 ## submit -- self-maintained repos (primary route)
 Integration agent handles self-maintained repos internally:
