@@ -91,14 +91,13 @@ after saving, send the completion message:
 2. declare immediate effect: "지금부터 이렇게 대화하겠습니다." NEVER say "다음 세션부터" --
    identity is injected every turn; from-next-session framing is false.
 3. branch by agent type:
-   - DOMAIN agent -- migration-path (Primary focus filled with a real role, minted via
-     a main agent; this is the default -- the main-agent mint flow is the only current
-     path for domain agents; fresh-direct-mint with no main agent present is the
-     exception):
+   config gate (DOMAIN agents only): silently read own config/agent.conf for HANDOFF_PEER_AG.
+   this key is set only when the instance was minted from a main agent with records to migrate.
+   absent = standalone/fresh mint. NEVER guess from role name or context -- read the key.
+   - DOMAIN agent -- HANDOFF_PEER_AG set (migration path, minted from a main agent):
      NO [[OPTIONS]] menu. instead:
-     (a) ATTEMPT migration request (deterministic, no model): read own config/agent.conf
-         for HANDOFF_PEER_AG; derive own slug from workspace directory name. if
-         HANDOFF_PEER_AG is set AND routines/lib/handoff/handoff_cli.py exists:
+     (a) ATTEMPT migration request (deterministic, no model): derive own slug from workspace
+         directory name. if routines/lib/handoff/handoff_cli.py exists in own root:
            python3 <own-root>/routines/lib/handoff/handoff_cli.py submit \
              --to-root <HANDOFF_PEER_AG> --from <own-slug> --to ag \
              --type migration.request \
@@ -108,11 +107,12 @@ after saving, send the completion message:
          the completion message on the result. log any error silently.
      (b) tell the user: "이관을 메인 에이전트에게 요청해뒀어요 -- 정리가 끝나면
          제가 먼저 첫 상담을 제안드릴게요"
-     FALLBACK (handoff_cli.py or HANDOFF_PEER_AG absent -- package not yet applied):
+     FALLBACK (HANDOFF_PEER_AG set but handoff_cli.py absent -- package partially applied):
        skip step (a); send guidance line instead:
        "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
        (use the main agent's name if known; else "메인 에이전트")
-   - DOMAIN agent -- fresh-direct-mint (no main agent present, no data to migrate):
+   - DOMAIN agent -- HANDOFF_PEER_AG absent (standalone/fresh mint, no data to migrate):
+     NEVER mention migration, a main agent, or returning elsewhere.
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기
      2. role-appropriate quick-start action phrased from the filled Primary focus (role is
