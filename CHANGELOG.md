@@ -3,6 +3,22 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.2] - 2026-07-16
+
+### Changed
+- upstream-report skill: self-maintained repo defect routing is now
+  fail-closed with two explicit layers. Layer A (universal, no ledger
+  required): a hardcoded backstop prevents any coolcoolk/* repo from
+  receiving a public GitHub issue regardless of ledger state. Layer B
+  (conditional, instances with product/PORTFOLIO.md only): a portfolio
+  ledger overlay is consulted after a mandatory parse check; parse
+  failure or lookup miss routes to outbox draft with WARN instead of
+  the public path. Instances without a ledger skip Layer B on file
+  absence -- behavior is unchanged from pre-ledger semantics. Fixes the
+  DGN-330 class misroute where a self-maintained repo defect could
+  reach the public issue path if the routing rule was ambiguous.
+  (DGN-293)
+
 ## [1.5.1] - 2026-07-16
 
 ### Added
