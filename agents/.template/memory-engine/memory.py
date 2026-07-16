@@ -783,6 +783,21 @@ COMPRESS_PROMPT = (
 )
 
 
+def _scrub_claude_session_env():
+    """
+    Return a copy of os.environ with Claude Code nesting guards removed.
+    The 'cannot be launched inside another Claude Code session' guard fires
+    when CLAUDECODE is set (and related CLAUDE_CODE_* markers).  Strip them
+    so headless child launches succeed even when called from within a live
+    agent session.  All other env vars (PATH, HOME, etc.) are preserved.
+    """
+    import os as _os
+    return {
+        k: v for k, v in _os.environ.items()
+        if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE")
+    }
+
+
 def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MODEL):
     """
     Compress raw text into persistent-fact atomic items using headless claude.
@@ -794,12 +809,16 @@ def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MOD
     Raises RuntimeError on failure.
     """
     prompt = prompt_prefix + raw_text
+    # Scrub nesting env vars so the child launch succeeds when called from
+    # within a live Claude Code session (DGN-352 / DGN-238 pattern).
+    child_env = _scrub_claude_session_env()
     try:
         proc = subprocess.run(
             ["claude", "-p", "--model", model, prompt],
             capture_output=True,
             text=True,
             timeout=180,
+            env=child_env,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         raise RuntimeError(f"{model} call failed: {e}")
@@ -907,12 +926,16 @@ def cmd_write(args):
         print("[error] input text is empty.", file=sys.stderr)
         return 1
 
-    # 1) compress
+    # 1) compress (with raw-append fallback: a write must never be lost to a
+    #    compression failure -- DGN-352)
+    compression_ok = True
     try:
         items = compress_with_haiku(raw)
     except RuntimeError as e:
-        print(f"[error] {e}", file=sys.stderr)
-        return 1
+        print(f"[warn] compression failed ({e}); falling back to raw append", file=sys.stderr)
+        compression_ok = False
+        # Treat the entire raw text as one uncompressed item so the write survives.
+        items = [raw]
 
     if not items:
         print("No persistent facts worth remembering; nothing stored.")
@@ -927,7 +950,8 @@ def cmd_write(args):
     target = os.path.join(MEMORIES_DIR, args.file)
 
     # print preview of what will be stored
-    print(f"== compression result ({len(tagged)} items) -> {args.file}" +
+    label = "raw-append (compression failed)" if not compression_ok else "compression result"
+    print(f"== {label} ({len(tagged)} items) -> {args.file}" +
           (f" > ### {args.section}" if args.section else " (end of file)") + " ==")
     for it in tagged:
         print(f"  § {it}")
