@@ -1668,6 +1668,10 @@ def sync_event(event, cal_ids, tl_id, state_conn, src_conn=None):
             # BEFORE retry accounting, so the next drain routes fresh.
             # (Event-level 404 is handled inside push_calendar and never
             # propagates here.)
+            # NOTE (DGN-364 final grill m-1): This clear is a deliberate
+            # over-approximation of spec 2.4 -- it fires on any 404/410
+            # escaping push_calendar (event-level included), which is benign
+            # and convergent (event already gone; next requeue routes fresh).
             if pinned and e.http_code in (404, 410):
                 state_conn.execute(
                     "UPDATE push_snapshot SET calendar_id=NULL "

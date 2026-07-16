@@ -234,6 +234,10 @@ def test_resolver_fixtures():
     scan_ids = [cid for cid, _k in A._calendar_scan_set(t["cal_ids"])]
     _check("F-mixed legacy ids never in scan set",
            "LC" not in scan_ids and "AGC" not in scan_ids, scan_ids)
+    drain_routing_ids = list(t["cal_ids"].values())
+    _check("F-mixed legacy ids never in drain-routing dict",
+           "LC" not in drain_routing_ids and "AGC" not in drain_routing_ids,
+           drain_routing_ids)
     state.close()
 
     # F-partial: appt + task only (+ checklist)

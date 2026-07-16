@@ -28,8 +28,9 @@ ALLOWED_USER_VERSIONS = (7, 8)  # 008 rollout window (DGN-274 5.5 lockstep:
 
 def get_conn(db_path=None):
     """Hardened connection via the live SDK (WAL/busy_timeout/foreign_keys).
-    Version gate: whitelist check here (event_conn's own assert also holds
-    since EXPECTED_USER_VERSION == 5)."""
+    Version gate: the ALLOWED_USER_VERSIONS whitelist here is the SOLE
+    mirror-side gate (event_conn is opened with assert_version=False; its
+    own EXPECTED_USER_VERSION assert applies to CLI lanes only)."""
     conn = ec.event_conn(db_path, assert_version=False)
     v = conn.execute("PRAGMA user_version;").fetchone()[0]
     if v not in ALLOWED_USER_VERSIONS:
