@@ -14,6 +14,14 @@ LIFEKIT=pending -> inject a one-shot "lifekit pending" offer context instead.
 Onboarding always wins (never both signals in one session). This hook stays
 READ-ONLY: the dogany-lifekit-setup skill flips pending -> offered, not us.
 
+Tertiary signal (portfolio): onboarding complete AND the lifekit signal did
+NOT fire this session AND config/agent.conf says PORTFOLIO=pending -> inject
+a one-shot "portfolio pending" offer context. At most ONE signal per session
+(onboarding > lifekit > portfolio) so a fresh mint never chains two offers at
+first contact. Portfolio is TIER-FREE (owner ruling dec-035): no tier gate --
+a lite instance whose lifekit offer is tier-suppressed still gets the
+portfolio offer. READ-ONLY here too: dogany-portfolio-setup flips the state.
+
 stdin(JSON): {session_id, transcript_path, cwd, source, ...}
 stdout(JSON): {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": "..."}}
@@ -280,6 +288,29 @@ def lifekit_pending(path):
     return False
 
 
+def resolve_agent_conf(data):
+    env_path = os.environ.get("AGENT_CONF_FILE")
+    if env_path:
+        return os.path.expanduser(env_path)
+    cwd = (data.get("cwd") if isinstance(data, dict) else None) or os.getcwd()
+    return os.path.join(cwd, "config", "agent.conf")
+
+
+def portfolio_pending(path):
+    """True iff agent.conf exists and PORTFOLIO=pending (missing/other -> False).
+    Key absent (pre-portfolio instance) -> False: existing estates are never
+    auto-offered; soft migration starts only when the user asks."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("PORTFOLIO="):
+                    return line.split("=", 1)[1].strip() == "pending"
+    except Exception:
+        return False
+    return False
+
+
 def resolve_instance_conf(data):
     env_path = os.environ.get("INSTANCE_CONF_FILE")
     if env_path:
@@ -324,30 +355,50 @@ def main():
         return
 
     if not onboarding:
-        # Onboarding done -> check the one-shot lifekit offer signal.
+        # Onboarding done -> at most ONE offer signal per session, in fixed
+        # order: lifekit first, portfolio second (never both -- a fresh mint
+        # must not chain two offers at first contact).
+        ctx = None
         try:
-            if not lifekit_pending(resolve_lifekit_conf(data)):
-                return
-            # Tier gate: the lifekit bundle lives in the basic (CRAFT) tier
-            # and up. On lite (HAND) never inject the offer. Activation-time
-            # gate only -- an instance with LIFEKIT already on is untouched.
-            if instance_tier(resolve_instance_conf(data)) == "lite":
-                return
+            # Lifekit: pending AND tier gate passes (the bundle lives in the
+            # basic/CRAFT tier and up; lite never gets the lifekit offer).
+            # Activation-time gate only -- LIFEKIT already on is untouched.
+            if (lifekit_pending(resolve_lifekit_conf(data))
+                    and instance_tier(resolve_instance_conf(data)) != "lite"):
+                ctx = (
+                    "[lifekit pending] User onboarding is complete but the lifekit "
+                    "(life-management) default bundle has not been offered yet "
+                    "(config/lifekit.conf LIFEKIT=pending). Once this session, at a "
+                    "natural moment (greeting or idle turn, never mid-task), offer the "
+                    "lifekit walkthrough via the dogany-lifekit-setup skill. Base the "
+                    "offer wording on the i18n key 'lifekit.offer' in "
+                    "config/i18n/<lang>.json. BEFORE presenting the offer, set "
+                    "LIFEKIT=offered in config/lifekit.conf so this signal never fires "
+                    "again (one-shot; the user can start anytime by asking). If the "
+                    "user declines for now, leave it as offered; if they say never, "
+                    "set LIFEKIT=off."
+                )
+            # Portfolio: TIER-FREE (owner ruling dec-035). Fires only when the
+            # lifekit signal did not fire this session.
+            elif portfolio_pending(resolve_agent_conf(data)):
+                ctx = (
+                    "[portfolio pending] User onboarding is complete but the "
+                    "portfolio index offer has not been made yet "
+                    "(config/agent.conf PORTFOLIO=pending). Once this session, at a "
+                    "natural moment (greeting or idle turn, never mid-task), offer the "
+                    "portfolio walkthrough via the dogany-portfolio-setup skill. Base "
+                    "the offer wording on the i18n key 'portfolio.offer' in "
+                    "config/i18n/<lang>.json. BEFORE presenting the offer, set "
+                    "PORTFOLIO=offered in config/agent.conf so this signal never fires "
+                    "again (one-shot; the user can start anytime by asking). If the "
+                    "user declines for now, leave it as offered; if they say never, "
+                    "set PORTFOLIO=off. NEVER pre-create an index file -- the file is "
+                    "written only on explicit opt-in with a chosen profile."
+                )
         except Exception:
             return
-        ctx = (
-            "[lifekit pending] User onboarding is complete but the lifekit "
-            "(life-management) default bundle has not been offered yet "
-            "(config/lifekit.conf LIFEKIT=pending). Once this session, at a "
-            "natural moment (greeting or idle turn, never mid-task), offer the "
-            "lifekit walkthrough via the dogany-lifekit-setup skill. Base the "
-            "offer wording on the i18n key 'lifekit.offer' in "
-            "config/i18n/<lang>.json. BEFORE presenting the offer, set "
-            "LIFEKIT=offered in config/lifekit.conf so this signal never fires "
-            "again (one-shot; the user can start anytime by asking). If the "
-            "user declines for now, leave it as offered; if they say never, "
-            "set LIFEKIT=off."
-        )
+        if ctx is None:
+            return
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",

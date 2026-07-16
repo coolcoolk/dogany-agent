@@ -49,15 +49,23 @@ public GitHub issue path (see third-party section below) -- subject to all
 guards (identity gate, PII scrub, pre-send confirm, outbox fallback).
 
 ### Layer B -- conditional ledger overlay (instances with product/PORTFOLIO.md only)
-Instances without the ledger or without routines/lib/portfolio-parse.sh skip
-Layer B entirely (file absence = natural skip). Layer A alone applies; semantics
-identical to pre-ledger behavior.
+Instances without the ledger or without a parse entrypoint (instance-local
+routines/lib/portfolio-parse.sh, or the framework-shipped
+routines/lib/portfolio-core-parse.sh) skip Layer B entirely (file absence =
+natural skip). Layer A alone applies; semantics identical to pre-ledger
+behavior.
 
 When the ledger is present:
 
-step 1 -- parse check (run BEFORE reading the ledger body):
+step 1 -- parse check (run BEFORE reading the ledger body). Prefer the
+instance-local hardened parser when it exists (stricter profile); else use
+the framework core parse:
 ```bash
-bash routines/lib/portfolio-parse.sh
+if [ -f routines/lib/portfolio-parse.sh ]; then
+  bash routines/lib/portfolio-parse.sh
+else
+  bash routines/lib/portfolio-core-parse.sh
+fi
 ```
 Nonzero exit OR output containing `PORTFOLIO-PARSE-FAIL` -> immediately take
 the fail-closed path (rule 1 below). Do NOT read the ledger body. This blocks

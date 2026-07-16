@@ -3,6 +3,41 @@
 All notable user-facing changes to Dogany are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Universal portfolio schema, core v1 (DGN-350). New module:
+  - `docs/PORTFOLIO-CORE.md` -- registry of record for the core spec; core
+    version bumps ride this repo's release machinery from this release on.
+  - `routines/lib/portfolio-core-lint.py` -- structural/schema lint for
+    portfolio indexes (md + JSON substrates, C0 grandfather path,
+    parse-or-die header contract, tombstone cross-check). Also provides the
+    generic structural-parse subset (`--parse-only`) and section dumps.
+  - `routines/lib/portfolio-core-parse.sh` -- generic parse entrypoint
+    speaking the PORTFOLIO-PARSE-OK/FAIL contract (CORE profile: EDGES
+    optional). Deliberately NOT named portfolio-parse.sh so it can never
+    clobber an instance-local parser on the routines/ refresh.
+  - `routines/portfolio-reconcile.sh` -- weekly reconcile pass skeleton
+    (lint, staleness, multi-source existence diff, disappearance report,
+    exclusion full print). Never pre-registered; the setup skill wires it.
+  - `skills/dogany-portfolio-setup` -- conversational activation (fresh-mint
+    offer, index created only on opt-in) + soft migration (existing PM
+    artifacts stay authoritative until a dated cutover). TIER-FREE per
+    owner ruling dec-035. Offer state: `PORTFOLIO=` key in config/agent.conf;
+    one-shot SessionStart offer after onboarding, never in the same session
+    as the lifekit offer.
+  - `routines/tests/test-portfolio-core.py` + synthetic fixtures -- 76-test
+    regression suite for the lint and parse entrypoint (machine-independent).
+- routine-ctl.sh: optional `[weekday]` argument on `enable` schedules a
+  routine weekly (launchd Weekday key / systemd OnCalendar day token) instead
+  of daily. Additive; existing daily behavior unchanged.
+
+### Changed
+- upstream-report skill Layer B: the parse check now prefers an
+  instance-local `routines/lib/portfolio-parse.sh` when present and falls
+  back to the framework-shipped `portfolio-core-parse.sh`, turning the
+  ledger overlay on for every adopting instance without instance-side edits.
+
 ## [1.5.3] - 2026-07-16
 
 ### Fixed

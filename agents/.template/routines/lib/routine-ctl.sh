@@ -8,9 +8,14 @@
 # procedure (and it never sends a test-fire message).
 #
 # Usage:
-#   routine-ctl.sh enable  <name> <script-path-rel-to-agent-root> <HH:MM>
+#   routine-ctl.sh enable  <name> <script-path-rel-to-agent-root> <HH:MM> [weekday]
 #   routine-ctl.sh disable <name>
 #   routine-ctl.sh status  <name>          exit 0 = scheduled, 3 = not scheduled
+#
+# [weekday] (optional, additive): mon|tue|wed|thu|fri|sat|sun -- schedule the
+# routine WEEKLY on that day instead of daily. Omitted = daily (legacy
+# behavior unchanged). Consumer: dogany-portfolio-setup registers the weekly
+# portfolio reconcile pass with this argument.
 #
 # Idempotent: enable re-renders and reloads if already scheduled; disable of a
 # non-scheduled routine is a no-op (exit 0).
@@ -59,7 +64,7 @@ mac_status() {
 }
 
 mac_enable() {
-  local script_rel="$1" hhmm="$2"
+  local script_rel="$1" hhmm="$2" weekday="${3:-}"
   local hour="${hhmm%%:*}" minute="${hhmm##*:}"
   local script_abs="$AGENT_DIR/$script_rel"
   local dest="$LA_DIR/${LABEL}.plist"
@@ -68,6 +73,18 @@ mac_enable() {
   mkdir -p "$LA_DIR" "$AGENT_DIR/.telegram_bot/logs"
   # strip leading zeros for plist <integer> (08 is not valid octal-safe input)
   hour=$((10#$hour)); minute=$((10#$minute))
+  # Weekly routines: render a Weekday key into StartCalendarInterval
+  # (launchd: 0=Sunday .. 6=Saturday). Daily: token renders to nothing.
+  local weekday_entry=""
+  if [ -n "$weekday" ]; then
+    local wd_num
+    case "$weekday" in
+      sun) wd_num=0 ;; mon) wd_num=1 ;; tue) wd_num=2 ;; wed) wd_num=3 ;;
+      thu) wd_num=4 ;; fri) wd_num=5 ;; sat) wd_num=6 ;;
+      *) echo "[routine-ctl] bad weekday: $weekday (mon..sun)" >&2; exit 1 ;;
+    esac
+    weekday_entry="<key>Weekday</key><integer>${wd_num}</integer>"
+  fi
   sed -e "s#__LABEL__#${LABEL}#g" \
       -e "s#__SCRIPT__#${script_abs}#g" \
       -e "s#__HOUR__#${hour}#g" \
@@ -75,6 +92,7 @@ mac_enable() {
       -e "s#__ROOT__#${AGENT_DIR}#g" \
       -e "s#__HOMEDIR__#${HOME}#g" \
       -e "s#__LOGNAME__#${NAME}#g" \
+      -e "s#__WEEKDAY_ENTRY__#${weekday_entry}#g" \
       "$TPL" > "$dest"
   if command -v plutil >/dev/null 2>&1; then
     plutil -lint "$dest" >/dev/null || { echo "[routine-ctl] plist lint failed: $dest" >&2; exit 2; }
@@ -85,7 +103,8 @@ mac_enable() {
   launchctl bootstrap "gui/$UID_N" "$dest" 2>/dev/null \
     || launchctl load "$dest" 2>/dev/null || true
   mac_status || { echo "[routine-ctl] could not verify scheduled: $LABEL" >&2; exit 2; }
-  echo "[routine-ctl] scheduled: $LABEL ($hhmm daily)"
+  local cadence="daily"; [ -n "$weekday" ] && cadence="weekly on $weekday"
+  echo "[routine-ctl] scheduled: $LABEL ($hhmm $cadence)"
 }
 
 mac_disable() {
@@ -104,9 +123,19 @@ lin_status() {
 }
 
 lin_enable() {
-  local script_rel="$1" hhmm="$2"
+  local script_rel="$1" hhmm="$2" weekday="${3:-}"
   local script_abs="$AGENT_DIR/$script_rel"
   [ -f "$script_abs" ] || { echo "[routine-ctl] script not found: $script_abs" >&2; exit 1; }
+  # Weekly routines: prefix OnCalendar with the systemd day-of-week token.
+  local oncal_dow=""
+  if [ -n "$weekday" ]; then
+    case "$weekday" in
+      mon) oncal_dow="Mon " ;; tue) oncal_dow="Tue " ;; wed) oncal_dow="Wed " ;;
+      thu) oncal_dow="Thu " ;; fri) oncal_dow="Fri " ;; sat) oncal_dow="Sat " ;;
+      sun) oncal_dow="Sun " ;;
+      *) echo "[routine-ctl] bad weekday: $weekday (mon..sun)" >&2; exit 1 ;;
+    esac
+  fi
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT_DIR/${UNIT}.service" <<EOF
 [Unit]
@@ -123,7 +152,7 @@ EOF
 Description=dogany routine ${NAME} timer (${AGENT_NAME})
 
 [Timer]
-OnCalendar=*-*-* ${hhmm}:00
+OnCalendar=${oncal_dow}*-*-* ${hhmm}:00
 Persistent=true
 
 [Install]
@@ -134,7 +163,8 @@ EOF
   systemctl --user enable --now "${UNIT}.timer"
   lin_status || { echo "[routine-ctl] could not verify scheduled: ${UNIT}.timer" >&2; exit 2; }
   loginctl enable-linger "$USER" 2>/dev/null || true
-  echo "[routine-ctl] scheduled: ${UNIT}.timer (${hhmm} daily)"
+  local cadence="daily"; [ -n "$weekday" ] && cadence="weekly on $weekday"
+  echo "[routine-ctl] scheduled: ${UNIT}.timer (${hhmm} ${cadence})"
 }
 
 lin_disable() {
@@ -149,13 +179,19 @@ lin_disable() {
 # ---------- dispatch ----------
 case "$CMD" in
   enable)
-    SCRIPT_REL="${3:-}"; HHMM="${4:-}"
-    [ -n "$SCRIPT_REL" ] && [ -n "$HHMM" ] || { echo "usage: routine-ctl.sh enable <name> <script-rel> <HH:MM>" >&2; exit 1; }
+    SCRIPT_REL="${3:-}"; HHMM="${4:-}"; WEEKDAY="${5:-}"
+    [ -n "$SCRIPT_REL" ] && [ -n "$HHMM" ] || { echo "usage: routine-ctl.sh enable <name> <script-rel> <HH:MM> [weekday]" >&2; exit 1; }
     case "$HHMM" in
       ([0-2][0-9]:[0-5][0-9]) : ;;
       (*) echo "[routine-ctl] bad time (HH:MM): $HHMM" >&2; exit 1 ;;
     esac
-    if [ "$OS" = "Darwin" ]; then mac_enable "$SCRIPT_REL" "$HHMM"; else lin_enable "$SCRIPT_REL" "$HHMM"; fi
+    if [ -n "$WEEKDAY" ]; then
+      case "$WEEKDAY" in
+        (mon|tue|wed|thu|fri|sat|sun) : ;;
+        (*) echo "[routine-ctl] bad weekday: $WEEKDAY (mon|tue|wed|thu|fri|sat|sun)" >&2; exit 1 ;;
+      esac
+    fi
+    if [ "$OS" = "Darwin" ]; then mac_enable "$SCRIPT_REL" "$HHMM" "$WEEKDAY"; else lin_enable "$SCRIPT_REL" "$HHMM" "$WEEKDAY"; fi
     ;;
   disable)
     if [ "$OS" = "Darwin" ]; then mac_disable; else lin_disable; fi

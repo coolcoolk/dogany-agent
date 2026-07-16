@@ -6,7 +6,8 @@
      substitution globs, and this dir is outside install.sh's routines/*.plist
      auto-schedule glob, so bundle routines are never scheduled without the
      user's conversational opt-in). Tokens: __LABEL__ __SCRIPT__ __HOUR__
-     __MINUTE__ __ROOT__ __HOMEDIR__ __LOGNAME__ -->
+     __MINUTE__ __ROOT__ __HOMEDIR__ __LOGNAME__ __WEEKDAY_ENTRY__ (the last
+     renders to a Weekday key line for weekly routines, or to nothing) -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -21,7 +22,7 @@
         <key>Hour</key>
         <integer>__HOUR__</integer>
         <key>Minute</key>
-        <integer>__MINUTE__</integer>
+        <integer>__MINUTE__</integer>__WEEKDAY_ENTRY__
     </dict>
     <key>EnvironmentVariables</key>
     <dict>
