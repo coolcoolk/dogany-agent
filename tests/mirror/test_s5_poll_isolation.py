@@ -140,8 +140,9 @@ def test_all_success_zero_delta():
     A.pull_tasks = lambda tl, s, src: ["t1", "t2"]
     A.outbox_drain = lambda s, src, cal, tl: {"pushed": 3, "status": "ok"}
     out = A.poll_cycle("S", "SR", "C", "T")
-    # Exactly the four keys, holding the raw step returns (no error wrappers).
-    _check("keys unchanged", set(out) == {"sweep", "calendar", "tasks", "drain"},
+    # Exactly the five keys, holding the raw step returns (no error wrappers).
+    # DGN-333 added overlap_recheck; pin updated DGN-364 gate
+    _check("keys unchanged", set(out) == {"sweep", "calendar", "tasks", "drain", "overlap_recheck"},
            set(out))
     _check("sweep raw return", out["sweep"] == ["s1", "s2"], out["sweep"])
     _check("calendar raw return", out["calendar"] == ["c1"], out["calendar"])
