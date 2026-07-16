@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-16
+
 ### Added
 - Universal portfolio schema, core v1 (DGN-350). New module:
   - `docs/PORTFOLIO-CORE.md` -- registry of record for the core spec; core
@@ -28,15 +30,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     as the lifekit offer.
   - `routines/tests/test-portfolio-core.py` + synthetic fixtures -- 76-test
     regression suite for the lint and parse entrypoint (machine-independent).
+- Mirror engine: V15 multi-calendar adapter promoted to framework standard
+  (DGN-364, dec-031). The adapter now supports a multi-calendar target dict
+  (cal_id_appt / cal_id_task / cal_id_travel + gtasks_checklist_id) with
+  `get_mirror_targets(state)` as the single resolver, eliminating raw
+  state-key reads from shell scripts. Legacy single-calendar installs
+  (engraved `agent_calendar_id` / `agent_tasklist_id`) are fully preserved
+  via a compat shim -- no migration required for existing instances (Warg
+  verified). Template mirror-poll.sh and mirror-reconcile.sh updated to
+  adapter-API reads. Unengraved instances now get an exit-3 sentinel and a
+  daily push notification rather than a silent 400 error loop. 144-test
+  suite added (test_v15_promotion.py); s1-s7 green.
+- Mint: `git init` at birth (DGN-357). `scripts/mint.sh` now runs an
+  idempotent `git init` + initial commit at step 8 (local only, no remote),
+  using the standard .gitignore convention (MEMORY.md + inbox.md tracked;
+  .env, venv, logs excluded). Re-mint is idempotent. Remote setup remains
+  a manual owner step.
+- cron-guard: opt-in machine-global queue (DGN-360). New flags
+  `--queue <class> [--slots N] [--queue-timeout SEC]` serialize heavy
+  Claude-invoking crons across all instance roots on the machine
+  (`~/.dogany/cron-queue/<class>/`). macOS-compatible atomic-mkdir
+  spinlock with pidfile + stale-lock reclaim. Timeout policy: fail-open
+  (WARN and run rather than drop). No-arg invocation is byte-identical to
+  the previous behavior. Class assignment to plists is opt-in and
+  per-instance; no plist changes ship in this release.
 - routine-ctl.sh: optional `[weekday]` argument on `enable` schedules a
   routine weekly (launchd Weekday key / systemd OnCalendar day token) instead
   of daily. Additive; existing daily behavior unchanged.
 
+### Fixed
+- Memory engine: nested-session write no longer fails when a live agent
+  session sub-launches the compression process (DGN-352). Root cause: the
+  haiku sub-launch inherited `CLAUDECODE` from the parent session, causing
+  "cannot launch inside another Claude Code session." Fix: env scrub strips
+  session nesting vars before the child launch; if the sub-launch still fails,
+  a raw-append fallback ensures the write is never lost. Nightly consolidate
+  (launchd, no nesting env) is unaffected.
+- Template `claude-usage.sh` now reads `~/.claude/.credentials.json` first
+  and falls back to Keychain, matching current CLI behavior (DGN-362). Fixes
+  stale token reads after an account switch, which caused usage-window gating
+  to act on the wrong account's limits.
+
 ### Changed
+- update.sh: instance-preserve list + hooks split (DGN-359). Two
+  complementary guards against the recurring update-clobber pattern (3rd
+  recurrence, DGN-363 class):
+  1. Framework hooks land in `settings.json`; instance-local hooks go in
+     `settings.local.json` (Claude Code merges both natively). update.sh
+     never touches `settings.local.json`.
+  2. `.claude/.dogany-preserve` manifest: paths listed here are skipped by
+     every rsync/cp refresh path in update.sh. The preserve list is printed
+     on each run. Instances prune entries when the upstream version ships
+     the same fix (self-healing).
+  Tested 15/15 on throwaway instances including no-customization
+  byte-identical regression and dry-run no-write.
 - upstream-report skill Layer B: the parse check now prefers an
   instance-local `routines/lib/portfolio-parse.sh` when present and falls
   back to the framework-shipped `portfolio-core-parse.sh`, turning the
   ledger overlay on for every adopting instance without instance-side edits.
+- Model picker defaults: Fable is now the first-listed model for the max
+  tier (fable, opus, sonnet, haiku order). No behavior change for instances
+  not on the max tier.
 
 ## [1.5.3] - 2026-07-16
 
