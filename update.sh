@@ -145,7 +145,27 @@ done
 INSTANCE="$(cd "$INSTANCE" && pwd)"
 
 # Guard: never treat the repo itself or the template as the instance.
-[ "$INSTANCE" = "$REPO_ROOT" ] && die "refusing to update the repo root itself"
+#
+# DGN-341: when --root resolves to the repo root itself, the caller is running
+# the "dogfood layout" (instance root == framework repo root -- the clone IS
+# the instance). This layout is UNSUPPORTED: update.sh cannot safely refresh
+# framework files into the same tree it is reading them from. The caller must
+# migrate to the standard layout (a separate instance directory that CONSUMES
+# the framework repo). The message below names the layout explicitly so users
+# can distinguish this refusal from a generic mistake.
+if [ "$INSTANCE" = "$REPO_ROOT" ]; then
+  printf '%s\n' "------------------------------------------------------------" >&2
+  msg "[update][오류] dogfood 레이아웃 감지: 인스턴스 루트가 프레임워크 저장소 루트와 동일합니다." \
+      "[update][ERROR] dogfood layout detected: instance root == framework repo root." >&2
+  msg "  이 레이아웃은 지원되지 않습니다. update.sh는 동일한 트리에서 파일을 읽으면서 갱신할 수 없습니다." \
+      "  This layout is unsupported: update.sh cannot refresh framework files into the same tree it reads from." >&2
+  msg "  조치: 표준 레이아웃(저장소를 소비하는 별도 인스턴스 디렉터리)으로 마이그레이션하세요." \
+      "  Remediation: migrate to the standard layout (a separate instance directory consuming the framework repo)." >&2
+  msg "  참조: docs/ 의 install/update 문서를 확인하세요." \
+      "  See: install and update docs in docs/." >&2
+  printf '%s\n' "------------------------------------------------------------" >&2
+  exit 1
+fi
 [ "$INSTANCE" = "$TEMPLATE" ]  && die "refusing to update the template itself"
 
 # INSTANCE-VALIDITY GATE: a real minted instance carries a .instance.conf (written
