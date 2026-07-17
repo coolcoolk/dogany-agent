@@ -5,6 +5,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-17
+
+### Added
+- Daily retro: `RETRO_HEALTH_SOURCE=warg|local` config gate (default `local`,
+  existing instances unaffected). When set to `warg`, the retro quotes the Warg
+  agent's `report.section.retro` verbatim; "워그 건강 리포트 미도착" fallback on
+  missing section. Task section added: done-today (`task-done-between`) and
+  overdue (`task-overdue`) tasks shown at retro close; compressed to a few items
+  + "외 N건" when long; silently omitted when no task data. (DGN-389)
+
+### Fixed
+- `update.sh` reverse-drift protection for un-versioned components (DGN-385).
+  Two new guards: (1) section-root hold -- a `.dogany-preserve` entry matching
+  a top-level component root (e.g. `bridge/`) now skips the entire rsync section
+  with a WARN (file count shown); previously the root entry generated zero excludes
+  and the component was silently overwritten. (2) Pin-based auto-detection --
+  before refreshing `bridge/`, `update.sh` compares instance vs template
+  `bridge/UPSTREAM.md` pin SHA; matching pins with local file differences = local-
+  ahead, section skipped with WARN; differing pins = re-vendor has occurred,
+  normal refresh proceeds. Instances without a pin file or without preserve entries
+  are unaffected.
+- `routines/version-check.py`: update-check nudge now gates on strict semantic
+  newer-than (`_version_tuple` + `_is_newer`) instead of plain `!=` (DGN-349).
+  Previously fired when the public repo lagged the framework release (e.g. "built
+  from 1.8.0, upstream has 1.7.1"). Nudge fires only when the other side is
+  genuinely ahead; equal and local-newer cases are silent. 12-case unit suite +
+  E2E hook simulation green.
+- Daily retro (Warg mode): health data now read live via owner lifekit.sh at
+  retro fire time instead of consuming a pre-generated snapshot (DGN-396). Closes
+  the cross-agent freshness gap: stale snapshot data (meals logged after snapshot
+  generation) was being quoted. Fallback to snapshot with generation-time
+  annotation ("HH:MM 기준") on any failure; retro never blocks on the cross-agent
+  read. Rides the DGN-389 `RETRO_HEALTH_SOURCE` gate surface.
+
 ## [1.8.0] - 2026-07-17
 
 ### Added
