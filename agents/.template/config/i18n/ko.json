@@ -15,6 +15,8 @@
   "bundle.appointment_log.name": "일정 기록",
   "bundle.relationship": "만난 사람과 관계 메모를 기록하는 스킬",
   "bundle.relationship.name": "인연 기록",
+  "bundle.relationship-care": "관계 케어 -- 연락 공백 알림(만남 기준), 다가오는 약속 제외, 스누즈 관리",
+  "bundle.relationship-care.name": "관계 케어",
   "bundle.morning_brief": "매일 아침 오늘의 일정·할 일을 정리해 보내는 브리핑 루틴 (기본 06:00)",
   "bundle.morning_brief.name": "아침 브리핑",
   "bundle.daily_retro": "매일 밤 하루를 돌아보는 회고 루틴 (기본 22:00)",

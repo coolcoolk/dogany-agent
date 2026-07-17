@@ -124,14 +124,16 @@ root, and each agent lives under `agents/`.
   instance `USER.md` scaffold comes from `agents/.template/`.
 - **`skills/`** -- framework skills shared across agents (`dogany-cron-register`,
   `dogany-lifekit-setup`, `dogany-mailer`, `dogany-memory-search`,
-  `dogany-proactive-push`, `dogany-reminder`, `dogany-skill-creator`,
-  `dogany-user-onboarding`). A minted instance carries its own real copies under
+  `dogany-portfolio-setup`, `dogany-proactive-push`, `dogany-reminder`,
+  `dogany-skill-creator`, `dogany-upstream-report`, `dogany-user-onboarding`).
+  A minted instance carries its own real copies under
   `.claude/skills/`. Domain (lifekit) skills -- `diet-log`, `workout-log`,
-  `appointment-log`, `relationship`, `task-update` -- ship DORMANT as real dirs
-  under `.claude/skills-bundle/` and are activated only post-mint by the
-  `dogany-lifekit-setup` skill, which creates an instance-local symlink
-  `.claude/skills/<id> -> ../skills-bundle/<id>`. They are never pre-placed as
-  live dirs under `.claude/skills/` (that would make the bundle un-gateable).
+  `appointment-log`, `relationship`, `relationship-care`, `task-update` -- ship
+  DORMANT as real dirs under `.claude/skills-bundle/` and are activated only
+  post-mint by the `dogany-lifekit-setup` skill, which creates an instance-local
+  symlink `.claude/skills/<id> -> ../skills-bundle/<id>`. They are never
+  pre-placed as live dirs under `.claude/skills/` (that would make the bundle
+  un-gateable).
 - **`database/`** -- `lifekit.py` / `lifekit.sh`, an optional structured-data
   lane (a local SQLite "life OS": meals, workouts, people, appointments). CODE
   ONLY -- `schema.sql` is the structure; no `*.db` data is shipped.
