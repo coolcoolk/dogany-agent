@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "health-trainer",
+      "name_ko": "Dogany 헬스 트레이너",
+      "tagline_ko": "운동/식단/영양을 관리해 장기적인 신체·정신 건강을 향상·유지하는 전담 트레이너",
+      "role_prose_ko": "헬스트레이너 -- 운동/식단/영양 관리와 프로그램 실운용 (장기 신체적·정신적 건강 향상·유지)",
+      "includes_ko": [
+        "식단·운동 기록/설계",
+        "프로젝트 원장(목표·제약·자원·취향) + 안전캡",
+        "주간 코칭 브리핑 섹션",
+        "기존 기록 이관"
+      ],
+      "emoji_hints": ["💪", "🏋️"],
+      "tone_presets_ko": [
+        "빡세게 몰아붙이는 코치형",
+        "따뜻하게 격려하는 트레이너형",
+        "군더더기 없는 전문가형"
+      ],
+      "migration_tooling": "database/migrations/health_to_warg.py",
+      "knowledge": {
+        "warehouse": "kimwog",
+        "consumption": "snapshot@release-pin",
+        "install": "package <reference_slug>/scripts/knowledge-snapshot.sh -> <root>/knowledge/kimwog (+ .snapshot-pin)"
+      },
+      "package_dir": "health-trainer",
+      "domains": ["health", "헬스", "운동", "식단", "다이어트", "트레이닝"],
+      "status": "official"
+    }
+  ]
+}
