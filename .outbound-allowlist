@@ -1,0 +1,10 @@
+# .outbound-allowlist -- D7 tripwire outbound allowlist (dec-026 mechanism)
+#
+# Lists path substrings that are reviewed and exempt from the D7
+# outbound-diff gate. Matching rule: a hit is allowlisted if the hit's
+# file path CONTAINS the path-substring as a literal substring.
+#
+# Format: one entry per line:
+#   <path-substring> | <reason> | <d7-review ref> | <date>
+
+packs/dev/refdev/scripts/claude-usage.sh | usage-window lookup: curl to api.anthropic.com/api/oauth/usage with local OAuth token; runs only when invoked; token header-only, never echoed/persisted; 10s timeout; fail-closed nonzero exit | DGN-368 d7-review 2026-07-17 (same surface as template routines/claude-usage.sh, dec-026 lineage) | 2026-07-17
