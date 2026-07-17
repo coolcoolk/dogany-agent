@@ -261,10 +261,17 @@ if [[ -f "$DEDUP_FILE" ]]; then
 fi
 
 # ---- first failure today: build alert and push ----
-# grab last 10 lines of the log (best-effort; skip if log absent/empty)
+# grab last 10 lines of log (best-effort; prefer stderr when non-empty, fall back to stdout)
 LOG_TAIL=""
-if [[ -s "$LOG_PATH" ]]; then
+LOG_SOURCE=""
+STDERR_LOG_PATH="${LOG_PATH%.stdout.log}.stderr.log"
+if [[ -s "$STDERR_LOG_PATH" ]]; then
+  LOG_TAIL="$(tail -10 "$STDERR_LOG_PATH" 2>/dev/null || true)"
+  LOG_SOURCE="$STDERR_LOG_PATH"
+fi
+if [[ -z "$LOG_TAIL" && -s "$LOG_PATH" ]]; then
   LOG_TAIL="$(tail -10 "$LOG_PATH" 2>/dev/null || true)"
+  LOG_SOURCE="$LOG_PATH"
 fi
 
 # Determine headline: friendly name if provided, else last dot-segment of label.
@@ -283,7 +290,7 @@ date  : $(date '+%Y-%m-%d %H:%M:%S %Z')"
 
 if [[ -n "$LOG_TAIL" ]]; then
   ALERT="$ALERT
---- log tail ($LOG_PATH) ---
+--- log tail ($LOG_SOURCE) ---
 $LOG_TAIL"
 fi
 

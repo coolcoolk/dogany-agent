@@ -106,8 +106,22 @@ if [[ -n "$RAW_TEXT" ]]; then
   BODY="$RAW_TEXT"
 elif [[ -n "$PROMPT" ]]; then
   echo "[push] generating via claude --model $MODEL ..." >&2
-  BODY="$(claude -p "$PROMPT" --model "$MODEL" 2>/dev/null)"
-  [[ -z "$BODY" ]] && { echo "claude returned empty" >&2; exit 1; }
+  BODY=""
+  _attempt=0
+  while [[ $_attempt -lt 3 ]]; do
+    _attempt=$(( _attempt + 1 ))
+    BODY="$(claude -p "$PROMPT" --model "$MODEL" 2>/dev/null)"
+    if [[ -n "$BODY" ]]; then
+      break
+    fi
+    if [[ $_attempt -lt 3 ]]; then
+      sleep 5
+    fi
+  done
+  if [[ -z "$BODY" ]]; then
+    echo "claude returned empty after $_attempt attempts" >&2
+    exit 1
+  fi
 else
   echo "need --prompt or --text" >&2; exit 1
 fi
