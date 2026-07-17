@@ -6,6 +6,7 @@ This `bridge/` directory is a VENDORED (in-tree) copy of the standalone Telegram
 
 - Upstream: https://github.com/coolcoolk/claude-code-telegram
 - Pinned commit: feca63efc507f820774be6be036aa1695113c950
+- Vendor-rev: DGN-399 (ensure_owner_stream bootstrap; OSS push pending)
 
 ## Why vendored instead of a git submodule
 

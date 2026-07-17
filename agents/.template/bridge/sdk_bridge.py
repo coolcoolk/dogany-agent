@@ -752,6 +752,45 @@ class SdkBridge:
                 )
             )
 
+    async def ensure_owner_stream(
+        self,
+        user_id: int,
+        model: Optional[str],
+        chat_id: int,
+        proactive_push: Optional[ProactivePushCallback],
+    ) -> bool:
+        """DGN-399: bootstrap the owner's live stream when none exists yet.
+
+        A stream is normally created only by a real owner message
+        (process_message). After a bridge restart at a quiet hour, no owner
+        message arrives, so a queued session-inbox turn (e.g. a post-restart
+        resume/verify spool) can never be injected -- inject_background_turn
+        returns False forever. The session-inbox loop calls this first to
+        create the stream, then retries injection.
+
+        This wires the SAME delivery fields process_message sets (last_chat_id
+        + proactive_push) so the injected turn's output reaches the owner chat
+        instead of being dropped by _flush_proactive. Reuses
+        _get_or_create_stream, whose init-lock re-checks self._streams, so a
+        real first message racing this bootstrap cannot create a double stream.
+
+        Idempotent: if a live stream already exists it only refreshes the
+        delivery route and returns True. Caller gates on owner_id known + claim
+        mode off (already enforced by the inbox loop). Returns False and leaves
+        no stream on error (caller keeps the spool and retries next tick).
+        """
+        try:
+            state = await self._get_or_create_stream(
+                user_id, model, new_session=False
+            )
+            state.last_chat_id = chat_id
+            if proactive_push is not None:
+                state.proactive_push = proactive_push
+            return True
+        except Exception as e:
+            logger.error("ensure_owner_stream failed for user %s: %s", user_id, e)
+            return False
+
     async def inject_background_turn(self, user_id: int, text: str) -> bool:
         """DGN-217: inject a background/cron notification as a turn into the
         user's LIVE session, with no pending request attached.
@@ -763,7 +802,8 @@ class SdkBridge:
         suppresses the push.
 
         Returns False (caller retries later) when:
-        - no live stream exists for this user yet (bot just started), or
+        - no live stream exists for this user yet (bot just started); the
+          caller bootstraps it via ensure_owner_stream and retries (DGN-399), or
         - a real request is pending/in flight. Injecting then would race the
           reader loop, which attributes ALL output to pending[0] -- the
           injected turn's answer would masquerade as the user's answer.

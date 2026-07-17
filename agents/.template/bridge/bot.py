@@ -425,7 +425,9 @@ class TelegramBot:
         mv/rename to *.md in this dir -- rename is atomic, so a half-written
         file is never picked up. One file per tick keeps injected turns
         serialized. Injection is refused (file kept, retried next tick) while
-        the owner has a turn in flight or the stream does not exist yet.
+        the owner has a turn in flight. If no live stream exists yet (fresh
+        restart at a quiet hour, no owner message to create one), it is
+        bootstrapped here first (DGN-399) so a queued turn resumes on its own.
         Delivery of the turn's OUTPUT rides the existing no-pending proactive
         path; a turn ending in bare NO_PUSH reaches the session but not the
         owner chat.
@@ -455,6 +457,17 @@ class TelegramBot:
                 if not text:
                     path.unlink(missing_ok=True)
                     continue
+                # DGN-399: bootstrap the owner's live stream if none exists yet
+                # (fresh restart at a quiet hour, no owner message to create it).
+                # Idempotent -- a no-op refresh when a stream already exists.
+                # In a private chat the chat_id equals the owner's user id.
+                session = await session_manager.get_session(owner_id)
+                await sdk_bridge.ensure_owner_stream(
+                    owner_id,
+                    session.get("model"),
+                    owner_id,
+                    self._proactive_push,
+                )
                 ok = await sdk_bridge.inject_background_turn(owner_id, text)
                 if ok:
                     path.unlink(missing_ok=True)
