@@ -526,17 +526,32 @@ build_preserve_excludes() {
   done
 }
 
-# _preserve_mark_single RELPATH -- record a single-file preserve entry as
-# matched (used by is_preserved callers that skip a file via the preserve list,
-# so those entries are not flagged as invalid later).
-_preserve_mark_single() {
-  _ALL_MATCHED_ENTRIES+=("$1")
+# _section_held_warn PREFIX SRC_DIR DEST_DIR [EXTRA_RSYNC_OPTS...]
+# Common helper called by every section that uses build_preserve_excludes when
+# SECTION_HELD=1 (the preserve list names the section root itself, e.g.
+# "routines/").  Runs an itemized dry-run to count pending changes (so the
+# operator knows the blast radius), prints the HELD WARN, and returns 0.
+# Guards: COMMON_EXCLUDES applied so noise (venv/.env/etc.) is excluded from
+# the count.
+_section_held_warn() {
+  local prefix="$1" src="$2" dest="$3"
+  shift 3
+  local _n=0
+  _n="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
+      "$@" "$src/" "$dest/" 2>/dev/null \
+      | grep -c '^[>c]f' || true)"
+  printf '%s\n' "============================================================" >&2
+  msg "[update][경고] HELD by .dogany-preserve: ${prefix}/ (differs from vendor in ${_n} files)" \
+      "[update][WARN] HELD by .dogany-preserve: ${prefix}/ (differs from vendor in ${_n} files)" >&2
+  msg "  ${prefix}/ rsync 전체를 건너뜁니다. .dogany-preserve에서 항목을 제거하면 갱신이 재개됩니다." \
+      "  Skipping ${prefix}/ rsync entirely. Remove the entry from .dogany-preserve to resume updates." >&2
+  printf '%s\n' "============================================================" >&2
 }
 
 # _preserve_check_invalid -- warn about any preserve entry that was never
-# matched by build_preserve_excludes or _preserve_mark_single.  An unmatched
-# entry either names a non-existent section or contains a typo, and would
-# silently provide no protection at all (DGN-385).
+# matched by build_preserve_excludes.  An unmatched entry either names a
+# non-existent section or contains a typo, and would silently provide no
+# protection at all (DGN-385).
 # Called once, after all section-3 rsync blocks complete.
 _preserve_check_invalid() {
   local e matched found
@@ -714,16 +729,7 @@ if [ -d "$TEMPLATE/bridge" ]; then
     # Count pending changes via an itemized dry-run (COMMON_EXCLUDES applied so
     # venv/.env noise is excluded from the count, matching what would actually
     # be overwritten).
-    _bridge_n=0
-    _bridge_n="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
-        "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
-        | grep -c '^[>c<]' || true)"
-    printf '%s\n' "============================================================" >&2
-    msg "[update][경고] HELD by .dogany-preserve: bridge/ (differs from vendor in ${_bridge_n} files)" \
-        "[update][WARN] HELD by .dogany-preserve: bridge/ (differs from vendor in ${_bridge_n} files)" >&2
-    msg "  bridge/ rsync 전체를 건너뜁니다. .dogany-preserve에서 항목을 제거하면 갱신이 재개됩니다." \
-        "  Skipping bridge/ rsync entirely. Remove the entry from .dogany-preserve to resume updates." >&2
-    printf '%s\n' "============================================================" >&2
+    _section_held_warn "bridge" "$TEMPLATE/bridge" "$INSTANCE/bridge"
     UPDATED+=("bridge/ (HELD -- skipped by .dogany-preserve)")
 
   # --- Guard (ii): pin-based ahead-detection ---
@@ -738,17 +744,27 @@ if [ -d "$TEMPLATE/bridge" ]; then
           | sed 's/.*Pinned commit:[[:space:]]*//' | tr -d '[:space:]' || true)"
       if [ -n "$_inst_pin" ] && [ -n "$_tmpl_pin" ] && [ "$_inst_pin" = "$_tmpl_pin" ]; then
         # Pins are EQUAL: check if there are pending rsync changes.
-        # Count only *.py source files -- *.plist files get renamed (not
-        # replaced) by section 4, and *.sh files may carry substituted paths
-        # that differ from the template placeholder values after a normal
-        # install; neither represents a genuine local code patch.  Real bridge
-        # local patches (e.g. DGN-372) always touch .py source files.
+        # Compare all bridge files EXCEPT known placeholder-substitution
+        # artifacts: self_restart.sh and watchdog_setup.sh contain
+        # __PROJECT_ROOT__/__AGENT_NAME__/etc. tokens that section 4
+        # substitutes at install time, so on a stock instance they will always
+        # differ from the template placeholders -- excluding them prevents
+        # false-positive guard fires.  *.plist files are similarly substituted
+        # AND renamed by section 4, so they are excluded too.
+        # (Keep this exclusion list in sync with section-4 substitution targets
+        # that live under bridge/: self_restart.sh, watchdog_setup.sh, *.plist)
+        # UPSTREAM.md is also excluded: it is the pin METADATA file -- its pin
+        # line is compared above, but its prose (docs sections) may change
+        # canonically without a pin bump and must never read as "locally ahead".
         _bridge_delta=0
         _bridge_delta="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
             ${PEX[@]+"${PEX[@]}"} \
-            --include '*/' --include '*.py' --exclude '*' \
+            --exclude '/self_restart.sh' \
+            --exclude '/watchdog_setup.sh' \
+            --exclude '/UPSTREAM.md' \
+            --exclude '*.plist' \
             "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
-            | grep -c '^[>c<]' || true)"
+            | grep -c '^[>c]f' || true)"
         if [ "$_bridge_delta" -gt 0 ]; then
           # Pins equal but rsync shows changes -> instance is locally ahead.
           _bridge_skip=1
@@ -803,44 +819,57 @@ fi
 #     verdict without mutating anything.
 if [ -d "$REPO_ROOT/mirror" ]; then
   build_preserve_excludes "mirror"
-  MIRROR_GUARD_EX=()
-  _sb_fw="$REPO_ROOT/mirror/sdk_bridge.py"
-  _sb_inst="$INSTANCE/mirror/sdk_bridge.py"
-  if [ -f "$_sb_fw" ] && [ -f "$_sb_inst" ]; then
-    if [ "$DRY_RUN" = "1" ]; then
-      # Dry-run reporting branch (3f-style): evaluate + print, mutate nothing.
-      _sb_fw_v="$( extract_ver_sdk_bridge_py "$_sb_fw"   2>/dev/null)" || true
-      _sb_in_v="$( extract_ver_sdk_bridge_py "$_sb_inst" 2>/dev/null)" || true
-      if [[ "$_sb_fw_v" =~ ^[0-9]+$ ]] && [[ "$_sb_in_v" =~ ^[0-9]+$ ]] && [ "$_sb_in_v" -gt "$_sb_fw_v" ]; then
-        msg "  [dry-run][경고] 역주행 가드: mirror/sdk_bridge.py 갱신 건너뜀 예정 (인스턴스 v${_sb_in_v} > 프레임워크 v${_sb_fw_v})" \
-            "  [dry-run][WARN] reverse-drift guard: would SKIP mirror/sdk_bridge.py (instance v${_sb_in_v} > framework v${_sb_fw_v})"
-        MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "mirror" "$REPO_ROOT/mirror" "$INSTANCE/mirror" \
+      --exclude '*.db-wal' --exclude '*.db-shm' --exclude '*.db.bak*'
+    UPDATED+=("mirror/ (HELD -- skipped by .dogany-preserve)")
+  else
+    MIRROR_GUARD_EX=()
+    _sb_fw="$REPO_ROOT/mirror/sdk_bridge.py"
+    _sb_inst="$INSTANCE/mirror/sdk_bridge.py"
+    if [ -f "$_sb_fw" ] && [ -f "$_sb_inst" ]; then
+      if [ "$DRY_RUN" = "1" ]; then
+        # Dry-run reporting branch (3f-style): evaluate + print, mutate nothing.
+        _sb_fw_v="$( extract_ver_sdk_bridge_py "$_sb_fw"   2>/dev/null)" || true
+        _sb_in_v="$( extract_ver_sdk_bridge_py "$_sb_inst" 2>/dev/null)" || true
+        if [[ "$_sb_fw_v" =~ ^[0-9]+$ ]] && [[ "$_sb_in_v" =~ ^[0-9]+$ ]] && [ "$_sb_in_v" -gt "$_sb_fw_v" ]; then
+          msg "  [dry-run][경고] 역주행 가드: mirror/sdk_bridge.py 갱신 건너뜀 예정 (인스턴스 v${_sb_in_v} > 프레임워크 v${_sb_fw_v})" \
+              "  [dry-run][WARN] reverse-drift guard: would SKIP mirror/sdk_bridge.py (instance v${_sb_in_v} > framework v${_sb_fw_v})"
+          MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
+        else
+          msg "  [dry-run] mirror/sdk_bridge.py 갱신 예정" \
+              "  [dry-run] would refresh mirror/sdk_bridge.py"
+        fi
       else
-        msg "  [dry-run] mirror/sdk_bridge.py 갱신 예정" \
-            "  [dry-run] would refresh mirror/sdk_bridge.py"
+        drift_guard_file "mirror/sdk_bridge.py" "$_sb_fw" "$_sb_inst" "sdk_bridge_py" \
+          || MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
       fi
-    else
-      drift_guard_file "mirror/sdk_bridge.py" "$_sb_fw" "$_sb_inst" "sdk_bridge_py" \
-        || MIRROR_GUARD_EX+=(--exclude '/sdk_bridge.py')
     fi
+    # Missing instance file: first-install PROCEED -- no exclude added.
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      ${MIRROR_GUARD_EX[@]+"${MIRROR_GUARD_EX[@]}"} \
+      --exclude '*.db-wal' \
+      --exclude '*.db-shm' \
+      --exclude '*.db.bak*' \
+      "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
+    UPDATED+=("mirror/ (code+schema; *.db preserved)")
   fi
-  # Missing instance file: first-install PROCEED -- no exclude added.
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    ${MIRROR_GUARD_EX[@]+"${MIRROR_GUARD_EX[@]}"} \
-    --exclude '*.db-wal' \
-    --exclude '*.db-shm' \
-    --exclude '*.db.bak*' \
-    "$REPO_ROOT/mirror/" "$INSTANCE/mirror/"
-  UPDATED+=("mirror/ (code+schema; *.db preserved)")
 fi
 
 # 3b) routines (framework schedulers/scripts). Preserve-list excludes guard
 #     instance-customized routine scripts (DGN-359/DGN-363 clobber class).
 if [ -d "$TEMPLATE/routines" ]; then
   build_preserve_excludes "routines"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    "$TEMPLATE/routines/" "$INSTANCE/routines/"
-  UPDATED+=("routines/")
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "routines" "$TEMPLATE/routines" "$INSTANCE/routines"
+    UPDATED+=("routines/ (HELD -- skipped by .dogany-preserve)")
+  else
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      "$TEMPLATE/routines/" "$INSTANCE/routines/"
+    UPDATED+=("routines/")
+  fi
 fi
 
 # 3c) memory engine code ONLY (*.py + taxonomy doc) -- never memory markdown/db.
@@ -848,10 +877,17 @@ fi
 #     order-sensitive: first match wins).
 if [ -d "$TEMPLATE/memory-engine" ]; then
   build_preserve_excludes "memory-engine"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    --include '*/' --include '*.py' --include '*.md' --exclude '*' \
-    "$TEMPLATE/memory-engine/" "$INSTANCE/memory-engine/"
-  UPDATED+=("memory-engine/*.py")
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "memory-engine" "$TEMPLATE/memory-engine" "$INSTANCE/memory-engine" \
+      --include '*/' --include '*.py' --include '*.md' --exclude '*'
+    UPDATED+=("memory-engine/ (HELD -- skipped by .dogany-preserve)")
+  else
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      --include '*/' --include '*.py' --include '*.md' --exclude '*' \
+      "$TEMPLATE/memory-engine/" "$INSTANCE/memory-engine/"
+    UPDATED+=("memory-engine/*.py")
+  fi
 fi
 
 # 3d) config: i18n locales are FRAMEWORK (refresh); agent.conf + lifekit.conf
@@ -861,29 +897,42 @@ fi
 #     defaults (e.g. LIFEKIT=pending, AGENT_LANG=ko).
 if [ -d "$TEMPLATE/config" ]; then
   build_preserve_excludes "config"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    --exclude 'agent.conf' \
-    --exclude 'lifekit.conf' \
-    "$TEMPLATE/config/" "$INSTANCE/config/"
-  for f in agent.conf lifekit.conf; do
-    if [ ! -f "$INSTANCE/config/$f" ] && [ -f "$TEMPLATE/config/$f" ]; then
-      if [ "$DRY_RUN" = "1" ]; then
-        msg "  [dry-run] config/$f 스캐폴드 생성 예정 (없음)" \
-            "  [dry-run] would scaffold config/$f (absent)"
-      else
-        cp -p "$TEMPLATE/config/$f" "$INSTANCE/config/$f"
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "config" "$TEMPLATE/config" "$INSTANCE/config" \
+      --exclude 'agent.conf' --exclude 'lifekit.conf'
+    UPDATED+=("config/ (HELD -- skipped by .dogany-preserve)")
+  else
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      --exclude 'agent.conf' \
+      --exclude 'lifekit.conf' \
+      "$TEMPLATE/config/" "$INSTANCE/config/"
+    for f in agent.conf lifekit.conf; do
+      if [ ! -f "$INSTANCE/config/$f" ] && [ -f "$TEMPLATE/config/$f" ]; then
+        if [ "$DRY_RUN" = "1" ]; then
+          msg "  [dry-run] config/$f 스캐폴드 생성 예정 (없음)" \
+              "  [dry-run] would scaffold config/$f (absent)"
+        else
+          cp -p "$TEMPLATE/config/$f" "$INSTANCE/config/$f"
+        fi
       fi
-    fi
-  done
-  UPDATED+=("config/ (i18n; conf scaffolds only if absent)")
+    done
+    UPDATED+=("config/ (i18n; conf scaffolds only if absent)")
+  fi
 fi
 
 # 3e) service SDK facade (hoisted at repo root, bundled into the instance).
 if [ -d "$REPO_ROOT/service" ]; then
   build_preserve_excludes "service"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    "$REPO_ROOT/service/" "$INSTANCE/service/"
-  UPDATED+=("service/")
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "service" "$REPO_ROOT/service" "$INSTANCE/service"
+    UPDATED+=("service/ (HELD -- skipped by .dogany-preserve)")
+  else
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      "$REPO_ROOT/service/" "$INSTANCE/service/"
+    UPDATED+=("service/")
+  fi
 fi
 
 # 3f) database schema + CLI (framework), NEVER the *.db (excluded above).
@@ -1240,9 +1289,16 @@ fi
 if [ -d "$TEMPLATE/.claude/skills-bundle" ]; then
   ensure_dir "$INSTANCE/.claude/skills-bundle"
   build_preserve_excludes ".claude/skills-bundle"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
-  UPDATED+=(".claude/skills-bundle/")
+  # DGN-385 FIX-1: section-root hold check (common to all sections).
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn ".claude/skills-bundle" "$TEMPLATE/.claude/skills-bundle" \
+      "$INSTANCE/.claude/skills-bundle"
+    UPDATED+=(".claude/skills-bundle/ (HELD -- skipped by .dogany-preserve)")
+  else
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
+    UPDATED+=(".claude/skills-bundle/")
+  fi
 fi
 
 # 3k) RULES.md -- framework constitution (DGN-130). RULES.md is framework-owned:

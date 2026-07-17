@@ -20,3 +20,18 @@ directory and run:
 
 To refresh the vendored copy from upstream, re-copy the upstream tree over this
 directory (excluding any real `.env`, `venv/`, `__pycache__/`).
+
+## Pin discipline (DGN-385 MAJOR-1)
+
+Any canonical change to files under `bridge/` in this repo MUST bump the
+"Pinned commit" line above (or add a `Vendor-rev: <marker>` line in the same
+commit).
+
+Rationale: `update.sh` detects whether an instance's bridge is "locally ahead"
+by comparing the pin in the instance's `bridge/UPSTREAM.md` with the pin in
+this template file.  If the pins are equal and rsync shows a diff, the script
+concludes the instance has local patches and skips the rsync to avoid a silent
+downgrade.  An unbumped canonical bridge change therefore makes every instance
+misread the update as local drift and silently skip it -- the fix never lands.
+Always bump the pin (or add a `Vendor-rev` marker) in the same commit as the
+bridge change.
