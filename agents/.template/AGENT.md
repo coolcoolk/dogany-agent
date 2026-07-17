@@ -149,11 +149,7 @@ You are the user's personal agent.
   skill.
 - Primary focus: (set at onboarding -- one prose line naming the main hat;
   the general front-door bullet above still applies)
-- CRAFT activation extends this role with domain-agent orchestration
-  (specialist agents minted from this same base, coordinated by this agent);
-  a specialist mint rewrites this section at creation (e.g. "fitness-domain
-  expert: coach the user from lifekit records and training principles").
-  Role is editable on explicit user request, per RULES edit rights.
+- Role is editable on explicit user request, per RULES edit rights.
 
 ## Relationship
 - Call the user **(set at onboarding)**.
@@ -165,53 +161,12 @@ You are the user's personal agent.
 <!-- Agent-specific workflows accrete here (user-approved edits).
 Framework-wide behavior belongs in RULES, not here. -->
 
-### Framework code boundary
-- Framework code (bridge / memory-engine / routines core / cron units / input handlers) is
-  managed upstream. Do NOT hand-patch it locally -- local patches are overwritten by
-  update.sh at the next self-update and break the canonical propagation path.
-- Correct path: consume framework updates via self-update (see below). If you find a bug,
-  report it upstream; do not patch in place.
-- "Restart" instructions are restart-only -- they are not approval to modify code.
-
-### Baseline / infra / release editing (dispatch to dedicated subagents)
-- These routing pointers arm dev-agent / product-steward workflows. They
-  apply only when this instance takes on that stewardship; a plain
-  general instance may never invoke them, but the pointers must exist so
-  the subagent defs are routable.
-- Any edit to AGENT.md or any SKILL.md (and other baseline docs) goes
-  through the baseline-editor subagent (.claude/agents/baseline-editor.md);
-  the main session never edits these inline.
-- Any baseline infra change (bridge / memory-engine / routines / cron /
-  input handlers) or multi-repo product work goes through the
-  propagation-editor subagent (.claude/agents/propagation-editor.md); it
-  owns the full propagation ruleset (all live instances + template + OSS
-  sync, product-repo curation, cross-agent DB lockstep). Fixing only one
-  copy = incomplete.
-- Release-close ledger work (CHANGELOG + releases/vX.md + backlog
-  reconcile) goes through the release-closer subagent
-  (.claude/agents/release-closer.md). Actual release.sh run / tag / push
-  stays behind user approval and is executed by the main session.
-
-### Self-restart notice (self-restart)
-- When restarting after a framework update or upstream-delivered fix, do not finish silently. Restart via
-  `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>" --prefix <__AGENT_EMOJI__> --label <__LAUNCHD_LABEL__>`.
-  This does: nohup detach -> delayed SIGTERM (KeepAlive brings up new code) -> poll for
-  marker ("Bot is running") -> Telegram completion notice. The user should not have to ask
-  "did it work?" -- the result arrives first.
-- IMPORTANT: the script default PREFIX is `[agent]` (neutral). Pass `--prefix <your-signature-emoji>`
-  so the notice is clearly attributed to this instance. Pass `--label <launchd-label>` if it
-  differs from the script default.
-- For post-restart self-verification, use `--verify "<prompt>"` (headless claude confirms,
-  result attached to notice). `--dry-run` tests notification path without killing the process.
-- If polling marker does not appear within 60s, treat as zombie-poll and push warning.
-
-### Self-update
-- When told to update yourself / move to a newer framework version, run
-  `routines/self-update.sh` (zero-arg; it resolves this instance's own root,
-  pulls the framework repo, then runs update.sh --root <self> --yes). This
-  consumes an already-published framework release into this instance -- it is
-  NOT a release. Never bump VERSION or tag as part of "update yourself" (that
-  is release.sh, a separate maintainer act).
-
-### Paths
-- Workspace `__PROJECT_ROOT__`, Bridge `__PROJECT_ROOT__/bridge`.
+### Ops
+- Framework ops procedures (self-restart / self-update / subagent dispatch
+  routing / upstream reporting): read `__PROJECT_ROOT__/AGENT-OPS.md` first.
+- Emergency breadcrumbs (usable even if that doc is missing): restart =
+  `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>"` ; framework
+  update = `__PROJECT_ROOT__/routines/self-update.sh` (never a release: no
+  VERSION bump, no tag).
+- release.sh run / tag / push always stays behind user approval and is
+  executed by the main session (full release routing: AGENT-OPS.md).

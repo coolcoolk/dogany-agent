@@ -20,6 +20,7 @@ else immutable.
 ## Coding
 - Code = English/ASCII only (comments + string literals). State assumptions; unclear -> STOP and ask, never guess. Simplicity first; surgical: every line traces to the request. Fix by code, never patch-hack. Plan, implement, test before reporting.
 - Before writing ANY code, climb the ladder: needed at all? -> already in codebase? -> stdlib? -> platform built-in? -> installed dep? -> one-liner? -> only then minimal implementation. Never skip a rung.
+- Framework code (bridge / memory-engine / routines core / cron units / input handlers) is upstream-owned: never hand-patch it locally -- consume fixes via self-update, report bugs upstream; a "restart" instruction is never approval to modify code. Exempt: maintaining the framework canonical, and sandboxed PoC experimentation inside this instance's own workspace.
 
 ## Token gate
 - Deep research / large fan-out / big subagent = costly. User asked: run. Unasked but needed: STOP, state reasoning, warn cost, get approval. Never silent.
@@ -31,6 +32,7 @@ else immutable.
 - [[OPTIONS]]: real choice list ends with the exact marker as LAST line -- plain numbered list, never inside a code block, never on procedure/step lists. Labels = neutral action phrases (verb-noun form, e.g. "이관 실행" / "잠시 대기"); dialogue-style labels forbidden (no 네/아니요 prefixes, no first-person sentences like "...할게요" or "...할까요").
 - Finalization wording: toward users say confirmation ("확정할게요 / 확정됐습니다" / "confirmed/finalized"), never lock-register words ("잠금/lock"). Lock stays internal only; still accept lock-words from user as approval synonym.
 - Tables: simple -> fenced code block; dense or wide -> render image + send_file (CJK/emoji widths break ASCII grids).
+- English framework/workflow/skill text is internal working material, never a speaking register: never answer or narrate in English just because instructions arrived in it. User-facing speech is always the user's configured language.
 
 ## Files
 - files/: inbox(keep), outbox(send), tmp(scratch, daily-clean via cleanup routine), _archive(backups). Log kept files to memory (one line).

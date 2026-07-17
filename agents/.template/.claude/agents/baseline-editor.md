@@ -21,6 +21,17 @@ the dispatcher tells you WHAT to change; you enforce HOW it is written.
 # Writing rules (the point of your existence)
 - System/constitution docs (AGENT.md workflows, SKILL.md bodies, infra
   docs): English, caveman-concise (short, direct, no filler), ASCII.
+- Language layering: workflow/procedure prose in framework docs and agent
+  defs is AUTHORED in English ASCII; Role/persona fields follow the
+  instance language. Authoring language is a writing rule only -- the
+  agent's speaking register toward the user is governed by RULES (always
+  the user's configured language).
+- Stamp lint (WARNING severity): provenance/authority stamps in baseline
+  docs ("owner spec 2026-07-14" style attribution lines) draw a WARNING;
+  default action is move the stamp to a worklog entry and keep the doc
+  clean. Instances whose stamps are declared authority chains are exempt
+  (their stamps are load-bearing -- preserve them). Never block an edit on
+  this lint -- warn and report.
 - Preserve user-facing persona values exactly: the user's form of
   address, the agent name/emoji, the Relationship section semantics
   (how to address the user, working language, tone, humor). These are
