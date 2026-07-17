@@ -217,15 +217,17 @@ fi
 # written: memories/, *.db, .env, sessions, runtime/, logs/, bridge/venv/,
 # user-authored (non-dogany-) skills, and the identity entrypoints below.
 #
-# IDENTITY GUARD (DGN-130, wording updated DGN-387): AGENT.md and USER.md are
-# instance-owned identity (agent name, Role, accreted Workflows; user facts).
-# Exactly TWO framework-owned files live at the instance root and are refreshed
-# by their own channels -- RULES.md (section 3k, verbatim copy) and AGENT-OPS.md
-# (section 3k2, substituted copy). AGENT.md and USER.md remain the only guarded
-# identity files and are NEVER refresh targets, in any channel. This constant
-# exists so a future edit that tries to fold an entrypoint into a refresh path
-# trips an explicit, greppable guard rather than silently clobbering identity.
-# Do not remove; do not add AGENT.md / USER.md to it.
+# IDENTITY GUARD (DGN-130): AGENT.md and USER.md are instance-owned identity
+# (agent name, Role, accreted Workflows; user facts). They are NEVER a refresh
+# target in any channel. Exactly TWO framework-owned files live at the instance
+# root and ARE refreshed, each by its own channel: RULES.md (section 3k,
+# verbatim) and AGENT-OPS.md (section 3k2, substituted -- DGN-387). AGENT.md and
+# USER.md remain the only guarded identity files: not in the manifest above, not
+# in the RULES/AGENT-OPS channels, not in any section-3 rsync (all of which
+# target named subdirs, not the instance root). This constant exists so a future
+# edit that tries to fold an entrypoint into a refresh path trips an explicit,
+# greppable guard rather than silently clobbering identity. Do not remove; do
+# not add AGENT.md / USER.md to it.
 FRAMEWORK_NEVER_REFRESH=( "AGENT.md" "USER.md" )
 assert_identity_never_refreshed() {
   # RULES.md is deliberately ABSENT here: it is framework-owned and refreshed
@@ -1379,92 +1381,88 @@ if [ -f "$TEMPLATE/RULES.md" ]; then
   UPDATED+=("RULES.md (framework constitution)")
 fi
 
-# 3k2) AGENT-OPS.md -- framework ops reference doc (DGN-387). Framework-owned,
-#     refreshed with the SAME edit-detect + backup contract as RULES.md (3k),
-#     with ONE deliberate difference: AGENT-OPS.md carries the __PROJECT_ROOT__
-#     placeholder, so shas are recorded AND compared POST-substitution (the
-#     skills-channel pattern, section 3i). Verbatim-compare would be wrong
-#     here: a substituted instance copy always differs from the raw template
-#     incoming, so every fresh mint's first self-update would fire a spurious
-#     "user-modified" WARN + backup.
+# 3k2) AGENT-OPS.md -- framework ops reference doc (DGN-387). A framework-owned
+#     file at the instance root, like RULES.md, but with ONE deliberate
+#     difference from 3k: AGENT-OPS.md carries a placeholder (__PROJECT_ROOT__),
+#     so shas are recorded AND compared POST-SUBSTITUTION (the skills-channel
+#     pattern), never verbatim. A substituted instance copy always differs from
+#     the raw template incoming, so a verbatim compare would fire a spurious
+#     "user-modified" WARN + backup on every fresh mint's first self-update.
 #
-#     Manifest note: mint.sh records the installed sha at mint time
-#     (MANDATORY, DGN-387), so the no-manifest-entry branch below is a
-#     LEGACY/repair corner (lost manifest, pre-3k2 hand-drop) -- the same
-#     framing as 3k's pre-DGN-130 branch, NOT the normal fresh-mint path.
+#     Atomicity: DEST-ADJACENT mktemp (settings.json precedent, section 3g) so
+#     the final mv is a same-filesystem rename, genuinely atomic -- $TMPDIR
+#     mktemp forfeits mv atomicity across filesystems (tmpfs /tmp on Linux).
 #
-#     Exact-name single-file cp only -- no rsync, no glob installs, ever, at
-#     the instance root.
+#     Contract: only __PROJECT_ROOT__/__HOME__ may appear (both outside the
+#     IDENTITY_OK gate -> deterministic under IDENTITY_OK=0). Step 0 below
+#     mechanically asserts the template carries no illegal identity token.
 if [ -f "$TEMPLATE/AGENT-OPS.md" ]; then
-  # Template-side placeholder contract assert: AGENT-OPS.md may carry ONLY
-  # __PROJECT_ROOT__ (path token; __HOME__ tolerated -- both substitute
-  # outside the IDENTITY_OK gate). An identity-gated token here would
-  # substitute cleanly under IDENTITY_OK=1 and hide, or survive raw under
-  # IDENTITY_OK=0 -- so it is asserted mechanically, not by comment alone.
-  bad="$(grep -oE '__[A-Z][A-Z_]*__' "$TEMPLATE/AGENT-OPS.md" | grep -vE '^__(PROJECT_ROOT|HOME)__$' | sort -u || true)"
-  if [ -n "$bad" ]; then
-    msg "[update][경고] AGENT-OPS.md 템플릿 플레이스홀더 계약 위반 (허용: __PROJECT_ROOT__/__HOME__): $(printf '%s ' $bad)" \
-        "[update][WARN] AGENT-OPS.md template placeholder contract violation (allowed: __PROJECT_ROOT__/__HOME__): $(printf '%s ' $bad)"
+  # Step 0: template-side placeholder-contract assert. Any dunder token other
+  # than __PROJECT_ROOT__/__HOME__ is a template contract violation -- it would
+  # substitute cleanly under IDENTITY_OK=1 and hide, so surface it loudly.
+  ops_bad="$(grep -oE '__[A-Z][A-Z_]*__' "$TEMPLATE/AGENT-OPS.md" 2>/dev/null \
+              | grep -vE '^__(PROJECT_ROOT|HOME)__$' | sort -u || true)"
+  if [ -n "$ops_bad" ]; then
+    msg "  [update][경고] AGENT-OPS.md 템플릿 규약 위반 -- 허용되지 않은 플레이스홀더:" \
+        "  [update][WARN] AGENT-OPS.md template contract violation -- illegal placeholder(s):"
+    printf '%s\n' "$ops_bad" >&2
   fi
 
-  AGENTOPS_DEST="$INSTANCE/AGENT-OPS.md"
-  # Build the substituted incoming in a DEST-ADJACENT temp (settings.json
-  # precedent): a $TMPDIR mktemp would forfeit mv atomicity across
-  # filesystems (e.g. tmpfs /tmp on Linux targets). cp -p carries the source
-  # mode onto the 0600 mktemp file; -L dereferences if the template ever
-  # symlinks it. subst_one fires only __PROJECT_ROOT__/__HOME__ here -- both
-  # outside the IDENTITY_OK gate -> deterministic result.
-  ao_tmp="$(mktemp "$INSTANCE/AGENT-OPS.md.new.XXXXXX")"
-  cp -pL "$TEMPLATE/AGENT-OPS.md" "$ao_tmp"
-  subst_one "$ao_tmp"
+  OPS_SRC="$TEMPLATE/AGENT-OPS.md"
+  OPS_DEST="$INSTANCE/AGENT-OPS.md"
+  # Step 1: build substituted incoming in a dest-adjacent temp. cp -pL carries
+  # the source mode onto the 0600 mktemp file and dereferences a symlink source.
+  ops_tmp="$(mktemp "$INSTANCE/AGENT-OPS.md.new.XXXXXX")"
+  cp -pL "$OPS_SRC" "$ops_tmp"
+  subst_one "$ops_tmp"  # only __PROJECT_ROOT__/__HOME__ fire -> deterministic
 
-  ao_incoming="$(file_checksum "$ao_tmp")"
-  ao_cur="$(file_checksum "$AGENTOPS_DEST")"
-  ao_recorded="$(framework_manifest_sha 'AGENT-OPS.md')"
-  ao_user_modified=0
-  if [ -f "$AGENTOPS_DEST" ]; then
-    if [ -n "$ao_recorded" ]; then
-      [ "$ao_cur" != "$ao_recorded" ] && ao_user_modified=1
+  # Step 2: gather the three shas (all post-substitution for incoming).
+  ops_incoming_sub="$(file_checksum "$ops_tmp")"
+  ops_cur="$(file_checksum "$OPS_DEST")"
+  ops_recorded="$(framework_manifest_sha 'AGENT-OPS.md')"
+
+  # Step 3: user_modified iff dest exists AND (recorded present AND cur !=
+  #   recorded) OR (no manifest entry AND cur != incoming_sub). Because mint
+  #   records the sha (mint.sh), the no-entry branch is a legacy/repair corner
+  #   (manifest lost, pre-3k2 hand-drop), NOT the normal fresh-mint path.
+  ops_user_modified=0
+  if [ -f "$OPS_DEST" ]; then
+    if [ -n "$ops_recorded" ]; then
+      [ "$ops_cur" != "$ops_recorded" ] && ops_user_modified=1
     else
-      # No manifest entry (legacy/repair corner): treat as modified only if
-      # the instance copy actually differs from the substituted incoming.
-      [ "$ao_cur" != "$ao_incoming" ] && ao_user_modified=1
+      [ "$ops_cur" != "$ops_incoming_sub" ] && ops_user_modified=1
     fi
   fi
 
   if [ "$DRY_RUN" = "1" ]; then
-    if [ "$ao_user_modified" = "1" ]; then
+    # Step 4: report only; write nothing; drop the temp.
+    if [ "$ops_user_modified" = "1" ]; then
       msg "  [dry-run] 사용자 수정 AGENT-OPS.md 백업 예정" \
           "  [dry-run] would back up user-modified AGENT-OPS.md"
     fi
-    if [ "$ao_cur" != "$ao_incoming" ]; then
+    if [ "$ops_cur" != "$ops_incoming_sub" ]; then
       msg "  [dry-run] AGENT-OPS.md 갱신 예정" "  [dry-run] would refresh AGENT-OPS.md"
     else
       msg "  [dry-run] AGENT-OPS.md 최신 (변경 없음)" "  [dry-run] AGENT-OPS.md already current"
     fi
-    # Write nothing in dry-run; drop the comparison temp.
-    rm -f "$ao_tmp"
+    rm -f "$ops_tmp"
   else
-    if [ "$ao_user_modified" = "1" ]; then
+    # Step 5: real run. Back up a user-modified copy (instance-root peer, same
+    #   as RULES), then atomic same-dir rename into place.
+    if [ "$ops_user_modified" = "1" ]; then
       ts="$(date +%Y%m%d-%H%M%S)"
-      bak="$INSTANCE/AGENT-OPS.md.user-$ts"
-      cp -p "$AGENTOPS_DEST" "$bak" || die "failed to back up user-modified AGENT-OPS.md"
-      msg "  [update][경고] 사용자 수정 AGENT-OPS.md 발견 -- 백업: $bak" \
-          "  [update][WARN] user-modified AGENT-OPS.md detected -- backed up to: $bak"
+      ops_bak="$INSTANCE/AGENT-OPS.md.user-$ts"
+      cp -p "$OPS_DEST" "$ops_bak" || die "failed to back up user-modified AGENT-OPS.md"
+      msg "  [update][경고] 사용자 수정 AGENT-OPS.md 발견 -- 백업: $ops_bak" \
+          "  [update][WARN] user-modified AGENT-OPS.md detected -- backed up to: $ops_bak"
     fi
-    # Same-directory rename: genuinely atomic; the live file is never in a
-    # raw-placeholder state on disk. (A crash between mktemp and this mv
-    # leaves an inert AGENT-OPS.md.new.* at the root -- harmless, greppable;
-    # the next successful run does not read it.)
-    mv -f "$ao_tmp" "$AGENTOPS_DEST"
-    # Re-checksum the INSTALLED file and upsert its line into the framework
-    # manifest (filter ^AGENT-OPS.md; foreign lines -- e.g. RULES.md -- are
-    # preserved, so the 3k and 3k2 upserts coexist). Crash between mv and
-    # this upsert -> one spurious WARN next run, then self-heals (RULES
-    # parity, accepted).
-    ao_installed="$(file_checksum "$AGENTOPS_DEST")"
+    mv -f "$ops_tmp" "$OPS_DEST"
+    # Re-checksum the INSTALLED file and upsert AGENT-OPS.md into the framework
+    # manifest (filter its own line only; 3k's rewrite preserves foreign lines,
+    # so the two upserts coexist).
+    ops_installed="$(file_checksum "$OPS_DEST")"
     mkdir -p "$INSTANCE/.claude"
-    fw_tmp="$(mktemp "${FRAMEWORK_MANIFEST}.XXXXXX")"
+    ops_fw_tmp="$(mktemp "${FRAMEWORK_MANIFEST}.XXXXXX")"
     {
       printf '# .dogany-framework.sha -- checksums of framework-owned FILES as installed\n'
       printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
@@ -1472,10 +1470,11 @@ if [ -f "$TEMPLATE/AGENT-OPS.md" ]; then
       if [ -f "$FRAMEWORK_MANIFEST" ]; then
         grep -vE '^#|^AGENT-OPS\.md[[:space:]]' "$FRAMEWORK_MANIFEST" 2>/dev/null || true
       fi
-      printf 'AGENT-OPS.md  %s\n' "$ao_installed"
-    } > "$fw_tmp"
-    mv -f "$fw_tmp" "$FRAMEWORK_MANIFEST"
+      printf 'AGENT-OPS.md  %s\n' "$ops_installed"
+    } > "$ops_fw_tmp"
+    mv -f "$ops_fw_tmp" "$FRAMEWORK_MANIFEST"
   fi
+  # Step 6:
   UPDATED+=("AGENT-OPS.md (framework ops doc)")
 fi
 
@@ -1669,7 +1668,7 @@ if [ "$DRY_RUN" = "0" ]; then
   fi
 
   # Sanity: warn on any surviving placeholders in active code.
-  LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME|AGENT_LANG)__' \
+  LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME)__' \
             --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' \
             --include='*.service' --include='*.timer' \
             "$INSTANCE/bridge" "$INSTANCE/routines" "$INSTANCE/memory-engine" \
@@ -1679,16 +1678,16 @@ if [ "$DRY_RUN" = "0" ]; then
     printf '%s\n' "$LEFT" >&2
   fi
 
-  # Sanity 2 (DGN-387): instance-root markdown (AGENT-OPS.md and peers).
-  # GENERIC dunder pattern on purpose -- the named alternation above missed
-  # the only junk class ever observed live (__AGENT_EMOJI__/__LAUNCHD_LABEL__)
-  # and would miss the next invented token class too. `|| true` capture form:
-  # a bare grep with no match exits 1 and would abort under set -euo pipefail.
-  # WARN-only; lowercase dunders (__init__, markdown emphasis) do not match
-  # the [A-Z] class, so noise risk is nil on the observed corpus.
+  # Sanity (DGN-387): warn on any surviving dunder placeholder in instance-root
+  # markdown. The named alternation above misses the only junk class ever seen
+  # live (__AGENT_EMOJI__/__LAUNCHD_LABEL__) and the instance root is not in its
+  # search set, so use a GENERIC pattern over root *.md. Lowercase dunders
+  # (__init__, markdown emphasis) do not match the [A-Z] class. WARN-only; the
+  # `|| true` capture keeps a no-match (grep exit 1) from aborting under set -e.
   LEFT_MD="$(grep -lE '__[A-Z][A-Z_]*__' "$INSTANCE"/*.md 2>/dev/null || true)"
   if [ -n "$LEFT_MD" ]; then
-    msg "[update][경고] 치환되지 않은 플레이스홀더:" "[update][WARN] unsubstituted placeholders in:"
+    msg "[update][경고] 인스턴스 루트 마크다운에 치환되지 않은 플레이스홀더:" \
+        "[update][WARN] unsubstituted placeholders in instance-root markdown:"
     printf '%s\n' "$LEFT_MD" >&2
   fi
 fi

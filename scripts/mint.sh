@@ -409,42 +409,34 @@ if [ -d "$PROJECT_ROOT/.claude/skills" ]; then
   echo "[mint] wrote $SKILLS_MANIFEST (dogany-* skill checksums)"
 fi
 
-# 3d) write the framework single-file manifest (.dogany-framework.sha) --
-#     MANDATORY (DGN-387). Records the sha of framework-owned instance-root
-#     FILES exactly as installed by this mint:
-#       AGENT-OPS.md  post-substitution sha of the on-disk file (the file
-#                     carries __PROJECT_ROOT__; update.sh's 3k2 channel
-#                     compares POST-substitution shas)
-#       RULES.md      sha of the verbatim-copied constitution
-#     Without these entries EVERY mint starts on update.sh's no-manifest-entry
-#     branch, and any template edit between the mint's framework version and
-#     the instance's first self-update fires a spurious "user-modified" WARN
-#     + stray .user- backup on a pristine instance. Digest and format must
-#     match update.sh (file_checksum = `shasum < file`; "<relpath>  <sha>").
-#     Upsert shape: preserve any foreign lines, rewrite our two.
-file_checksum() {
+# 3d) write the framework FILE checksum manifest (.dogany-framework.sha) so the
+#     very first self-update does NOT fire a spurious "user-modified" WARN +
+#     backup on a pristine instance (DGN-387). Records the sha of the
+#     framework-owned instance-root files AS THEY LAND ON DISK here at mint:
+#       - AGENT-OPS.md : sha of the SUBSTITUTED on-disk file (step 2 already ran
+#                        the whole-tree *.md substitution over it).
+#       - RULES.md     : sha of the verbatim-copied RULES.md.
+#     Same digest as update.sh's file_checksum (shasum < file | awk '{print $1}')
+#     and the same 3-line manifest header, so update.sh's 3k/3k2 upserts append
+#     cleanly. MANDATORY: without it every mint starts on update.sh's no-manifest
+#     branch, so any template edit between mint and first self-update would fire
+#     a false backup on a pristine instance.
+fw_file_checksum() {
   local f="$1"
   [ -f "$f" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
   shasum < "$f" 2>/dev/null | awk '{print $1}'
 }
 FRAMEWORK_MANIFEST="$PROJECT_ROOT/.claude/.dogany-framework.sha"
 mkdir -p "$PROJECT_ROOT/.claude"
-fw_tmp="$(mktemp "${FRAMEWORK_MANIFEST}.XXXXXX")"
 {
   printf '# .dogany-framework.sha -- checksums of framework-owned FILES as installed\n'
   printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
   printf '# framework refresh overwrites them. Format: "<relpath>  <sha>".\n'
-  if [ -f "$FRAMEWORK_MANIFEST" ]; then
-    grep -vE '^#|^AGENT-OPS\.md[[:space:]]|^RULES\.md[[:space:]]' "$FRAMEWORK_MANIFEST" 2>/dev/null || true
-  fi
-  if [ -f "$PROJECT_ROOT/AGENT-OPS.md" ]; then
-    printf 'AGENT-OPS.md  %s\n' "$(file_checksum "$PROJECT_ROOT/AGENT-OPS.md")"
-  fi
-  if [ -f "$PROJECT_ROOT/RULES.md" ]; then
-    printf 'RULES.md  %s\n' "$(file_checksum "$PROJECT_ROOT/RULES.md")"
-  fi
-} > "$fw_tmp"
-mv -f "$fw_tmp" "$FRAMEWORK_MANIFEST"
+  [ -f "$PROJECT_ROOT/AGENT-OPS.md" ] && \
+    printf 'AGENT-OPS.md  %s\n' "$(fw_file_checksum "$PROJECT_ROOT/AGENT-OPS.md")"
+  [ -f "$PROJECT_ROOT/RULES.md" ] && \
+    printf 'RULES.md  %s\n' "$(fw_file_checksum "$PROJECT_ROOT/RULES.md")"
+} > "$FRAMEWORK_MANIFEST"
 echo "[mint] wrote $FRAMEWORK_MANIFEST (framework file checksums)"
 
 # 4) write the project .env via env_render (single generator; the shipped
@@ -566,12 +558,13 @@ Next steps (manual / require approval):
      it -- the bot wakes generic and runs generic onboarding. Record the
      specialist Role text in AGENT.md first, then continue below.
      (v2 mint-agent path owns first-class role seeding; this note covers v1.)
-     CRAFT NOTE: CRAFT activation extends the agent's Role with domain-agent
-     orchestration (specialist agents minted from this same base, coordinated
-     by that agent); a specialist mint rewrites the Role section at creation
+     CRAFT NOTE: CRAFT activation extends the Role with domain-agent
+     orchestration -- specialist agents minted from this same base, coordinated
+     by the main agent; a specialist mint rewrites the Role section at creation
      (e.g. "fitness-domain expert: coach the user from lifekit records and
-     training principles"). Mint-time Role writes route through the
-     baseline-editor subagent per the agent-crafting skill phase steps.
+     training principles"). Role is editable on explicit user request, per RULES
+     edit rights. Route Role writes through the baseline-editor per the
+     agent-crafting phase steps.
   3. (optional) voice:   bridge/venv/bin/pip install faster-whisper
   4. Load launchd:       cp bridge/*.plist routines/*.plist ~/Library/LaunchAgents/
                          then launchctl bootstrap (LIVE op -- get approval first).
