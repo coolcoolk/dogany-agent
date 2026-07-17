@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-07-17
+
+### Fixed
+- `claude-usage.sh` expiry-aware token source selection (DGN-375): file token
+  no longer shadows a valid Keychain token when expired. Both sources now have
+  `expiresAt` checked; file -> Keychain fallthrough on expiry. Fixes 401 on
+  live usage lookup caused by stale file token winning over valid Keychain
+  token. Dev pack copy (`packs/dev/refdev/scripts/claude-usage.sh`) synced
+  with same logic. Exit 1 on live lookup failure (previously exit 0, making
+  gate callers unable to detect failures).
+
 ## [1.7.0] - 2026-07-17
 
 ### Added
