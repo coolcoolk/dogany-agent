@@ -1,0 +1,91 @@
+<!-- DEV-PACK-FRAGMENT -- dev pack development discipline.
+Appended to <root>/AGENT.md by pack_install.sh (idempotent via the marker
+line above). Everything below is prose discipline audited by the owner:
+this pack ships NO hooks and NO linters, so none of these rules are
+machine-enforced. The scripts referenced are the two this pack ships
+(scripts/secret-sweep.sh, scripts/claude-usage.sh) plus files the
+framework template already provides (worklog/_TEMPLATE.md, RULES). The
+secret sweep also reads config/secret-patterns.conf when present (seeded
+outside the pack; read-if-present contract). -->
+
+## Development discipline (dev pack)
+
+### Tickets
+- Every dev/infra task gets a worklog/ ticket AT START: copy
+  worklog/_TEMPLATE.md, assign the next id. Even small fixes count; if you
+  missed opening one, backfill it.
+- Ticket id prefix derives from this agent's slug: extract the letters
+  only (strip digits and hyphens), then take the first 3 extracted letters
+  uppercased; if extraction yields fewer than 3 letters use all of them
+  uppercased (example: slug 'x1y' -> extracted 'xy' -> prefix 'XY').
+  Next id = scan worklog/ for the highest existing ticket number and add 1
+  -- no counter file.
+- States: open > wip > blocked > done. `parked` = idea/design on hold
+  behind an unmet gate (not actionable now, not dead).
+
+### Design grill (adversarial design review)
+- Complex or irreversible designs (architecture / data model / deploy /
+  baseline change) must pass an adversarial grill with a subagent before
+  locking. Stance: "this is wrong, prove it" -- hunt weaknesses, failure
+  scenarios and fatals. Do not stop at constructive validation ("looks
+  fine"): a grill finds weaknesses that verification misses.
+- Paper grill hits diminishing returns once the backbone survives: each
+  fix creates new surface, so each round only catches the previous round's
+  delta. If the backbone survives 2 rounds unbeaten, STOP paper iteration
+  and build -- move verification weight to executable gates (sandbox
+  implementation + test harness), then run ONE final grill against the
+  real code to catch spec-code drift and leftovers.
+- Never stack delta on delta: when a fix round ends, restate the locked
+  spec as one self-contained section; keep the deltas as audit history
+  only.
+- When delegating implementation of a locked spec, instruct explicitly:
+  "no guessing on ambiguity -- implement the spec verbatim and escalate
+  ambiguities as OPEN QUESTIONS". Those questions ARE design verification.
+
+### Spec-first patching
+- Before modifying ANY designed surface, first locate the governing locked
+  spec in worklog/ (grill-locked sections, LOCKED restatements) and
+  implement it verbatim. If no spec exists, say so explicitly and design
+  first. Symptom-level patching without a spec search causes double
+  rework.
+
+### Delegation
+- Even trivial/small fixes get delegated: mechanical one-file edits,
+  config tweaks, cosmetic fixes -> a lightweight subagent plus a simple
+  self-test (the subagent verifies its own change; the main session
+  reviews the result). Main-session hands-on coding is the exception, not
+  the default -- it bloats the live chat and skips testing.
+- Model routing: follow the fixed routing table in RULES first, and always
+  name the model explicitly on dispatch -- leaving it unset means silent
+  inherit, which is forbidden. When a named model is unavailable in this
+  environment, degrade to the closest available model of the equivalent
+  tier (top tier = hard reasoning / grill, mid tier = data-wrangling,
+  light tier = routines).
+- Before heavy or parallel subagent dispatch, check the usage window with
+  the shipped script (/opt/dogany/agents/refdev/scripts/claude-usage.sh).
+  When usage is comfortable, proceed -- reflexive deferral is forbidden.
+  When the script exits nonzero (usage cannot be resolved, e.g. an
+  API-key household without OAuth credentials), SKIP this gate explicitly
+  and say so; never block dispatch on an unresolvable gate.
+
+### Commit checkpoints
+- Commit locally and autonomously at natural checkpoints: ticket -> done,
+  session close, or when the tree crosses a coherent chunk. Group commits
+  by theme/subsystem with traceable messages; do not let the tree
+  accumulate across sessions.
+- Run the shipped secret sweep
+  (/opt/dogany/agents/refdev/scripts/secret-sweep.sh) before ANY push. If
+  it warns that owner identity patterns are not configured, it performed
+  structural scans only -- weigh the result accordingly and get the
+  patterns configured at
+  /opt/dogany/agents/refdev/config/secret-patterns.conf.
+- No remote configured: degrade gracefully -- local commits only; the push
+  clauses stay dormant until a remote exists.
+- Pushes to PUBLIC repos require owner approval; never push a public repo
+  autonomously.
+
+### Specialist boundary
+- This agent is a developer specialist: coding, systems, automation,
+  infrastructure. Life-management domains (diet, workout, appointments,
+  relationships and the like) stay with their own tools and agents -- do
+  not absorb them here.
