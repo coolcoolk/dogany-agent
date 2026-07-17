@@ -474,12 +474,17 @@ fi
 
 # is_preserved RELPATH -> 0 when RELPATH (instance-root-relative) is on the
 # preserve list: exact file match, or under a trailing-slash directory entry.
+# DGN-385: records the matching entry in _ALL_MATCHED_ENTRIES so it is not
+# flagged as invalid by _preserve_check_invalid.
 is_preserved() {
   local rel="$1" e
   for e in ${PRESERVE_ENTRIES[@]+"${PRESERVE_ENTRIES[@]}"}; do
-    [ "$e" = "$rel" ] && return 0
+    if [ "$e" = "$rel" ]; then
+      _ALL_MATCHED_ENTRIES+=("$e")
+      return 0
+    fi
     case "$e" in
-      */) case "$rel" in "$e"*) return 0 ;; esac ;;
+      */) case "$rel" in "$e"*) _ALL_MATCHED_ENTRIES+=("$e"); return 0 ;; esac ;;
     esac
   done
   return 1
@@ -491,17 +496,65 @@ is_preserved() {
 # transfer root, which the section-3 blocks always set to $INSTANCE/PREFIX/.
 # Callers expand it with the bash-3.2-safe empty-array idiom:
 #   ${PEX[@]+"${PEX[@]}"}
+#
+# DGN-385: sets SECTION_HELD=1 (and adds entry to _ALL_MATCHED_ENTRIES) when
+# the preserve list contains the section root itself ("PREFIX/").  Callers
+# must check SECTION_HELD immediately after calling this function and skip the
+# rsync entirely when it is set.  Also records file-level entries that were
+# matched so that invalid (unmatched) entries can be flagged later.
 PEX=()
+SECTION_HELD=0
+_ALL_MATCHED_ENTRIES=()
 build_preserve_excludes() {
   local prefix="$1" e rel
   PEX=()
+  SECTION_HELD=0
   for e in ${PRESERVE_ENTRIES[@]+"${PRESERVE_ENTRIES[@]}"}; do
+    # DGN-385: section-root hold -- entry names the section dir itself.
+    if [ "$e" = "${prefix}/" ]; then
+      SECTION_HELD=1
+      _ALL_MATCHED_ENTRIES+=("$e")
+      continue
+    fi
     case "$e" in
       "$prefix"/?*)
         rel="${e#"$prefix"/}"
         PEX+=(--exclude "/$rel")
+        _ALL_MATCHED_ENTRIES+=("$e")
         ;;
     esac
+  done
+}
+
+# _preserve_mark_single RELPATH -- record a single-file preserve entry as
+# matched (used by is_preserved callers that skip a file via the preserve list,
+# so those entries are not flagged as invalid later).
+_preserve_mark_single() {
+  _ALL_MATCHED_ENTRIES+=("$1")
+}
+
+# _preserve_check_invalid -- warn about any preserve entry that was never
+# matched by build_preserve_excludes or _preserve_mark_single.  An unmatched
+# entry either names a non-existent section or contains a typo, and would
+# silently provide no protection at all (DGN-385).
+# Called once, after all section-3 rsync blocks complete.
+_preserve_check_invalid() {
+  local e matched found
+  for e in ${PRESERVE_ENTRIES[@]+"${PRESERVE_ENTRIES[@]}"}; do
+    found=0
+    for matched in ${_ALL_MATCHED_ENTRIES[@]+"${_ALL_MATCHED_ENTRIES[@]}"}; do
+      [ "$matched" = "$e" ] && { found=1; break; }
+    done
+    if [ "$found" = "0" ]; then
+      printf '%s\n' "============================================================" >&2
+      msg "[update][경고] .dogany-preserve 항목이 어떤 섹션과도 매칭되지 않음 -- 오타?" \
+          "[update][WARN] .dogany-preserve entry matched no section -- typo?" >&2
+      msg "  항목: $e" \
+          "  entry: $e" >&2
+      msg "  이 항목은 아무 파일도 보호하지 않습니다. 경로를 확인하세요." \
+          "  This entry protects no files. Check the path." >&2
+      printf '%s\n' "============================================================" >&2
+    fi
   done
 }
 
@@ -640,11 +693,86 @@ COMMON_EXCLUDES=(
 UPDATED=()
 
 # 3a) bridge code (framework), but keep the built venv and the live .env.
+#
+# DGN-385: two guards run before the rsync, in this order:
+#
+#   (i)  Section-root hold -- if the preserve list contains "bridge/", the
+#        whole rsync is skipped.  N = itemized dry-run count; printed in WARN.
+#
+#   (ii) Pin-based ahead-detection -- if UPSTREAM.md pins are EQUAL yet rsync
+#        shows pending changes, the instance is locally ahead of the vendor:
+#        skip + WARN.  If the pins DIFFER (vendor updated), proceed normally
+#        (file-level preserve excludes are still honored).  Either pin file
+#        absent -> skip detection, current behavior.
+#
+# Guard (i) takes precedence; guard (ii) only runs when (i) did not fire.
 if [ -d "$TEMPLATE/bridge" ]; then
   build_preserve_excludes "bridge"
-  rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
-    "$TEMPLATE/bridge/" "$INSTANCE/bridge/"
-  UPDATED+=("bridge/")
+
+  # --- Guard (i): section-root hold via .dogany-preserve ---
+  if [ "$SECTION_HELD" = "1" ]; then
+    # Count pending changes via an itemized dry-run (COMMON_EXCLUDES applied so
+    # venv/.env noise is excluded from the count, matching what would actually
+    # be overwritten).
+    _bridge_n=0
+    _bridge_n="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
+        "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
+        | grep -c '^[>c<]' || true)"
+    printf '%s\n' "============================================================" >&2
+    msg "[update][경고] HELD by .dogany-preserve: bridge/ (differs from vendor in ${_bridge_n} files)" \
+        "[update][WARN] HELD by .dogany-preserve: bridge/ (differs from vendor in ${_bridge_n} files)" >&2
+    msg "  bridge/ rsync 전체를 건너뜁니다. .dogany-preserve에서 항목을 제거하면 갱신이 재개됩니다." \
+        "  Skipping bridge/ rsync entirely. Remove the entry from .dogany-preserve to resume updates." >&2
+    printf '%s\n' "============================================================" >&2
+    UPDATED+=("bridge/ (HELD -- skipped by .dogany-preserve)")
+
+  # --- Guard (ii): pin-based ahead-detection ---
+  else
+    _bridge_skip=0
+    _inst_upstream="$INSTANCE/bridge/UPSTREAM.md"
+    _tmpl_upstream="$TEMPLATE/bridge/UPSTREAM.md"
+    if [ -f "$_inst_upstream" ] && [ -f "$_tmpl_upstream" ]; then
+      _inst_pin="$(grep -m1 'Pinned commit:' "$_inst_upstream" 2>/dev/null \
+          | sed 's/.*Pinned commit:[[:space:]]*//' | tr -d '[:space:]' || true)"
+      _tmpl_pin="$(grep -m1 'Pinned commit:' "$_tmpl_upstream" 2>/dev/null \
+          | sed 's/.*Pinned commit:[[:space:]]*//' | tr -d '[:space:]' || true)"
+      if [ -n "$_inst_pin" ] && [ -n "$_tmpl_pin" ] && [ "$_inst_pin" = "$_tmpl_pin" ]; then
+        # Pins are EQUAL: check if there are pending rsync changes.
+        # Count only *.py source files -- *.plist files get renamed (not
+        # replaced) by section 4, and *.sh files may carry substituted paths
+        # that differ from the template placeholder values after a normal
+        # install; neither represents a genuine local code patch.  Real bridge
+        # local patches (e.g. DGN-372) always touch .py source files.
+        _bridge_delta=0
+        _bridge_delta="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
+            ${PEX[@]+"${PEX[@]}"} \
+            --include '*/' --include '*.py' --exclude '*' \
+            "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
+            | grep -c '^[>c<]' || true)"
+        if [ "$_bridge_delta" -gt 0 ]; then
+          # Pins equal but rsync shows changes -> instance is locally ahead.
+          _bridge_skip=1
+          printf '%s\n' "============================================================" >&2
+          msg "[update][경고] bridge/ 로컬 선행 감지 (핀 동일, 변경 ${_bridge_delta}개) -- rsync 건너뜀" \
+              "[update][WARN] bridge/ locally ahead (pins equal, ${_bridge_delta} changed file(s)) -- skipping rsync" >&2
+          msg "  인스턴스 브릿지가 벤더보다 앞선 로컬 패치를 포함하고 있습니다." \
+              "  Instance bridge contains local patches ahead of the vendor." >&2
+          msg "  조치: .claude/.dogany-preserve에 파일을 등록하거나 canonical에 패치를 upstream하세요." \
+              "  Action: register files in .claude/.dogany-preserve or upstream the patch." >&2
+          printf '%s\n' "============================================================" >&2
+          UPDATED+=("bridge/ (skipped -- locally ahead of vendor)")
+        fi
+        # Pins equal + no delta: normal run (no action needed).
+      fi
+      # Pins differ: vendor updated -> fall through to normal rsync below.
+    fi
+
+    if [ "$_bridge_skip" = "0" ]; then
+      rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+        "$TEMPLATE/bridge/" "$INSTANCE/bridge/"
+      UPDATED+=("bridge/")
+    fi
+  fi
 fi
 
 # 3e-mirror) mirror/ engine (DGN-268 S3), hoisted at repo root (single home;
@@ -1311,6 +1439,12 @@ elif [ "$DRY_RUN" = "1" ]; then
   msg "  [dry-run] .env 없음 -- 백필 건너뜀 ($ENV_FILE)" \
       "  [dry-run] .env absent -- skipping backfill ($ENV_FILE)"
 fi
+
+# DGN-385: after all section-3 rsync/copy blocks, warn about any preserve
+# entry that was never matched by any build_preserve_excludes call or
+# is_preserved check -- such an entry silently protects nothing (typo / wrong
+# path / removed section).
+_preserve_check_invalid
 
 # ---------------------------------------------------------------------------
 # 4) Re-substitute the five mint placeholders on the refreshed files.
