@@ -5,6 +5,75 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-18
+
+### Added
+- AGENT.md template diet campaign (DGN-387 + DGN-390, combined token diet).
+  Recurring per-instance saving: every future mint starts ~550-620 tok/turn
+  lighter; live estate (Ag + Warg + Smith + Kojeni) net ~1,650-1,850 tok/turn
+  after migration. Two components:
+  - DGN-387: new cold reference doc `AGENT-OPS.md` (ops procedures:
+    self-restart, self-update, subagent dispatch routing, upstream report lane)
+    delivered via a new `update.sh` section 3k2 refresh channel
+    (post-substitution SHA, dest-adjacent atomic mv, identity-gated-token
+    contract assert). Template `AGENT.md` sheds procedural boilerplate blocks
+    (self-restart, self-update, dispatch pointers, framework code boundary,
+    language register guard, CRAFT activation, Paths) in favor of a 3-bullet
+    hot Ops pointer block. `RULES.md` gains +2 lines: framework code boundary
+    with canonical + PoC exemption, and a language register guard.
+    `mint.sh` gains mandatory framework-manifest recording (AGENT-OPS.md +
+    RULES.md SHA at mint, closing cross-version spurious-WARN window).
+    Template `baseline-editor.md` gains stamp-lint and English-ASCII writing
+    mandate. Acceptance suite T1-T5 (including cross-version gate T5) ships
+    at `tests/agentops/`. CRAFT activation note relocated to `mint.sh`
+    Next-steps heredoc.
+  - DGN-390: `routines/session-recap.py` injection budget is now config-driven
+    (`RECAP_PAIRS` / `RECAP_CHAR_CAP` keys in `config/agent.conf`, defaults
+    2 pairs / 500 chars, was hardcoded 4 / 1,000). Worst-case session-start
+    injection reduced from ~8,000 to ~2,000 chars. Silent fallback on
+    missing or garbage config values. Existing instances pick up new defaults
+    on next framework update; no manual migration required.
+
+### Fixed
+- `dogany-skill-creator` step 6 RULES conflict (DGN-391). Step 6 previously
+  instructed agents to write a fact directly to `MEMORY.md`, conflicting with
+  the RULES `memories/` engine-ownership clause. New step 6: leave a one-line
+  session note; nightly consolidate harvests it. Three instances (Kojeni,
+  digear, digear-sh) had already been silently skipping the step via RULES
+  inference on 2026-07-17 -- the skill now matches what agents were correctly
+  doing.
+- `routines/cron-guard.sh`: failure alert now prefers the sibling stderr log
+  (`<name>.stderr.log`) over the stdout log when non-empty, with stdout
+  fallback (DGN-395). Previously the alert attached only stdout, which on
+  real failures contained stale "[push] sent OK" lines with zero diagnostic
+  value.
+- `routines/push.sh`: generation call now retries 3 attempts total with 5s
+  backoff on empty `claude -p` output; emits a clear stderr reason on final
+  failure (DGN-395). Previously a single transient empty response caused an
+  immediate exit 1.
+
+### Notes
+- ERRATUM: the `agents/main/` scaffold diet mentioned in earlier drafts is
+  NOT in this release. `agents/main/` is gitignored (never tracked); the
+  scaffold fix is local-only and out of release scope.
+- Language discipline (DGN-387) is editorial-layer only in this release:
+  the RULES register guard and baseline-editor writing mandate are delivered,
+  but mechanical non-ASCII lint on workflow sections is not yet implemented
+  (follow-up ticket open). Nothing delivered here mechanically blocks a
+  steward from hand-writing non-ASCII workflow prose outside baseline-editor.
+- `estate-doc-watch` R5 coverage (judge rule for Ops pointer + baseline-editor
+  stamp-lint integrity) is model-judged on weekly diff, not preventive.
+- Remote instances (kkari, shawn): after updating, KEEP the `AGENT.md`
+  dispatch-pointers block until your bridge version is confirmed to inject
+  subagent descriptions (A1 gate unverified). Hand-apply the
+  `baseline-editor.md` stamp-lint / writing-mandate delta manually (agent
+  defs ship at mint only, never refreshed by `update.sh`). Migration
+  procedure: run `self-update.sh` first, verify `AGENT-OPS.md` exists and
+  is substituted (no dunder tokens) and `RULES.md` is at the canonical
+  version, THEN delete the fat blocks and install the Ops pointer (backup
+  before editing; the old fat `AGENT.md` and new `AGENT-OPS.md` coexist
+  harmlessly if you defer).
+
 ## [1.9.0] - 2026-07-17
 
 ### Added
