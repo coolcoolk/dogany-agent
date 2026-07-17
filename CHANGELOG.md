@@ -5,6 +5,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-17
+
+### Added
+- Pack machinery migrated to framework repo (DGN-368, spec DGN-366 v3,
+  dec-036/dec-037). `scripts/pack/pack_install.sh` and `scripts/pack/mint_run.sh`
+  pipeline now live in dogany-agent and are consumed by tagged release (instances
+  update via the normal release channel; no live-skill hotfix lever). Instance
+  context passed via explicit `--instance-root <path>` contract; steps that
+  require an instance root log and skip cleanly when it is absent (no silent
+  skip). `--catalog` flag available for override (transition/test lever).
+- Pack install generalized to manifest-driven category install (DGN-368).
+  Each pack declares its own `pack-manifest.json` (categories, required flags,
+  reference slug, AGENT.md marker, agent.conf marker, optional `domain_seed`).
+  Installer preflight and install steps only run for declared categories.
+  Hard-coded requirements removed: `lib/`, `knowledge-snapshot`, `ledger.py`
+  are now optional manifest-declared categories. Payload subdirectory name,
+  reference root, and both idempotent markers (AGENT.md + agent.conf) are
+  fully manifest-parameterized -- no machine absolute paths in the public repo.
+  Step 7b (AGENT.md.add append) now applies `_render_to` slug-substitution.
+  Step 8 (`domain_seed` consult-state seed) is now manifest-declared; dev pack
+  does not declare it, preventing spurious lifekit health rows on dev mints.
+- Health pack back-filled with `pack-manifest.json` (DGN-368 S1). Legacy
+  idempotent markers (`DGN-287-CONSULT-FRAGMENT` / DGN-238 conf marker)
+  declared verbatim -- live Warg re-install remains idempotent.
+- New dev pack `packs/dev/` (DGN-368 S2): generic developer-discipline
+  AGENT.md fragment (`DEV-PACK-FRAGMENT` marker, all prose general-form --
+  no estate-specific proper nouns) covering: ticket discipline (worklog/,
+  slug-derived ID prefix, open>wip>blocked>done+parked), design grill
+  (adversarial stance, 2-round backbone rule, real-code final grill,
+  self-contained restatement after fix round, no-guessing delegation),
+  spec-first patching (lock-spec search -> verbatim implement, else design
+  first), delegation discipline (subagent+self-test default, model always
+  named, usage-window check before heavy dispatch), commit checkpoints
+  (natural-checkpoint autonomous local commit, theme grouping, secret-sweep
+  before push, public push = owner approval), and specialist boundary
+  (lifekit domain excluded). Catalog entry and `packs/catalog.json` updated.
+- Generalized `scripts/pack/refresh-source-sync.sh`: regenerates
+  `packs/dev/.source-sync` baseline (pathless sha256 format, snapshot date
+  header) from the declared source file. Run after a conformance pass to
+  reset the drift baseline.
+- Dev pack scripts: `packs/dev/refdev/scripts/secret-sweep.sh` (estate-path
+  dependencies removed; owner-pattern config file at
+  `config/secret-patterns.conf`; pattern-absent -> structural-scan-only +
+  explicit warning, no placebo pass) and
+  `packs/dev/refdev/scripts/claude-usage.sh` (generalized, no estate paths).
+- Drift gate: `packs/dev/.source-sync` records sha256 baseline for the
+  5 pack-mirrored source sections (Role, Tickets, Design grill, Spec-first
+  patching, Local commit checkpoint). `routines/release-preflight.sh` now
+  checks this baseline and warns on section drift without blocking the script.
+
 ## [1.6.0] - 2026-07-16
 
 ### Added
