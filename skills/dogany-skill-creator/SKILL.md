@@ -76,7 +76,7 @@ generic. Self-obeys (caveman body).
 3. write aux scripts / templates.
 4. real run test (not simulated). check output + delivery.
 5. report only after pass. fix by code, not manual patch.
-6. log new fact (skill created) -> MEMORY.md, w/ date + context.
+6. leave one-line note in session/worklog: "skill created: <name> -- <purpose>". nightly consolidate harvests from conversation context. do NOT hand-write memories/.
 
 ## bounds
 - never restart / stop gateway or main bot from a skill -> ask user.
