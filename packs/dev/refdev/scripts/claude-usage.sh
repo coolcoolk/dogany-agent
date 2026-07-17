@@ -30,49 +30,91 @@ _live_token=""
 _live_err=""
 _access_token=""
 
-# Try to get token from ~/.claude/.credentials.json first
-_creds_file="${HOME}/.claude/.credentials.json"
-if [[ -f "$_creds_file" ]] && [[ -r "$_creds_file" ]]; then
-  _access_token=$(python3 -c "
+# _read_creds_file <path> -> prints accessToken to stdout; exits nonzero if
+# the file is missing, unreadable, the token is absent, or the token is
+# expired (expiresAt in the past). Never echoes the token value in errors.
+_read_creds_file() {
+  local _f="$1"
+  [[ -f "$_f" && -r "$_f" ]] || return 1
+  python3 -c "
 import json, sys
+from datetime import datetime, timezone
 try:
-    with open('$_creds_file', encoding='utf-8') as f:
+    with open(sys.argv[1], encoding='utf-8') as f:
         d = json.load(f)
-    t = d.get('claudeAiOauth', {}).get('accessToken', '')
-    if t:
-        print(t, end='')
-        sys.exit(0)
-    sys.exit(2)
-except Exception:
-    sys.exit(1)
-") || {
-    _access_token=""
-  }
-fi
-
-# If credentials file did not yield a token, fall back to macOS Keychain
-if [[ -z "$_access_token" ]]; then
-  if ! _live_token=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null); then
-    _live_err="no OAuth token source available (~/.claude/.credentials.json and Keychain both empty)"
-  elif [[ -z "$_live_token" ]]; then
-    _live_err="token empty from Keychain"
-  else
-    # Extract accessToken from JSON via python3 (token value never written to file or echoed)
-    _access_token=$(python3 -c "
-import json, sys
-raw = sys.stdin.read()
-try:
-    d = json.loads(raw)
-    t = d.get('claudeAiOauth', {}).get('accessToken', '')
+    oauth = d.get('claudeAiOauth', {})
+    t = oauth.get('accessToken', '')
     if not t:
         sys.exit(2)
+    exp = oauth.get('expiresAt', '')
+    if exp:
+        try:
+            # expiresAt is epoch-milliseconds (integer) or an ISO string
+            if isinstance(exp, (int, float)):
+                exp_dt = datetime.fromtimestamp(exp / 1000.0, tz=timezone.utc)
+            else:
+                exp_dt = datetime.fromisoformat(str(exp).replace('Z', '+00:00'))
+            if exp_dt <= datetime.now(timezone.utc):
+                sys.exit(3)  # expired
+        except Exception:
+            pass  # unparseable expiry: treat as non-expired (best effort)
     print(t, end='')
 except Exception:
     sys.exit(1)
-" <<< "$_live_token") || {
-      _live_err="failed to extract accessToken from Keychain JSON"
-      _access_token=""
-    }
+" "$_f"
+}
+
+# _read_keychain -> prints accessToken to stdout; exits nonzero if the
+# Keychain entry is absent, empty, unparseable, or expired.
+_read_keychain() {
+  local _raw
+  _raw=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null) || return 1
+  [[ -n "$_raw" ]] || return 1
+  python3 -c "
+import json, sys
+from datetime import datetime, timezone
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+    oauth = d.get('claudeAiOauth', {})
+    t = oauth.get('accessToken', '')
+    if not t:
+        sys.exit(2)
+    exp = oauth.get('expiresAt', '')
+    if exp:
+        try:
+            if isinstance(exp, (int, float)):
+                exp_dt = datetime.fromtimestamp(exp / 1000.0, tz=timezone.utc)
+            else:
+                exp_dt = datetime.fromisoformat(str(exp).replace('Z', '+00:00'))
+            if exp_dt <= datetime.now(timezone.utc):
+                sys.exit(3)  # expired
+        except Exception:
+            pass
+    print(t, end='')
+except Exception:
+    sys.exit(1)
+" <<< "$_raw"
+}
+
+# Expiry-aware token selection: try credentials file first; fall through to
+# Keychain if the file token is absent or expired. Both expired -> error.
+_creds_file="${HOME}/.claude/.credentials.json"
+_file_rc=0
+if _access_token=$(_read_creds_file "$_creds_file"); then
+  : # file token is valid -- use it
+else
+  _file_rc=$?
+  # Fall through to Keychain
+  if _access_token=$(_read_keychain); then
+    : # Keychain token is valid -- use it
+  else
+    _kc_rc=$?
+    if [[ $_file_rc -eq 3 && $_kc_rc -eq 3 ]]; then
+      _live_err="Both credentials.json and Keychain tokens are expired"
+    else
+      _live_err="no OAuth token source available (~/.claude/.credentials.json and Keychain both empty)"
+    fi
   fi
 fi
 
