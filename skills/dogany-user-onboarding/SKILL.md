@@ -142,11 +142,11 @@ rules:
 
 ## 3. user profile update (USER.md)
 
-new persistent user profile info learned in conversation, or existing value changed -> update USER.md.
-examples:
-- name, address term, timezone, email, contact
-- job, affiliation, side work, role change
-- habits, preferences, work rules
+new stable profile facts learned in conversation, or existing value changed -> update USER.md.
+USER.md holds stable profile facts ONLY: identity (name, address term, timezone, email, contact), job/affiliation, relationships, domain core constants. one-line facts with date + source.
+NOT for USER.md:
+- procedures, output formats, session mechanics, operating rules -> owning SKILL.md or AGENT.md workflows
+- unconfirmed preferences, one-off records -> engine memories (memories/); recurring cross-skill preference -> promote to AGENT.md workflow (deliberate, after repeated evidence)
 
 USER.md ownership/edit rights per RULES.md. main agent -> update directly. other agents -> read only; pass change facts to main agent (or user).
 
