@@ -69,6 +69,49 @@ def _read_version(path):
         return ""
 
 
+def _version_tuple(v):
+    """Parse a dotted version into a tuple of ints, or None if unparseable.
+
+    Drops any pre-release/build suffix (everything after the first '-' or '+')
+    and reads the leading digits of each dotted chunk. A chunk with no leading
+    digit makes the whole string unparseable (returns None) so the caller can
+    fall back to a conservative comparison.
+    """
+    core = v.strip().split("-")[0].split("+")[0]
+    parts = []
+    for chunk in core.split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if digits == "":
+            return None
+        parts.append(int(digits))
+    return tuple(parts) if parts else None
+
+
+def _is_newer(candidate, current):
+    """True only if `candidate` is a strictly newer version than `current`.
+
+    Numeric dotted comparison (semver-style, zero-padded to equal length). The
+    update nudge must fire ONLY when the other side is genuinely ahead -- a
+    plain `!=` false-alarms when the local build is newer than a lagging public
+    repo (the DGN-349 defect). Falls back to plain inequality only when either
+    string cannot be parsed numerically, so exotic version schemes still nudge
+    rather than silently regressing.
+    """
+    ct = _version_tuple(candidate)
+    cur = _version_tuple(current)
+    if ct is None or cur is None:
+        return candidate != current
+    n = max(len(ct), len(cur))
+    ct = ct + (0,) * (n - len(ct))
+    cur = cur + (0,) * (n - len(cur))
+    return ct > cur
+
+
 def _fetch_remote_version(url, timeout):
     """Fetch the remote VERSION string. Returns empty string on any error.
 
@@ -168,7 +211,7 @@ def main():
     # --- 1) Local check ---
     if repo_root:
         repo_version = _read_version(os.path.join(repo_root, "VERSION"))
-        if repo_version and repo_version != "unknown" and repo_version != built_version:
+        if repo_version and repo_version != "unknown" and _is_newer(repo_version, built_version):
             _emit_note(built_version, repo_version,
                        "the local source repo at " + repo_root)
             sys.exit(0)
@@ -191,7 +234,7 @@ def main():
 
     if (remote_version
             and remote_version != "unknown"
-            and remote_version != built_version):
+            and _is_newer(remote_version, built_version)):
         _emit_note(built_version, remote_version,
                    "the upstream dogany-agent public repo")
         sys.exit(0)
