@@ -5,6 +5,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-07-17
+
+### Added
+- Morning-brief: config-gated diet/workout recap and weather image card (DGN-383).
+  `BRIEF_DIET_RECAP` (default `on`) suppresses the yesterday recap block on
+  instances where the diet domain has been transferred to another agent (prevents
+  false zero lines). `BRIEF_WEATHER_CARD` (default `off`) enables a rendered
+  weather+air-quality+quote PNG card sent as a photo after the text brief; the
+  text weather block is suppressed when the card generates successfully. Card
+  failures are fail-open: the text weather path is used and the brief is never
+  aborted. `morning_brief_card.py` (Open-Meteo, render-venv convention) ships in
+  the template. Both gates are documented as comments-only in the template
+  `agent.conf`; instance values stay per-instance.
+- Relationship-care skill (`service/lifekit/bundle.conf` entry) (DGN-383).
+  `database/relmod`: meet-based alert-pick field, upcoming-appointment exclusion
+  in contact-gap alerts, snooze/unsnooze support via additive migration.
+  Selftest 27/27 (TC-25/26/27 new). Skill behavior 3 rewritten with context-snooze
+  (3b) and persona tokens standardized to `user`. Ships DORMANT in the lifekit
+  skills-bundle, activated post-mint by `dogany-lifekit-setup`. i18n keys added
+  (ko/en).
+- Install UX: recommended clone location is now `~/.dogany/framework` (DGN-384).
+  Quick-install one-liner, Windows/WSL2 paths, `install.sh` and `update.sh`
+  guidance updated across README en/ko, `windows/setup-windows.ps1`. Old clone
+  locations (e.g. `~/dogany-agent`) keep working with no migration required
+  (resolver is config-based via `.instance.conf` `DOGANY_REPO_ROOT`).
+
+### Changed
+- USER.md content boundary enforced in framework baseline (DGN-382, dec-049).
+  `rules/RULES.md` Memory routing rule expanded: USER.md holds stable profile
+  facts only (identity, job, timezone, relationships, domain core constants).
+  Procedures, output formats, session mechanics, and operating rules are
+  explicitly excluded and redirected to AGENT.md workflows or the owning
+  SKILL.md. Unconfirmed preferences and one-off records route to engine memories.
+  Subagent USER.md write prohibition made explicit. Promotion path added:
+  recurring cross-skill preferences may be promoted to AGENT.md workflows after
+  repeated evidence -- never on first observation. Template USER.md scaffold
+  comment, `rules/USER.example.md`, and `dogany-user-onboarding` skill section 3
+  updated to match.
+
 ## [1.7.1] - 2026-07-17
 
 ### Fixed
