@@ -1,0 +1,2 @@
+# fake stub token in DGN-395 push-retry test (heredoc, "fake:token123" -- not a real secret)
+agents/.template/routines/tests/test-push-retry.sh
