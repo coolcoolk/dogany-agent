@@ -1,0 +1,11 @@
+{
+  "name": "dev",
+  "reference_slug": "refdev",
+  "reference_root": "/opt/dogany/agents/refdev",
+  "agent_md_marker": "DEV-PACK-FRAGMENT",
+  "agent_conf_marker": "# DEV-PACK-CONF-FRAGMENT appended",
+  "categories": [
+    {"category": "agent_md_fragment", "required": true},
+    {"category": "scripts", "required": true}
+  ]
+}

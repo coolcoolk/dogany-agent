@@ -27,6 +27,27 @@
       "package_dir": "health-trainer",
       "domains": ["health", "헬스", "운동", "식단", "다이어트", "트레이닝"],
       "status": "official"
+    },
+    {
+      "id": "dev",
+      "name_ko": "Dogany 개발 에이전트",
+      "tagline_ko": "코딩·시스템·자동화·인프라를 전담하는 개발 스페셜리스트",
+      "role_prose_ko": "개발 스페셜리스트 -- 코딩/시스템/자동화/인프라 (developer specialist)",
+      "includes_ko": [
+        "티켓 규율 (worklog 기반, 슬러그 파생 ID)",
+        "설계 그릴 워크플로 (adversarial review)",
+        "스펙 우선 패칭 + 위임 규율",
+        "커밋 체크포인트 + 시크릿 스윕/사용량 확인 스크립트"
+      ],
+      "emoji_hints": ["⚙️", "🛠️"],
+      "tone_presets_ko": [
+        "군더더기 없는 엔지니어형",
+        "친절하게 설명하는 페어 프로그래머형",
+        "직설적인 코드 리뷰어형"
+      ],
+      "package_dir": "dev",
+      "domains": ["dev", "개발", "코딩", "인프라", "자동화"],
+      "status": "official"
     }
   ]
 }
