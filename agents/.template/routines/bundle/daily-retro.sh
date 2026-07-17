@@ -5,11 +5,19 @@
 #     (1) today's diet aggregate + calorie balance (agg-day / targets)
 #     (2) today's workouts
 #   warg mode (RETRO_HEALTH_SOURCE=warg):
-#     (1)(2) replaced by Warg report.section.retro verbatim quote (DGN-319 pattern)
+#     live read: call Warg's lifekit.sh agg-day synchronously (DGN-396).
+#       on success: render structured diet/workout/balance from live values.
+#       on failure: fall back to Warg's inbox report.section.retro verbatim
+#         + annotate with snapshot generation time ("HH:MM 기준").
+#     section absent or stale: "워그 건강 리포트 미도착" one-liner.
 #   always:
 #     (3) today's appointments (ask how they went)
 #     (4) tomorrow's appointments (next-day preview)
 #     (5) today's completed tasks + overdue backlog (omitted when both empty)
+#
+# Config keys (warg mode):
+#   WARG_LIFEKIT_SH: absolute path to Warg's lifekit.sh (owner-side query script).
+#     Required for live read. If unset/missing, falls back to snapshot immediately.
 #
 # Usage: daily-retro.sh [--dry]   (--dry = print data + prompt, no send)
 # Exit:  0 ok / 1 config error
@@ -44,27 +52,87 @@ TZ_OFFSET_H="$(grep -E '^AGENT_TZ_OFFSET_HOURS=' "$AGENT_DIR/config/agent.conf" 
 TZ_OFFSET_H="${TZ_OFFSET_H:-0}"
 
 # ---- health source gate (config-driven, DEFAULT local) ----
-# RETRO_HEALTH_SOURCE=warg: skip local diet/workout/calorie computation and
-# instead quote Warg's report.section.retro verbatim (DGN-319/DGN-389 pattern).
-# Unset/empty -> local (all instances without an explicit warg opt-in are unchanged).
+# RETRO_HEALTH_SOURCE=warg: attempt live read via Warg's lifekit.sh (DGN-396);
+# fall back to inbox section on any failure. Unset/empty -> local (no change).
 RETRO_HEALTH_SOURCE="$(grep -E '^RETRO_HEALTH_SOURCE=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true)"
 RETRO_HEALTH_SOURCE="${RETRO_HEALTH_SOURCE:-local}"
 
 # ---- (1)(2) health data: local or Warg section ----
 WARG_HEALTH_SECTION=""
+WARG_SNAPSHOT_TIME=""   # local HH:MM of snapshot creation (for fallback annotation)
+WARG_LIVE_OK=0          # 1 = live read succeeded; 0 = using snapshot fallback
 DIET_CNT=0; DIET_KCAL=0; DIET_PROT=0
 WO_CNT=0; WO_KCAL=0; WO_MIN=0
 MEALS="(none)"; WO_TYPES=""; BALANCE_LINE=""
 
 if [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
-  # Read Warg's report.section.retro from Ag inbox.
-  # Staleness guard: frontmatter created field must parse to TODAY (local tz).
-  # Glob both TODAY_COMPACT and YDAY_COMPACT prefixes (Warg may submit just before midnight).
-  AG_INBOX="$AGENT_DIR/files/handoff/inbox"
-  TODAY_COMPACT="$(date +%Y%m%d)"
-  YDAY_COMPACT="$(date -v-1d +%Y%m%d 2>/dev/null || date -d '-1 day' +%Y%m%d)"
-  _read_section_body() {
-    python3 -c "
+  # --- Step 1: attempt live read via Warg's official query path (DGN-396) ---
+  # WARG_LIFEKIT_SH must point to ~/.dogany/agents/Warg/database/lifekit.sh
+  # (or equivalent). Never query Warg's sqlite directly from Ag code.
+  WARG_LIFEKIT_SH="$(grep -E '^WARG_LIFEKIT_SH=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true)"
+
+  if [[ -n "$WARG_LIFEKIT_SH" && ( -x "$WARG_LIFEKIT_SH" || -f "$WARG_LIFEKIT_SH" ) ]]; then
+    # Bounded timeout: 15 seconds. Background process + kill pattern (macOS portable;
+    # no coreutils timeout required). Sentinel line carries exit code out of subshell.
+    _WARG_TMP="/tmp/_warg_retro_agg_$$.txt"
+    (
+      "$WARG_LIFEKIT_SH" agg-day "$TODAY" 2>/dev/null
+      printf '__exit__:%s\n' "$?"
+    ) > "$_WARG_TMP" 2>/dev/null &
+    _warg_pid=$!
+    _elapsed=0
+    while kill -0 "$_warg_pid" 2>/dev/null && [[ "$_elapsed" -lt 15 ]]; do
+      sleep 1; _elapsed=$(( _elapsed + 1 ))
+    done
+    if kill -0 "$_warg_pid" 2>/dev/null; then
+      # Timed out: kill and treat as failure.
+      kill "$_warg_pid" 2>/dev/null; wait "$_warg_pid" 2>/dev/null || true
+      _warg_exit=1; _warg_agg=""
+    else
+      wait "$_warg_pid" 2>/dev/null || true
+      _warg_exit_line="$(grep '^__exit__:' "$_WARG_TMP" 2>/dev/null | tail -1 || true)"
+      _warg_exit="${_warg_exit_line#__exit__:}"; _warg_exit="${_warg_exit:-1}"
+      _warg_agg="$(grep -v '^__exit__:' "$_WARG_TMP" 2>/dev/null || true)"
+    fi
+    rm -f "$_WARG_TMP"
+
+    # Validate: exit 0, non-empty, contains intake_kcal key.
+    if [[ "$_warg_exit" == "0" && -n "$_warg_agg" ]] && printf '%s\n' "$_warg_agg" | grep -q '^intake_kcal='; then
+      WARG_LIVE_OK=1
+      # Extract aggregates from live read.
+      wag() { printf '%s\n' "$_warg_agg" | grep "^$1=" | head -1 | cut -d= -f2-; }
+      DIET_CNT="$(wag meal_cnt)";     DIET_CNT="${DIET_CNT:-0}"
+      DIET_KCAL="$(wag intake_kcal)"; DIET_KCAL="${DIET_KCAL:-0}"
+      DIET_PROT="$(wag protein_g)";   DIET_PROT="${DIET_PROT:-0}"
+      WO_CNT="$(wag workout_cnt)";    WO_CNT="${WO_CNT:-0}"
+      WO_KCAL="$(wag burn_kcal)";     WO_KCAL="${WO_KCAL:-0}"
+      WO_MIN="$(wag workout_min)";    WO_MIN="${WO_MIN:-0}"
+
+      MEALS="$("$WARG_LIFEKIT_SH" meal-find "$TODAY" 2>/dev/null | cut -f2 | paste -sd ', ' - || true)"
+      [[ -z "$MEALS" ]] && MEALS="(none)"
+      WO_TYPES="$("$WARG_LIFEKIT_SH" workout-find "$TODAY" 2>/dev/null | cut -f2 | sort -u | grep -v '^$' | paste -sd ', ' - || true)"
+
+      # Calorie targets (deficit model; empty config -> zeros).
+      TARGETS="$("$WARG_LIFEKIT_SH" targets --burn "${WO_KCAL:-0}" 2>/dev/null || true)"
+      read -r EFF_GOAL _BMR _NEAT _DEFICIT GOAL_PROT <<< "$TARGETS" || true
+      EFF_GOAL="${EFF_GOAL:-0}"; GOAL_PROT="${GOAL_PROT:-0}"
+      EFF_GOAL="${EFF_GOAL%.*}"; GOAL_PROT="${GOAL_PROT%.*}"
+      if [[ "$EFF_GOAL" != "0" ]]; then
+        DIFF=$(( DIET_KCAL - EFF_GOAL ))
+        SIGN="+"; [[ $DIFF -lt 0 ]] && SIGN=""
+        BALANCE_LINE="recommended intake ${EFF_GOAL} kcal vs actual ${DIET_KCAL} = ${SIGN}${DIFF} kcal (protein goal ${GOAL_PROT} g vs actual ${DIET_PROT} g)"
+      fi
+    fi
+    # else: live read failed; fall through to snapshot below.
+  fi
+
+  # --- Step 2: if live read failed, fall back to inbox snapshot ---
+  if [[ "$WARG_LIVE_OK" -eq 0 ]]; then
+    AG_INBOX="$AGENT_DIR/files/handoff/inbox"
+    TODAY_COMPACT="$(date +%Y%m%d)"
+    YDAY_COMPACT="$(date -v-1d +%Y%m%d 2>/dev/null || date -d '-1 day' +%Y%m%d)"
+    _read_section_body() {
+      python3 -c "
 import sys
 txt = open(sys.argv[1]).read()
 lines = txt.split('\n')
@@ -78,13 +146,13 @@ for i, l in enumerate(lines):
         body.append(l)
 print('\n'.join(body).strip())
 " "$1" 2>/dev/null || true
-  }
-  if [[ -d "$AG_INBOX" ]]; then
-    for _prefix in "$TODAY_COMPACT" "$YDAY_COMPACT"; do
-      for _f in "$AG_INBOX"/"${_prefix}"-report.section.retro-*.md; do
-        [[ -f "$_f" ]] || continue
-        _created_utc="$(grep '^created:' "$_f" 2>/dev/null | head -1 | awk '{print $2}')"
-        _created_day="$(python3 -c "
+    }
+    if [[ -d "$AG_INBOX" ]]; then
+      for _prefix in "$TODAY_COMPACT" "$YDAY_COMPACT"; do
+        for _f in "$AG_INBOX"/"${_prefix}"-report.section.retro-*.md; do
+          [[ -f "$_f" ]] || continue
+          _created_utc="$(grep '^created:' "$_f" 2>/dev/null | head -1 | awk '{print $2}')"
+          _created_day="$(python3 -c "
 import sys, datetime
 s = sys.argv[1]; off = int('$TZ_OFFSET_H')
 try:
@@ -95,15 +163,28 @@ try:
 except Exception:
     print('')
 " "$_created_utc" 2>/dev/null || true)"
-        if [[ "$_created_day" == "$TODAY" ]]; then
-          WARG_HEALTH_SECTION="$(_read_section_body "$_f")"
-          break 2
-        fi
+          if [[ "$_created_day" == "$TODAY" ]]; then
+            WARG_HEALTH_SECTION="$(_read_section_body "$_f")"
+            # Extract local HH:MM of snapshot for fallback annotation ("HH:MM 기준").
+            WARG_SNAPSHOT_TIME="$(python3 -c "
+import sys, datetime
+s = sys.argv[1]; off = int('$TZ_OFFSET_H')
+try:
+    dt = datetime.datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
+    local_tz = datetime.timezone(datetime.timedelta(hours=off))
+    local_dt = dt.astimezone(local_tz)
+    print(local_dt.strftime('%H:%M'))
+except Exception:
+    print('')
+" "$_created_utc" 2>/dev/null || true)"
+            break 2
+          fi
+        done
       done
-    done
+    fi
+    # Fallback: section absent or stale -> one-liner (no time annotation needed).
+    [[ -z "$WARG_HEALTH_SECTION" ]] && WARG_HEALTH_SECTION="워그 건강 리포트 미도착"
   fi
-  # Fallback: section absent or stale -> one-liner
-  [[ -z "$WARG_HEALTH_SECTION" ]] && WARG_HEALTH_SECTION="워그 건강 리포트 미도착"
 
 else
   # local mode: full diet/workout/calorie computation (unchanged behavior)
@@ -171,7 +252,26 @@ fi
 # ---- data block ----
 DATA="[today ${TODAY}]"$'\n\n'
 
-if [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
+if [[ "$RETRO_HEALTH_SOURCE" == "warg" && "$WARG_LIVE_OK" -eq 1 ]]; then
+  # Live read succeeded: render structured diet/workout/balance from Warg's live data.
+  DATA+="# diet (${DIET_CNT} meals) [source: warg live]"$'\n'
+  if [[ "$DIET_CNT" -gt 0 ]]; then
+    DATA+="intake ${DIET_KCAL} kcal, protein ${DIET_PROT} g"$'\n'
+    DATA+="meals: ${MEALS}"$'\n'
+  else
+    DATA+="(no meals logged today)"$'\n'
+  fi
+  DATA+=$'\n'"# workouts [source: warg live]"$'\n'
+  if [[ "$WO_CNT" -gt 0 ]]; then
+    DATA+="${WO_TYPES:-workout} ${WO_MIN} min, burned ${WO_KCAL} kcal"$'\n'
+  else
+    DATA+="(no workouts logged today)"$'\n'
+  fi
+  if [[ -n "$BALANCE_LINE" ]]; then
+    DATA+=$'\n'"# calorie balance"$'\n'"${BALANCE_LINE}"$'\n'
+  fi
+elif [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
+  # Fallback to snapshot section.
   DATA+="# warg health section"$'\n'"${WARG_HEALTH_SECTION}"$'\n'
 else
   DATA+="# diet (${DIET_CNT} meals)"$'\n'
@@ -211,7 +311,8 @@ fi
 
 # ---- notes / prompt instructions ----
 NOTES=""
-if [[ "$RETRO_HEALTH_SOURCE" != "warg" ]]; then
+if [[ "$RETRO_HEALTH_SOURCE" != "warg" || "$WARG_LIVE_OK" -eq 1 ]]; then
+  # In local mode or warg-live mode: check for missing logs and nudge.
   [[ "$DIET_CNT" -eq 0 ]] && NOTES+="NOTE: no meals logged; gently ask whether logging was missed. "
   [[ "$WO_CNT" -eq 0 ]] && NOTES+="NOTE: no workouts logged; lightly ask if today was a rest day. "
 fi
@@ -229,13 +330,18 @@ if [[ "$APPT_CNT" -gt 0 && -n "$CONTENT_KEYWORDS_RAW" ]]; then
   fi
 fi
 
-# Warg section render instruction (warg mode only).
+# Warg section render instruction (warg mode only, snapshot fallback path).
 WARG_HEALTH_NOTE=""
-if [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
+if [[ "$RETRO_HEALTH_SOURCE" == "warg" && "$WARG_LIVE_OK" -eq 0 ]]; then
   if [[ "$WARG_HEALTH_SECTION" == "워그 건강 리포트 미도착" ]]; then
     WARG_HEALTH_NOTE="The warg health section reports '워그 건강 리포트 미도착' -- output that exact one-liner for the health section without elaboration."
   else
-    WARG_HEALTH_NOTE="A Warg health section is included in the data below under '# warg health section'. Render it VERBATIM as the health block of the retro -- do NOT rewrite, summarize, or add local diet/calorie numbers. This is the authoritative health source."
+    # Snapshot fallback: annotate with generation time if available.
+    if [[ -n "$WARG_SNAPSHOT_TIME" ]]; then
+      WARG_HEALTH_NOTE="A Warg health section is included in the data below under '# warg health section'. Render it VERBATIM as the health block of the retro -- do NOT rewrite, summarize, or add local diet/calorie numbers. This is a snapshot; append the note '(${WARG_SNAPSHOT_TIME} 기준)' on its own line at the end of the health block."
+    else
+      WARG_HEALTH_NOTE="A Warg health section is included in the data below under '# warg health section'. Render it VERBATIM as the health block of the retro -- do NOT rewrite, summarize, or add local diet/calorie numbers. This is the authoritative health source."
+    fi
   fi
 fi
 
@@ -246,7 +352,12 @@ if [[ "$TASK_DONE_CNT" -gt 0 || "$TASK_OVERDUE_CNT" -gt 0 ]]; then
 fi
 
 HEALTH_STRUCT=""
-if [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
+if [[ "$RETRO_HEALTH_SOURCE" == "warg" && "$WARG_LIVE_OK" -eq 1 ]]; then
+  # Live Warg data: structured like local mode (LLM formats from raw numbers).
+  HEALTH_STRUCT="- diet: intake/protein and meal list (or note nothing was logged) -- data is from Warg's live health tracker
+- workouts: type/minutes/burned kcal (or note nothing was logged) -- data is from Warg's live health tracker
+- calorie balance line ONLY if present in the data"
+elif [[ "$RETRO_HEALTH_SOURCE" == "warg" ]]; then
   HEALTH_STRUCT="- warg health section: render verbatim from the '# warg health section' data"
 else
   HEALTH_STRUCT="- diet: intake/protein and meal list (or note nothing was logged)
@@ -276,6 +387,7 @@ ${DATA}"
 
 if [[ "$DRY" -eq 1 ]]; then
   echo "---- RETRO_HEALTH_SOURCE ----"; echo "${RETRO_HEALTH_SOURCE}"
+  echo "---- WARG_LIVE_OK ----"; echo "${WARG_LIVE_OK}"
   echo "---- DATA ----"; echo "$DATA"
   echo "---- PROMPT chars ----"; echo "${#PROMPT}"
   exit 0
