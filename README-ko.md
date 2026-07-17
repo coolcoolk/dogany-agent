@@ -151,11 +151,13 @@ AUTO 갈래(위 도식의 `memories/` 박스)를 확대하면: 두 가지 스케
 
 1. 레포를 받아 설치 마법사를 실행합니다.
 
-       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent && cd ~/dogany-agent && bash install.sh
+       git clone https://github.com/coolcoolk/dogany-agent ~/.dogany/framework && cd ~/.dogany/framework && bash install.sh
 
-   위처럼 홈 폴더 바로 아래에 받으세요. macOS에서 문서/데스크탑/
-   다운로드 폴더에 받으면 백그라운드 서비스가 읽지 못해 설치기가
-   거부합니다.
+   위처럼 홈 폴더의 `~/.dogany/` 하위에 받으세요(민트된 에이전트도 같은
+   위치에 모입니다). macOS에서 문서/데스크탑/다운로드 폴더에 받으면
+   백그라운드 서비스가 읽지 못해 설치기가 거부합니다. 기존에 다른
+   위치(예: `~/dogany-agent`)에 받아 쓰고 있다면 이동 없이 그대로
+   사용할 수 있습니다.
 
 2. 마법사가 언어·타임존·봇 토큰(BotFather에서 발급)·소유자 확인을
    차례로 안내하고, 자립형 에이전트 하나를 민트합니다(기본값
@@ -233,7 +235,7 @@ LSA 시크릿으로 저장하는 Sysinternals Autologon). 절충점을 이해하
 
 2. 에이전트 코드 + Claude Code 받기 (Ubuntu 창 안에서):
 
-       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
+       git clone https://github.com/coolcoolk/dogany-agent ~/.dogany/framework
 
    그런 다음 위 리눅스 설치와 동일하게 Claude Code를 설치하고 로그인(`claude`)
    하세요. 로그인 시 브라우저가 열리지 않으면, 출력된 URL을 Windows 브라우저에
@@ -241,7 +243,7 @@ LSA 시크릿으로 저장하는 Sysinternals Autologon). 절충점을 이해하
 
 3. Windows 쪽 설정. PowerShell(일반 사용자 -- 관리자 아님)에서:
 
-       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1
+       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\.dogany\framework\windows\setup-windows.ps1
 
    이는 클론된 코드에 함께 들어 있는 설정 스크립트를 실행합니다(URL에서
    다운로드하는 것이 아닙니다). 터미널을 열어두지 않아도 에이전트가 살아 있도록
@@ -250,7 +252,7 @@ LSA 시크릿으로 저장하는 Sysinternals Autologon). 절충점을 이해하
 
 4. 에이전트 설치 (Ubuntu 다시 열기):
 
-       cd ~/dogany-agent && bash install.sh
+       cd ~/.dogany/framework && bash install.sh
 
    표준 마법사가 처음부터 끝까지 한 번에 실행됩니다. 3단계를 건너뛴 경우,
    설치기는 어떤 질문도 하기 전에 5초 안에 멈추고 정확한 3단계 명령을 출력합니다.
@@ -300,7 +302,7 @@ WSL에는 메모리 상한이 부여됩니다(`[wsl2] memory=`, 기본값
 Windows 쪽 keep-alive와 설정을 제거하려면(배포판과 에이전트 데이터는 그대로
 둡니다), PowerShell에서:
 
-    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1 -Uninstall
+    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\.dogany\framework\windows\setup-windows.ps1 -Uninstall
 
 이는 예약 작업을 해제하고, `.wslconfig`에서 Dogany 키를 제거하며(먼저 백업),
 리눅스 쪽 설정 마커를 지웁니다. 데이터를 파괴하는 `wsl --unregister <distro>`

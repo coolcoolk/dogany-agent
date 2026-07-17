@@ -319,7 +319,7 @@ function Invoke-Setup {
         Write-Info "Voice note: this memory cap keeps the whisper auto-recommendation at 'small'. On a 16GB+ host you may re-run with -MemoryGB to raise the cap and unlock the medium voice model."
     }
     Write-Host ''
-    Write-Info "Next: reopen Ubuntu and run:  cd ~/dogany-agent && bash install.sh"
+    Write-Info "Next: reopen Ubuntu and run:  cd ~/.dogany/framework && bash install.sh"
 }
 
 function Invoke-Uninstall {

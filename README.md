@@ -174,11 +174,13 @@ Nothing assumes a fixed parent tree.
 
 1. Clone the repo and run the wizard:
 
-       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent && cd ~/dogany-agent && bash install.sh
+       git clone https://github.com/coolcoolk/dogany-agent ~/.dogany/framework && cd ~/.dogany/framework && bash install.sh
 
-   Clone under your home folder as shown. On macOS, do NOT clone into
-   Documents/Desktop/Downloads -- background services cannot read those
-   folders (the installer refuses such paths).
+   Clone under your home folder as shown (the hidden `~/.dogany/` directory
+   keeps the framework alongside your minted agents). On macOS, do NOT clone
+   into Documents/Desktop/Downloads -- background services cannot read those
+   folders (the installer refuses such paths). Existing clones at any other
+   location (e.g. `~/dogany-agent`) keep working without any migration.
 
 2. The wizard walks you through language, timezone, bot token (from
    BotFather) + owner id, then mints a single self-contained agent (default
@@ -274,7 +276,7 @@ Requirements: Windows 11 (we rely on `vmIdleTimeout`, a Windows 11 setting),
 
 2. Get the agent code + Claude Code (inside the Ubuntu window):
 
-       git clone https://github.com/coolcoolk/dogany-agent ~/dogany-agent
+       git clone https://github.com/coolcoolk/dogany-agent ~/.dogany/framework
 
    Then install Claude Code and log in (`claude`), same as the Linux setup
    above. If a browser does not open for login, copy the printed URL into your
@@ -282,7 +284,7 @@ Requirements: Windows 11 (we rely on `vmIdleTimeout`, a Windows 11 setting),
 
 3. Windows-side setup. In PowerShell (normal user -- NOT administrator):
 
-       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1
+       powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\.dogany\framework\windows\setup-windows.ps1
 
    This runs the setup script that came with the cloned code (nothing is
    downloaded from a URL). It keeps the agent alive with no terminal open,
@@ -291,7 +293,7 @@ Requirements: Windows 11 (we rely on `vmIdleTimeout`, a Windows 11 setting),
 
 4. Install the agent (reopen Ubuntu):
 
-       cd ~/dogany-agent && bash install.sh
+       cd ~/.dogany/framework && bash install.sh
 
    The standard wizard runs once, start to finish. If step 3 was skipped, the
    installer stops in under five seconds -- before any question -- and prints
@@ -343,7 +345,7 @@ installer can recommend the medium voice model.
 To remove the Windows-side keep-alive and setup (the distro and agent data are
 left intact), in PowerShell:
 
-    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1 -Uninstall
+    powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\.dogany\framework\windows\setup-windows.ps1 -Uninstall
 
 That unregisters the scheduled task, removes the Dogany keys from `.wslconfig`
 (backing it up first), and removes the Linux-side setup marker. It PRINTS, but

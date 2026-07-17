@@ -642,7 +642,7 @@ is_wsl() {
 wsl_preflight() {
   is_wsl || return 0
 
-  local ps1='powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\dogany-agent\windows\setup-windows.ps1'
+  local ps1='powershell.exe -ExecutionPolicy Bypass -File \\wsl.localhost\Ubuntu\home\<your-linux-username>\.dogany\framework\windows\setup-windows.ps1'
   local pid1 marker_ver
   pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
 
