@@ -199,6 +199,28 @@ AGENT_MARKER="$(_mf_field agent_md_marker)"
 CONF_MARKER="$(_mf_field agent_conf_marker)"
 DOMAIN_SEED_DECL="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(1 if d.get('domain_seed') else 0)" "$MANIFEST")"
 
+# Validate every declared category name against the known whitelist (M3).
+# An unknown name is a manifest error -- FATAL at preflight with a clear message.
+KNOWN_CATEGORIES="lib routines plists prompts agent_conf_fragment triggers db_migrations skills agent_md_fragment scripts knowledge_snapshot"
+
+_cat_validate_out="$(python3 - "$MANIFEST" "$KNOWN_CATEGORIES" <<'PYEOF'
+import json, sys
+known = set(sys.argv[2].split())
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+for c in d.get("categories", []):
+    name = c["category"]
+    if name not in known:
+        # Print a sentinel line; exit 0 so set -e does not swallow the message.
+        print("UNKNOWN_CATEGORY: manifest category %r is not in the known category whitelist: %s" % (
+            name, sys.argv[1]))
+        sys.exit(0)
+PYEOF
+)"
+if [[ "$_cat_validate_out" == UNKNOWN_CATEGORY:* ]]; then
+  _fail "${_cat_validate_out#UNKNOWN_CATEGORY: }"
+fi
+
 # categories as "name<TAB>required(0/1)" lines
 CATEGORY_LINES="$(python3 - "$MANIFEST" <<'PYEOF'
 import json, sys

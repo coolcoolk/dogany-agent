@@ -3,17 +3,28 @@
 # conformance pass.
 #
 # Run this after reviewing the dev pack AGENT.md.add against the source
-# sections in Metal AGENT.md and confirming the pack fragment still reflects
-# the intent correctly.  The new snapshot replaces the old one so
+# sections in the source AGENT.md and confirming the pack fragment still
+# reflects the intent correctly.  The new snapshot replaces the old one so
 # release-preflight resets its drift baseline to NOW.
 #
+# The section list is NOT hardcoded in this script (section headings are
+# private per-instance data).  On a refresh run the headings are read from
+# the existing .source-sync file.  To add or change tracked sections, pass
+# a sections file (one heading per line) via --sections-file.
+#
 # Usage:
-#   refresh-source-sync.sh [--source-file <path>]
+#   refresh-source-sync.sh [--source-file <path>] [--sections-file <path>]
 #
 #   --source-file <path>
-#       Override the Metal AGENT.md path (default: the path already recorded
-#       in the existing .source-sync, or ~/dogany/Metal/AGENT.md if the file
-#       does not yet exist).
+#       Path to the source AGENT.md to hash.  Defaults to the
+#       DEV_PACK_SOURCE_FILE env var when set, otherwise falls back to
+#       ~/dogany/Metal/AGENT.md (the conventional Metal location).
+#       Machine-specific; never stored in this repo.
+#
+#   --sections-file <path>
+#       Plain-text file listing section headings to track, one per line.
+#       When absent, headings are read from the existing .source-sync file
+#       (round-trip refresh: update hashes only, preserve the section list).
 
 set -euo pipefail
 
@@ -21,20 +32,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SYNC_FILE="$REPO_ROOT/packs/dev/.source-sync"
 
-# Determine source file
-SOURCE_FILE=""
-if [[ $# -ge 2 && "$1" == "--source-file" ]]; then
-    SOURCE_FILE="$2"
-fi
-if [[ -z "$SOURCE_FILE" && -f "$SYNC_FILE" ]]; then
-    # Read first source_file from existing .source-sync
-    SOURCE_FILE="$(grep -v '^#' "$SYNC_FILE" | awk -F'\t' '{print $2; exit}')"
-fi
+# Determine source file: CLI flag > env var > existing .source-sync recorded
+# path (legacy fallback, pre-pathless format) > conventional default.
+SOURCE_FILE="${DEV_PACK_SOURCE_FILE:-}"
+SECTIONS_FILE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source-file)   SOURCE_FILE="$2"; shift 2 ;;
+    --sections-file) SECTIONS_FILE="$2"; shift 2 ;;
+    *) echo "[refresh-source-sync] unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Fall back to conventional Metal location when no source file supplied
 SOURCE_FILE="${SOURCE_FILE:-$HOME/dogany/Metal/AGENT.md}"
 
 if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "[refresh-source-sync] ERROR: source file not found: $SOURCE_FILE" >&2
-    echo "  Pass --source-file <path> to override." >&2
+    echo "  Pass --source-file <path> or set DEV_PACK_SOURCE_FILE." >&2
     exit 1
 fi
 
@@ -44,20 +60,54 @@ echo "[refresh-source-sync] source: $SOURCE_FILE"
 echo "[refresh-source-sync] output: $SYNC_FILE"
 echo "[refresh-source-sync] date:   $TODAY"
 
-python3 - "$SOURCE_FILE" "$SYNC_FILE" "$TODAY" <<'PYEOF'
-import sys, hashlib, textwrap
+python3 - "$SOURCE_FILE" "$SYNC_FILE" "$TODAY" "${SECTIONS_FILE:-}" <<'PYEOF'
+import sys, hashlib, os
 
-source_file, sync_file, today = sys.argv[1], sys.argv[2], sys.argv[3]
+source_file, sync_file, today, sections_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
-SECTIONS = [
-    ("## Role", 2),
-    ("### Tickets", 3),
-    ("### Design grill (adversarial design review) -- 형님 지시 2026-07-01", 3),
-    ("### Spec-first patching -- 형님 승인 2026-07-14", 3),
-    ("### Local commit checkpoint -- 형님 지시 2026-07-07, 2026-07-08", 3),
-]
+# Determine the section list:
+#   1. --sections-file supplied -> read headings from it (one per line)
+#   2. existing .source-sync -> read headings from current data rows
+#   3. neither -> empty list (write header-only file with a warning)
+def heading_level(h):
+    return len(h) - len(h.lstrip("#"))
 
-def extract_section(content, heading, level):
+headings = []
+if sections_file and os.path.isfile(sections_file):
+    # Sections file: one Markdown heading per line (lines starting with #).
+    # Blank lines are skipped; no comment syntax (headings themselves start
+    # with # so a comment prefix would collide).
+    with open(sections_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.strip():
+                headings.append(line)
+    print(f"  sections-file: {len(headings)} headings from {sections_file}")
+elif os.path.isfile(sync_file):
+    # Round-trip refresh: read headings from existing .source-sync data rows.
+    # Supports both old format (<hash>\t<source_file>\t<heading>) and new
+    # pathless format (<hash>\t<heading>\t<snapshot_date>) by detecting which
+    # field looks like a heading (starts with #).
+    with open(sync_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            # New format: parts[1] is the heading (starts with #)
+            # Old format: parts[2] is the heading (parts[1] is a file path)
+            if parts[1].startswith("#"):
+                headings.append(parts[1])
+            elif len(parts) >= 3 and parts[2].startswith("#"):
+                headings.append(parts[2])
+    print(f"  round-trip refresh: {len(headings)} headings from existing .source-sync")
+else:
+    print("  WARN: no --sections-file and no existing .source-sync -- writing empty baseline", file=sys.stderr)
+
+def extract_section(content, heading):
+    level = heading_level(heading)
     lines = content.split("\n")
     start = None
     for i, line in enumerate(lines):
@@ -69,7 +119,7 @@ def extract_section(content, heading, level):
     end = len(lines)
     for i in range(start + 1, len(lines)):
         if lines[i].startswith("#"):
-            hcount = len(lines[i]) - len(lines[i].lstrip("#"))
+            hcount = heading_level(lines[i])
             if hcount <= level:
                 end = i
                 break
@@ -80,21 +130,20 @@ def extract_section(content, heading, level):
 
 content = open(source_file, encoding="utf-8").read()
 rows = []
-for heading, level in SECTIONS:
-    text = extract_section(content, heading, level)
+for heading in headings:
+    text = extract_section(content, heading)
     if text is None:
         print(f"  WARN: section not found: {heading!r}", file=sys.stderr)
         continue
     normalized = "\n".join(line.rstrip() for line in text.split("\n"))
     h = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-    rows.append((h, source_file, heading))
+    rows.append((h, heading, today))
     print(f"  hashed: {h[:16]}...  {heading}")
 
 header = f"""\
 # dev pack source conformance baseline
 # Generated by: scripts/pack/refresh-source-sync.sh
 # Snapshot date: {today}
-# Source file: {source_file}
 #
 # Each entry records the sha256 of one pack-mirrored section (heading text
 # to the next same-or-higher-level heading, trailing blank lines stripped,
@@ -104,15 +153,19 @@ header = f"""\
 # has changed since this snapshot. If the source file is absent (other
 # machines), the check is skipped with an explicit note.
 #
-# Format:  <sha256hex>  <source_file>  <section_heading>
-# Fields are tab-separated. Do not hand-edit; regenerate via:
+# Format:  <sha256hex>  <section_heading>  <snapshot_date>
+# Fields are tab-separated. The source file path is NOT stored here (it is
+# machine-specific private data); the caller supplies it via the
+# DEV_PACK_SOURCE_FILE env var or the --source-file flag.
+# Do not hand-edit; regenerate via:
 #   scripts/pack/refresh-source-sync.sh
+#   (pass --source-file <path> or set DEV_PACK_SOURCE_FILE)
 """
 
 with open(sync_file, "w", encoding="utf-8") as fh:
     fh.write(header + "\n")
-    for h, sf, heading in rows:
-        fh.write(f"{h}\t{sf}\t{heading}\n")
+    for h, heading, snap_date in rows:
+        fh.write(f"{h}\t{heading}\t{snap_date}\n")
 
 print(f"  wrote {len(rows)} entries -> {sync_file}")
 PYEOF

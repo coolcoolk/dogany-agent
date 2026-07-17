@@ -2,9 +2,11 @@
 Appended to <root>/AGENT.md by pack_install.sh (idempotent via the marker
 line above). Everything below is prose discipline audited by the owner:
 this pack ships NO hooks and NO linters, so none of these rules are
-machine-enforced. The only tools referenced are the two scripts this pack
-ships (scripts/secret-sweep.sh, scripts/claude-usage.sh) and files the
-framework template already provides (worklog/_TEMPLATE.md, RULES). -->
+machine-enforced. The scripts referenced are the two this pack ships
+(scripts/secret-sweep.sh, scripts/claude-usage.sh) plus files the
+framework template already provides (worklog/_TEMPLATE.md, RULES). The
+secret sweep also reads config/secret-patterns.conf when present (seeded
+outside the pack; read-if-present contract). -->
 
 ## Development discipline (dev pack)
 
@@ -13,9 +15,11 @@ framework template already provides (worklog/_TEMPLATE.md, RULES). -->
   worklog/_TEMPLATE.md, assign the next id. Even small fixes count; if you
   missed opening one, backfill it.
 - Ticket id prefix derives from this agent's slug: extract the letters
-  only, take the first 3 and uppercase them; a slug with fewer than 3
-  letters uses the whole slug uppercased. Next id = scan worklog/ for the
-  highest existing ticket number and add 1 -- no counter file.
+  only (strip digits and hyphens), then take the first 3 extracted letters
+  uppercased; if extraction yields fewer than 3 letters use all of them
+  uppercased (example: slug 'x1y' -> extracted 'xy' -> prefix 'XY').
+  Next id = scan worklog/ for the highest existing ticket number and add 1
+  -- no counter file.
 - States: open > wip > blocked > done. `parked` = idea/design on hold
   behind an unmet gate (not actionable now, not dead).
 
