@@ -9,6 +9,37 @@ description: Meta-skill. Make new skills THIS system's way. Triggers: user says 
 Stop drift. Read before ANY skill / cron / routine. THIS system's rules, not
 generic. Self-obeys (caveman body).
 
+## authoring routing gate (read FIRST)
+
+Before authoring ANY skill, classify it, then route.
+
+Classes:
+- (a) framework skill -- generic, product canonical, dogany-* namespace. ships
+  with the framework.
+- (b) common skill -- shared across this estate's agents, NOT product material.
+- (c) personal/local skill -- this instance only.
+
+Route by class:
+
+estate WITH a framework-integration agent (e.g. dev agent):
+  framework skill  -> route via dev agent (canonical edit + release + propagation).
+  common skill     -> MAIN agent authors. sub/domain agents request main agent
+                      instead of authoring themselves. distribution = mechanical
+                      copy/install, not re-authoring.
+  personal/local   -> author yourself in your own instance.
+
+estate WITHOUT a framework-integration agent (normal product user):
+  framework skill  -> NEVER destroy or hand-edit the shipped skill. options:
+                      OVERLAY (author a separate skill that layers desired behavior
+                      on top), or disable framework skill from loading and author
+                      a separate replacement. (first-class disable mechanism not
+                      shipped yet; overlay is the safe path until then.)
+  common skill     -> MAIN agent authors (same as above).
+  personal/local   -> author yourself.
+
+Hard rule: non-framework skills (common or personal) must NEVER be pushed into
+the product canonical repo. framework canonical carries framework skills only.
+
 ## when
 - user says: make a skill.
 - same procedure done 2+ times -> skillify.
