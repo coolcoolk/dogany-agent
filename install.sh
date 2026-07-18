@@ -481,6 +481,122 @@ submit_flip_gate() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# E2-2 / G2-5 timing discipline: the domain's section-generation cron must
+# fire BEFORE the main's briefing publishes ("생성 -> 취합"; spec E2-2 last
+# bullet + E3 first paragraph + G2-5 step 5). "선행"은 주장한다고 성립하지
+# 않으니 main-추가 플로우가 시각 검증까지 한다 (E2-2). This is the real
+# implementation replacing the rehearsal OQ stub.
+# ---------------------------------------------------------------------------
+
+# plist_slot_minutes <routines_dir> <slot> -- return the fire time (minutes
+# since midnight) of the plist that owns <slot> for that root, or empty if no
+# plist / no StartCalendarInterval. Label priority per slot: the lifekit bundle
+# unit first (morning-brief / daily-retro), then the generic-brief unit. The
+# main may publish via either edition; the domain always via generic-brief.
+# Reader is plutil-first with a grep fallback so it works headless.
+plist_slot_minutes() {
+  local dir="$1" slot="$2"
+  local -a cands=()
+  case "$slot" in
+    morning) cands=(morning-brief generic-brief-morning) ;;
+    retro)   cands=(daily-retro generic-brief-retro) ;;
+    weekly)  cands=(generic-brief-weekly) ;;
+    *) return 0 ;;
+  esac
+  local f label hh mm
+  for label in "${cands[@]}"; do
+    for f in "$dir"/*."$label".plist "$dir"/*"$label".plist; do
+      [ -f "$f" ] || continue
+      hh=""; mm=""
+      if command -v plutil >/dev/null 2>&1; then
+        hh="$(plutil -extract StartCalendarInterval.Hour raw -o - "$f" 2>/dev/null || true)"
+        mm="$(plutil -extract StartCalendarInterval.Minute raw -o - "$f" 2>/dev/null || true)"
+      fi
+      if [ -z "$hh" ] || [ -z "$mm" ]; then
+        # grep fallback: Hour/Minute are the integers following their <key> lines
+        hh="$(grep -A1 '<key>Hour</key>' "$f" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+        mm="$(grep -A1 '<key>Minute</key>' "$f" 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+      fi
+      [ -n "$hh" ] && [ -n "$mm" ] || continue
+      printf '%d' "$(( (10#$hh) * 60 + (10#$mm) ))"
+      return 0
+    done
+  done
+  return 0
+}
+
+# verify_section_before_publish <domain_root> <main_root> -- for each daily
+# slot, confirm the domain section-generation fire time strictly precedes the
+# main publish time; if not, adjust the DOMAIN slot earlier (spec: "도메인 섹션
+# 생성 시각이 메인 브리핑 발행 시각보다 늦으면 ... G2 스텝 5의 시각 검증이
+# 조정한다"). Adjust = shift the domain plist to (main - LEAD).
+#
+# OPEN QUESTION (spec-silent): the spec mandates the CHECK and that violation
+# triggers adjustment, but does NOT fix the lead margin. Smallest-safe resolve:
+# a single named lead margin GEN_LEAD_MIN, defaulting to the live precedent
+# gap (04:15 gen -> 05:00 aggregate = 45 min; E2-2/DGN-238). Overridable via
+# DOGANY_GEN_LEAD_MIN. No silent guess: the value is a named constant, logged
+# on every adjustment, and escalated as an OQ in the report.
+GEN_LEAD_MIN_DEFAULT=45
+verify_section_before_publish() {
+  local domain_root="$1" main_root="$2"
+  local lead="${DOGANY_GEN_LEAD_MIN:-$GEN_LEAD_MIN_DEFAULT}"
+  local slot dmin mmin
+  for slot in morning retro weekly; do
+    mmin="$(plist_slot_minutes "$main_root/routines" "$slot")"
+    dmin="$(plist_slot_minutes "$domain_root/routines" "$slot")"
+    # No comparable pair -> nothing to verify for this slot (loud, not silent).
+    if [ -z "$mmin" ] || [ -z "$dmin" ]; then
+      msg "  [타이밍] $slot: 비교 가능한 시각 쌍 없음 -- 검증 건너뜀" \
+          "  [timing] $slot: no comparable time pair -- verification skipped"
+      continue
+    fi
+    if [ "$dmin" -lt "$mmin" ]; then
+      msg "  [타이밍] $slot: 도메인 생성이 메인 발행보다 선행 (OK)" \
+          "  [timing] $slot: domain generation precedes main publish (OK)"
+      continue
+    fi
+    # Violation: domain generation is at/after main publish -> adjust earlier.
+    local target=$(( mmin - lead ))
+    [ "$target" -lt 0 ] && target=0
+    local nh=$(( target / 60 )) nm=$(( target % 60 ))
+    if adjust_domain_slot_time "$domain_root/routines" "$slot" "$nh" "$nm"; then
+      msg "  [타이밍] $slot: 도메인 생성 시각이 메인 발행보다 늦어 조정 -> $(printf '%02d:%02d' "$nh" "$nm") (선행 마진 ${lead}분)" \
+          "  [timing] $slot: domain generation not before main publish -- adjusted -> $(printf '%02d:%02d' "$nh" "$nm") (lead ${lead}m)"
+    else
+      msg "  [타이밍] $slot: 조정 대상 plist 미발견 -- 수동 조정 필요" \
+          "  [timing] $slot: no domain plist to adjust -- manual adjustment needed" >&2
+    fi
+  done
+}
+
+# adjust_domain_slot_time <routines_dir> <slot> <hh> <mm> -- rewrite the domain
+# generic-brief plist's StartCalendarInterval Hour/Minute in place. plutil-first
+# with a sed fallback. Returns non-zero if no matching plist exists.
+adjust_domain_slot_time() {
+  local dir="$1" slot="$2" hh="$3" mm="$4"
+  local label f
+  case "$slot" in
+    morning) label=generic-brief-morning ;;
+    retro)   label=generic-brief-retro ;;
+    weekly)  label=generic-brief-weekly ;;
+    *) return 1 ;;
+  esac
+  for f in "$dir"/*"$label".plist; do
+    [ -f "$f" ] || continue
+    if command -v plutil >/dev/null 2>&1 \
+       && plutil -replace StartCalendarInterval.Hour -integer "$hh" "$f" 2>/dev/null \
+       && plutil -replace StartCalendarInterval.Minute -integer "$mm" "$f" 2>/dev/null; then
+      return 0
+    fi
+    # sed fallback: rewrite the integer line right after each <key>
+    perl -0pi -e "s#(<key>Hour</key>\s*<integer>)\d+#\${1}$hh#; s#(<key>Minute</key>\s*<integer>)\d+#\${1}$mm#" "$f" 2>/dev/null && return 0
+    return 1
+  done
+  return 1
+}
+
 # peer_display_name <peer_root> -- E2-2/P27 one-shot resolution at
 # registration time: DOGANY_AGENT_LABEL -> DOGANY_AGENT_NAME -> slug.
 peer_display_name() {
@@ -618,12 +734,11 @@ flow_main_add_finalize() {
     schedule_deferred_briefs "$main_root"
   fi
   if submit_flip_gate "$main_root"; then
-    # timing discipline (G2-5): domain section cron must precede the main
-    # publish time. OPEN QUESTION (rehearsal): the spec mandates the check
-    # but not the comparison source pair (which units) nor the adjustment
-    # policy -- logged as a loud note here, no auto-adjust implemented.
-    msg "  [주의] 섹션 생성/발행 시각 검증은 리허설 미구현 (OPEN QUESTION)" \
-        "  [note] section/publish timing verification not implemented in rehearsal (OPEN QUESTION)"
+    # timing discipline (G2-5 step 5 / E2-2 / E3): the domain section-generation
+    # cron must strictly precede the main publish time. Verify and, on
+    # inversion, adjust the domain slot earlier BEFORE the routing keys flip --
+    # so submit mode never lands with a generation-after-aggregation ordering.
+    verify_section_before_publish "$domain_root" "$main_root"
     conf_upsert "$domain_root/config/agent.conf" HANDOFF_PEER_MAIN "$main_root"
     conf_upsert "$domain_root/config/agent.conf" BRIEF_ROUTING "submit"
     msg "도메인 -> submit 라우팅 전환 완료 (게이트 통과)" \

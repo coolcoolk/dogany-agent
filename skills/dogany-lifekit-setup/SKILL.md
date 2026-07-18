@@ -56,7 +56,19 @@ comes from the `lifekit.offer` key in the same file.
      (skip if link already exists). skill off: remove that symlink ONLY (never
      touch `.claude/skills-bundle/<id>` -- real data lives there).
    - routine on:  `bash routines/lib/routine-ctl.sh enable <id> routines/bundle/<id>.sh <HH:MM>`
+     then BRIEF-SLOT SWAP (C2/P22): if this routine owns a briefing slot,
+     UNSCHEDULE the same-slot generic-brief so the two do not both fire at the
+     same clock. Map: `morning-brief` -> morning, `daily-retro` -> retro.
+     `bash routines/lib/brief-slot-ctl.sh disable <slot>`.
    - routine off: `bash routines/lib/routine-ctl.sh disable <id>`
+     then BRIEF-SLOT SWAP (C2/P22): if this routine owned a briefing slot,
+     RESTORE that slot's generic-brief so the briefing does not go dark.
+     `bash routines/lib/brief-slot-ctl.sh enable <slot>` (same map as above).
+   - The swap is launchd-load-layer ONLY -- never delete the generic-brief
+     plist file (it stays dormant on disk; C2: 파일 배치는 불변). Routines
+     with no briefing slot (diet-log etc. are skills, not routines) skip the
+     swap. `weekly` has no lifekit counterpart -> generic-brief-weekly is never
+     swapped by lifekit. Idempotent: re-running converges.
 4. record each choice in lifekit.conf (`BUNDLE_<ID>=on|off`, `-` -> `_`,
    uppercase). when at least one item is on -> `LIFEKIT=on`; user declined
    everything -> `LIFEKIT=off`.
@@ -69,12 +81,20 @@ comes from the `lifekit.offer` key in the same file.
 
 ## procedure: deactivate ("turn lifekit off")
 1. confirm once (one line). 2. remove all bundle skill symlinks, routine-ctl
-   disable all bundle routines. 3. set all BUNDLE_*=off, LIFEKIT=off.
+   disable all bundle routines, and for each disabled slot-owning routine
+   RESTORE its generic-brief slot (`brief-slot-ctl.sh enable morning|retro`)
+   so briefings do not go dark (C2/P22). 3. set all BUNDLE_*=off, LIFEKIT=off.
    NEVER delete lifekit.db or skills-bundle/ contents -- data survives off.
 
 ## procedure: reconcile (conf hand-edited or drift suspected)
 for each bundle.conf item: desired = lifekit.conf value, actual = symlink
 exists / routine-ctl status. desired != actual -> apply desired. report diff.
+BRIEF-SLOT INVARIANT (C2/P22): a slot-owning lifekit routine and its same-slot
+generic-brief must be mutually exclusive at the load layer. After reconciling a
+slot-owning routine, sync the swap: routine ON -> `brief-slot-ctl.sh disable
+<slot>`; routine OFF -> `brief-slot-ctl.sh enable <slot>` (morning-brief=morning,
+daily-retro=retro). Detect and repair any state where both are loaded (double
+utterance) or neither is (briefing gap).
 
 ## Connect Google (calendar + tasks + email)
 

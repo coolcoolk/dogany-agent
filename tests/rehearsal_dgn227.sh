@@ -1361,8 +1361,236 @@ assert "14i: daily-retro.sh parameterizes the health-peer name (config-driven)" 
   grep -q 'RETRO_HEALTH_PEER_NAME' "$SANDBOX/agents/.template/routines/bundle/daily-retro.sh"
 
 # ===========================================================================
+# R15: DGN-421 mode transition -- the standalone->submit flip end-to-end,
+#      co-verified against the DGN-420 briefing runtime (no double / dropped
+#      utterance across the transition), the E3 two-stage gate half-pass
+#      invariant, the G2-5 section-before-publish timing verify+adjust, the
+#      C2/P22 lifekit post-mint slot swap, and the MINOR-7 gate-seam residual.
+#      SAFETY: synthetic fake HOME (mktemp), generic-brief driven with a sink
+#      (no push.sh / no live channel), no launchd bootstrap (capture seams),
+#      no ~/.dogany or live-agent data touched.
+# ===========================================================================
+CURRENT=R15
+hr; say "R15: DGN-421 (transition flip / 420 coupling / E3 half-gate / G2-5 timing / C2 swap / seam)"
+
+H15="$(mktemp -d)"
+GB="$SANDBOX/agents/.template/routines/generic-brief.sh"
+AGG_SRC="$SANDBOX/agents/.template/routines/lib/handoff-aggregate"
+R15_DOM="$H15/.dogany/agents/zephyr"
+R15_MAIN="$H15/.dogany/main"
+
+# run a brief slot for a REAL minted-style root, transport captured to a sink
+r15_brief() { # r15_brief <root> <slot> <sink>
+  ( DOGANY_BRIEF_SINK="$3" bash "$1/routines/generic-brief.sh" "$2" ) >/dev/null 2>&1
+}
+
+# --- 15a. mint a standalone domain via the real install branch; it UTTERS ----
+run_flow "$H15" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=zephyr
+  DOGANY_ROLE_PROSE="세무 신고를 곁에서 챙기는 도우미"
+  step_agent_class
+  [ "$INSTALL_ROOT" = "'"$R15_DOM"'" ] || { echo "domain root not derived: $INSTALL_ROOT"; exit 10; }
+  check_lite_single_agent "'"$R15_DOM"'" || { echo refused; exit 11; }
+  mint_stub "'"$R15_DOM"'" zephyr
+  dgn227_postmint "'"$R15_DOM"'"
+  write_lite_marker "'"$R15_DOM"'"
+' || bad "R15a domain mint flow non-zero (see $H15/flow.log)"
+
+# ensure the generic-brief runtime + aggregation lib are present on the domain
+cp "$GB" "$R15_DOM/routines/generic-brief.sh"
+mkdir -p "$R15_DOM/routines/lib"
+cp "$AGG_SRC" "$R15_DOM/routines/lib/handoff-aggregate"
+
+assert "15a: fresh domain routing is standalone (no BRIEF_ROUTING=submit)" \
+  bash -c "! grep -q '^BRIEF_ROUTING=submit' '$R15_DOM/config/agent.conf'"
+SINK_PRE="$H15/pre_morning.sink"
+r15_brief "$R15_DOM" morning "$SINK_PRE" || bad "R15a pre-transition brief non-zero"
+assert "15a: standalone domain UTTERS its own briefing (420 runtime)" \
+  grep -q '^UTTER slot=morning routing=standalone' "$SINK_PRE"
+assert "15a: standalone domain writes NO submit file pre-transition" \
+  bash -c "! grep -q '^SUBMIT ' '$SINK_PRE'"
+
+# --- 15b. add a main later; E3 gate PASSES -> flip to submit ------------------
+mint_stub "$R15_MAIN" "solaris"
+# make it a real main (class=main) so the main-add class guard passes
+printf 'DOGANY_AGENT_CLASS=main\n' >> "$R15_MAIN/.instance.conf"
+# aggregation edition present (stage-2 gate): handoff-aggregate lib + a briefing
+# script that consumes it -- the mint stub already copies generic-brief.sh which
+# calls handoff-aggregate, and lib/ is copied. Confirm before driving the flow.
+assert "15b(pre): main carries the aggregation edition (lib + consumer script)" \
+  bash -c "[ -e '$R15_MAIN/routines/lib/handoff-aggregate' ] && grep -q handoff-aggregate '$R15_MAIN/routines/generic-brief.sh'"
+
+run_flow "$H15" '
+  export DOGANY_GATE_LOADED_OVERRIDE=1
+  MAIN_ADD_FLOW=1
+  EXISTING_DOMAIN_ROOT="$(cd "'"$R15_DOM"'" && pwd -P)"
+  flow_main_add_finalize "'"$R15_MAIN"'"
+' || bad "R15b gated flip flow non-zero (see $H15/flow.log)"
+
+assert "15b: E3 gate PASS => domain flips to submit" \
+  grep -qx "BRIEF_ROUTING=submit" "$R15_DOM/config/agent.conf"
+assert "15b: HANDOFF_PEER_MAIN recorded on the domain (briefing axis)" \
+  grep -qx "HANDOFF_PEER_MAIN=$R15_MAIN" "$R15_DOM/config/agent.conf"
+assert "15b: flip did NOT leak into the migration key family (no MIGRATION_PEER)" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$R15_DOM/config/agent.conf'"
+
+# --- 15c. DGN-420 COUPLING: same domain now SUBMITS (no double / dropped) -----
+mkdir -p "$R15_MAIN/files/handoff"
+SINK_POST="$H15/post_morning.sink"
+r15_brief "$R15_DOM" morning "$SINK_POST" || bad "R15c post-transition brief non-zero"
+assert "15c/COUPLING: post-flip the SAME domain SUBMITS a section (not UTTER)" \
+  bash -c "grep -q '^SUBMIT slot=morning routing=submit' '$SINK_POST' && ! grep -q '^UTTER ' '$SINK_POST'"
+assert "15c/COUPLING: exactly ONE briefing action this run (no double-utterance)" \
+  bash -c "[ \"\$(grep -cE '^(UTTER|SUBMIT) ' '$SINK_POST')\" = 1 ]"
+assert "15c/COUPLING: section landed in the main peer inbox (briefing not dropped)" \
+  bash -c "ls '$R15_MAIN/files/handoff/'*'report.section.morning-'*'.md' >/dev/null 2>&1"
+# transition invariant: exactly one utterance BEFORE, exactly one submit AFTER,
+# and the mode actually changed between the two runs (no missing, no double).
+assert "15c/COUPLING: pre=UTTER, post=SUBMIT -- mode changed, briefing preserved both sides" \
+  bash -c "grep -q '^UTTER ' '$SINK_PRE' && grep -q '^SUBMIT ' '$SINK_POST' && ! grep -q '^SUBMIT ' '$SINK_PRE' && ! grep -q '^UTTER ' '$SINK_POST'"
+
+# --- 15d. E3 two-stage gate: HALF pass leaves mode UNCHANGED (loud, not silent) ---
+# stage-1 loaded but stage-2 (aggregation edition) BROKEN -> flip must be refused.
+# Fresh HOME so the main-max-1 registry invariant does not collide with 15b.
+H15D="$(mktemp -d)"
+R15_DOM2="$H15D/.dogany/agents/orbit"
+run_flow "$H15D" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=orbit
+  DOGANY_ROLE_PROSE="x"
+  step_agent_class
+  mint_stub "'"$R15_DOM2"'" orbit
+  dgn227_postmint "'"$R15_DOM2"'"
+  write_lite_marker "'"$R15_DOM2"'"
+' || bad "R15d second-domain mint non-zero (see $H15D/flow.log)"
+R15_MAIN2="$H15D/.dogany/main"
+mint_stub "$R15_MAIN2" "vega"
+printf 'DOGANY_AGENT_CLASS=main\n' >> "$R15_MAIN2/.instance.conf"
+rm -f "$R15_MAIN2/routines/lib/handoff-aggregate"   # break stage-2 (edition)
+GATE_LOG="$H15D/flow.log"
+run_flow "$H15D" '
+  export DOGANY_GATE_LOADED_OVERRIDE=1
+  MAIN_ADD_FLOW=1
+  EXISTING_DOMAIN_ROOT="$(cd "'"$R15_DOM2"'" && pwd -P)"
+  flow_main_add_finalize "'"$R15_MAIN2"'"
+' || true
+assert "15d/E3: stage-1 pass + stage-2 fail => domain stays standalone (mode unchanged)" \
+  grep -qx "BRIEF_ROUTING=standalone" "$R15_DOM2/config/agent.conf"
+assert "15d/E3: half-gate refusal is LOUD (edition-absent gate message logged)" \
+  grep -q 'aggregation library absent\|취합 라이브러리 부재' "$GATE_LOG"
+assert "15d/E3: half-gate leaves NO HANDOFF_PEER_MAIN (no silent partial flip)" \
+  bash -c "! grep -q '^HANDOFF_PEER_MAIN=' '$R15_DOM2/config/agent.conf'"
+
+# --- 15e. G2-5 timing: domain generation must PRECEDE main publish (verify+adjust) ---
+# Craft an inversion: domain morning fires at 08:00, main morning at 07:00.
+# The transition must detect (dom >= main) and shift the DOMAIN slot earlier.
+set_plist_time() { # set_plist_time <plist> <hh> <mm>
+  perl -0pi -e "s#(<key>Hour</key>\s*<integer>)\d+#\${1}$2#; s#(<key>Minute</key>\s*<integer>)\d+#\${1}$3#" "$1"
+}
+DOM_MP="$(ls "$R15_DOM"/routines/*generic-brief-morning.plist 2>/dev/null | head -1)"
+MAIN_MP="$(ls "$R15_MAIN"/routines/*generic-brief-morning.plist 2>/dev/null | head -1)"
+set_plist_time "$DOM_MP" 8 0     # domain generation 08:00 (LATER -- inverted)
+set_plist_time "$MAIN_MP" 7 0    # main publish       07:00
+run_flow "$H15" '
+  plist_slot_minutes "'"$R15_DOM"'/routines" morning
+  echo ---
+  verify_section_before_publish "$(cd "'"$R15_DOM"'" && pwd -P)" "$(cd "'"$R15_MAIN"'" && pwd -P)"
+' || bad "R15e timing verify flow non-zero (see $H15/flow.log)"
+# after adjust: domain morning should be main(07:00=420m) - 45 lead = 06:15
+DOM_AFTER_MIN="$(perl -0ne 'if(/<key>Hour<\/key>\s*<integer>(\d+)/){$h=$1} if(/<key>Minute<\/key>\s*<integer>(\d+)/){$m=$1} END{print $h*60+$m}' "$DOM_MP")"
+assert "15e/G2-5: inverted domain slot adjusted to precede main (06:15 = main-45m)" \
+  bash -c "[ '$DOM_AFTER_MIN' = 375 ]"
+assert "15e/G2-5: adjusted domain generation now strictly precedes main publish (420)" \
+  bash -c "[ '$DOM_AFTER_MIN' -lt 420 ]"
+# non-inverted case must NOT be moved: domain 06:00 < main 07:00 stays put
+set_plist_time "$DOM_MP" 6 0
+run_flow "$H15" '
+  verify_section_before_publish "$(cd "'"$R15_DOM"'" && pwd -P)" "$(cd "'"$R15_MAIN"'" && pwd -P)"
+' || bad "R15e non-inverted verify non-zero"
+DOM_KEEP_MIN="$(perl -0ne 'if(/<key>Hour<\/key>\s*<integer>(\d+)/){$h=$1} if(/<key>Minute<\/key>\s*<integer>(\d+)/){$m=$1} END{print $h*60+$m}' "$DOM_MP")"
+assert "15e/G2-5: already-preceding domain slot is left UNCHANGED (no needless reschedule)" \
+  bash -c "[ '$DOM_KEEP_MIN' = 360 ]"
+
+# --- 15f. C2/P22 lifekit post-mint opt-in slot swap ---------------------------
+# The fresh domain shipped WITHOUT lifekit (LIFEKIT=off). Opt in after mint:
+# turning on a slot-owning lifekit routine must UNSCHEDULE the same-slot
+# generic-brief; turning it off must RESTORE it. Test the swap primitive with
+# the load layer captured (BRIEF_SLOT_CAPTURE) -- no live launchctl.
+assert "15f(pre): domain shipped lifekit-dormant (LIFEKIT=off)" \
+  grep -qx "LIFEKIT=off" "$R15_DOM/config/lifekit.conf"
+# invoke the DOMAIN's own copy (mint_stub places it under routines/lib) -- the
+# skill runs `routines/lib/brief-slot-ctl.sh` from the agent root, so the script
+# resolves AGENT_NAME from that root's .instance.conf.
+BSC="$R15_DOM/routines/lib/brief-slot-ctl.sh"
+SWAP_CAP="$H15/swap.cap"
+# opt-in: lifekit morning-brief takes the morning slot -> disable generic morning
+( cd "$R15_DOM" && BRIEF_SLOT_NO_LOAD=1 BRIEF_SLOT_CAPTURE="$SWAP_CAP" \
+    bash "$BSC" disable morning ) >/dev/null 2>&1 || bad "R15f swap-disable non-zero"
+assert "15f/C2: opt-in swaps OUT the same-slot generic-brief (disable captured)" \
+  grep -q "disable com.telegram-skill-bot.zephyr.generic-brief-morning" "$SWAP_CAP"
+# opt-out: lifekit morning-brief off -> restore generic morning (no gap)
+( cd "$R15_DOM" && BRIEF_SLOT_NO_LOAD=1 BRIEF_SLOT_CAPTURE="$SWAP_CAP" \
+    bash "$BSC" enable morning ) >/dev/null 2>&1 || bad "R15f swap-enable non-zero"
+assert "15f/C2: opt-out restores the same-slot generic-brief (enable captured)" \
+  grep -q "enable com.telegram-skill-bot.zephyr.generic-brief-morning" "$SWAP_CAP"
+assert "15f/C2: swap NEVER deletes the generic-brief plist file (파일 배치 불변)" \
+  bash -c "ls '$R15_DOM'/routines/*generic-brief-morning.plist >/dev/null 2>&1"
+assert "15f/C2: weekly has no lifekit counterpart -- swap primitive still valid but unused by bundle" \
+  bash -c "grep -q 'weekly)' '$BSC'"
+# SKILL.md wiring: the lifekit-setup skill actually calls the swap primitive
+assert "15f/C2: lifekit-setup SKILL.md wires the brief-slot swap (routine on/off)" \
+  grep -q 'brief-slot-ctl.sh' "$SANDBOX/skills/dogany-lifekit-setup/SKILL.md"
+
+# --- 15g. MINOR-7 gate-seam residual: shims NOT triggerable via plain env -----
+# The two seams (DOGANY_GATE_LOADED_OVERRIDE / DOGANY_LAUNCHD_CAPTURE) are each
+# honored ONLY when DOGANY_INSTALL_LIB=1. install.sh must be sourced with that
+# flag to stop main(), so we exercise the gate's OWN guard: inside the sourced
+# context, locally clear DOGANY_INSTALL_LIB (the shipped/live condition) then
+# call the transition helpers with the override set -- the shim must be IGNORED,
+# so submit_flip_gate falls through to the real launchctl query (which, for a
+# synthetic never-loaded root, fails stage-1 => gate refuses).
+R15_SEAM="$H15/.dogany/seamroot"
+mint_stub "$R15_SEAM" "seam"
+printf 'DOGANY_AGENT_CLASS=main\n' >> "$R15_SEAM/.instance.conf"
+SEAM_LOG="$H15/seam.log"
+(
+  export HOME="$H15"
+  export DOGANY_INSTALL_PINNED=1
+  export DOGANY_INSTALL_LIB=1              # source-as-lib: stops main()
+  cd "$SANDBOX"; set --
+  source "$SANDBOX/install.sh"; trap - ERR
+  DRY_RUN=0
+  # shipped/live condition: NO lib flag in effect for the shim check
+  unset DOGANY_INSTALL_LIB
+  export DOGANY_GATE_LOADED_OVERRIDE=1     # plain env -- must be IGNORED now
+  if submit_flip_gate "$R15_SEAM"; then echo "SEAM-LEAK: override bypassed real query"; else echo "SEAM-OK: gate used real query"; fi
+) > "$SEAM_LOG" 2>&1
+assert "15g/MINOR-7: plain DOGANY_GATE_LOADED_OVERRIDE does NOT bypass the gate (no shim leak)" \
+  grep -q 'SEAM-OK' "$SEAM_LOG"
+assert "15g/MINOR-7: no SEAM-LEAK reported on the transition gate path" \
+  bash -c "! grep -q 'SEAM-LEAK' '$SEAM_LOG'"
+# and the capture seam is likewise gated: with the lib flag cleared, a plain
+# DOGANY_LAUNCHD_CAPTURE must be inert (the call falls through to dry-run path).
+SEAM_CAP="$H15/seam.cap"
+(
+  export HOME="$H15"; export DOGANY_INSTALL_PINNED=1
+  export DOGANY_INSTALL_LIB=1
+  cd "$SANDBOX"; set --
+  source "$SANDBOX/install.sh"; trap - ERR
+  unset DOGANY_INSTALL_LIB
+  export DOGANY_LAUNCHD_CAPTURE="$SEAM_CAP"   # plain env -- must be IGNORED
+  DRY_RUN=1     # dry-run so no live launchctl in this seam probe
+  schedule_deferred_briefs "$R15_SEAM"
+) >/dev/null 2>&1 || true
+assert "15g/MINOR-7: plain DOGANY_LAUNCHD_CAPTURE writes nothing (capture shim gated)" \
+  bash -c "[ ! -s '$SEAM_CAP' ]"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
-say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"
+say "fake homes: $H1 $H2 $H3 $H15 (inspect flow.log / launchd.capture on failure)"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
