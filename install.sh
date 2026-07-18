@@ -352,6 +352,19 @@ conf_upsert() {
   fi
 }
 
+# conf_set_if_absent <file> <key> <value> -- write KEY=value ONLY when the
+# key line is absent; an existing value (any value) is left untouched.
+# MAJOR-1: write-if-absent semantics for lifekit.conf seeding on re-run.
+conf_set_if_absent() {
+  local file="$1" key="$2" val="$3"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  if grep -q "^${key}=" "$file" 2>/dev/null; then
+    return 0
+  fi
+  printf '%s=%s\n' "$key" "$val" >> "$file"
+}
+
 # conf_read <file> <key> -- print the value ('' when absent).
 conf_read() {
   grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true
@@ -405,7 +418,10 @@ effective_max_agents() {
 schedule_deferred_briefs() {
   local root="$1"
   local mint_run="$REPO_ROOT/scripts/pack/mint_run.sh"
-  if [ -n "${DOGANY_LAUNCHD_CAPTURE:-}" ]; then
+  # MINOR-7: the capture seam is a TESTING shim -- honored only when the file
+  # is sourced as a library (DOGANY_INSTALL_LIB=1). In shipped/live runs a
+  # plain env DOGANY_LAUNCHD_CAPTURE must NOT bypass the real launchd load.
+  if [ "${DOGANY_INSTALL_LIB:-0}" = "1" ] && [ -n "${DOGANY_LAUNCHD_CAPTURE:-}" ]; then
     printf 'mint_run.sh start --root %s --deferred\n' "$root" >> "$DOGANY_LAUNCHD_CAPTURE"
     msg "  (리허설) generic-brief 명시 예약 호출 캡처됨" \
         "  (rehearsal) generic-brief explicit scheduling call captured"
@@ -426,8 +442,11 @@ schedule_deferred_briefs() {
 submit_flip_gate() {
   local main_root="$1"
   # stage 1: load check
+  # MINOR-7: the load-override is a TESTING shim -- honored only under
+  # DOGANY_INSTALL_LIB=1. In shipped/live runs a plain env
+  # DOGANY_GATE_LOADED_OVERRIDE must NOT bypass the real launchd query.
   local loaded=1
-  if [ -n "${DOGANY_GATE_LOADED_OVERRIDE:-}" ]; then
+  if [ "${DOGANY_INSTALL_LIB:-0}" = "1" ] && [ -n "${DOGANY_GATE_LOADED_OVERRIDE:-}" ]; then
     [ "$DOGANY_GATE_LOADED_OVERRIDE" = "1" ] && loaded=0
   else
     local uid; uid="$(id -u)"
@@ -500,7 +519,10 @@ dgn227_postmint() {
 
   if [ "$class" = "domain" ]; then
     # P3: suppress the SessionStart lifekit proposal; opt-in stays via C2.
-    conf_upsert "$target/config/lifekit.conf" LIFEKIT "off"
+    # MAJOR-1 (D1/G1 write-if-absent): only seed LIFEKIT when the key is
+    # ABSENT -- a reconfigure re-run must not silently revert a live
+    # LIFEKIT=on instance that the user opted into post-install (C2).
+    conf_set_if_absent "$target/config/lifekit.conf" LIFEKIT "off"
 
     # A4: catalog pack install (--no-start is MANDATORY -- service start is
     # owned by step_service alone, P23; fresh/standalone => no --migrate-from)
@@ -515,8 +537,10 @@ dgn227_postmint() {
     # without this a blank/pack-less domain would have zero briefings.
     schedule_deferred_briefs "$target"
   else
-    # main path: LIFEKIT=pending keeps the post-onboarding lifekit proposal
-    conf_upsert "$target/config/lifekit.conf" LIFEKIT "pending"
+    # main path: LIFEKIT=pending keeps the post-onboarding lifekit proposal.
+    # MAJOR-1 (write-if-absent): a reconfigure re-run must not revert a live
+    # LIFEKIT=on (or explicitly off) instance back to pending.
+    conf_set_if_absent "$target/config/lifekit.conf" LIFEKIT "pending"
   fi
 
   # G2-3a/G3-(a): registry before marker; marker is written LAST by caller.
@@ -534,6 +558,30 @@ flow_main_add_finalize() {
   if [ ! -f "$main_root/AGENT.md" ]; then
     msg "[에러] main mint 미완료 (AGENT.md 부재) -- 포인터 갱신을 중단합니다. 마커는 기존 도메인을 유지합니다 (재실행 안전)." \
         "[ERROR] main mint incomplete (no AGENT.md) -- aborting pointer updates. Marker still points at the existing domain (safe to re-run)." >&2
+    return 1
+  fi
+
+  # MAJOR-2: main-add class guard. The main-add flow mints a MAIN; the
+  # newly-minted root must actually carry DOGANY_AGENT_CLASS=main. If a
+  # domain selector reached this arm and minted a second DOMAIN, its correct
+  # domain registry row would be overwritten by the registry_upsert "main"
+  # below (registry = dec-063 I-2 multi discriminator) -- permanently
+  # mis-recording the domain as main. Abort before any pointer moves.
+  if [ "$(instance_class_of "$main_root")" != "main" ]; then
+    msg "[에러] main-add 대상이 main 클래스가 아닙니다 ($main_root) -- 레지스트리 덮어쓰기를 중단합니다 (도메인 오기록 방지)." \
+        "[ERROR] main-add target is not class=main ($main_root) -- aborting registry overwrite (prevents domain mis-record)." >&2
+    return 1
+  fi
+
+  # MAJOR-2: main-max-1 invariant (G2-1 '클래스 불변식: main은 항상 최대 1').
+  # If the registry already carries a main entry for a DIFFERENT root, adding
+  # another main violates the invariant. registry_count_class is the
+  # discriminator (was defined but never called before this fix).
+  local existing_main; existing_main="$(registry_count_class main)"
+  if [ "$existing_main" != "0" ] \
+     && ! grep -q "^main	$(canon_path "$main_root")$" "$REGISTRY_FILE" 2>/dev/null; then
+    msg "[에러] main 인스턴스가 이미 존재합니다 (main-max-1 불변식) -- main 추가를 중단합니다." \
+        "[ERROR] a main instance already exists (main-max-1 invariant) -- aborting main-add." >&2
     return 1
   fi
 
@@ -1577,8 +1625,14 @@ step_agent_class() {
       local entries; entries="$(catalog_entries)"
       local usable; usable="$(printf '%s\n' "$entries" | awk -F'\t' '$3==1' || true)"
       if [ -z "$usable" ]; then
-        msg "카탈로그에 설치 가능한 팩이 없습니다 (payload 부재). 빈 도메인으로 진행합니다." \
-            "No installable pack in the catalog (payload absent). Falling back to a blank domain."
+        # MINOR-3: A2 spec = "announce + PROPOSE blank fallback", not auto-select.
+        msg "카탈로그에 설치 가능한 팩이 없습니다 (payload 부재)." \
+            "No installable pack in the catalog (payload absent)."
+        if ! confirm "빈 도메인 에이전트로 시작할까요?" \
+                     "Start as a blank domain agent instead?" "y"; then
+          msg "설치를 취소했습니다." "Install cancelled." >&2
+          exit 2
+        fi
         pack="blank"
       else
         # arrow selector over usable entries + a blank fallback row
@@ -1656,22 +1710,60 @@ EOF
   fi
 
   slug_valid "$slug" || { echo "invalid slug: $slug" >&2; exit 1; }
-  DOGANY_AGENT_SLUG="$slug"
 
   # A4/P5: domain default root ~/.dogany/agents/<slug>; explicit --root wins.
-  if [ "$ROOT_FORCED" != "1" ]; then
-    INSTALL_ROOT="$HOME/.dogany/agents/$slug"
+  # MAJOR-3: occupancy handling. Spec A4 = "on target-root pre-occupancy,
+  # re-ask during install" (the comment claimed "re-ask (interactive)" but the
+  # code hard-exited even interactively). Resolution:
+  #   (a) --root forced: honor it verbatim, no occupancy re-derivation.
+  #   (b) occupied root is the SAME canonical root the lite marker records:
+  #       this is a crash-recovery / reconfigure re-run of the same instance
+  #       (marker-last design leaves a minted-but-unmarked instance re-runnable)
+  #       -> pass through to check_lite_single_agent's same-root allowance.
+  #   (c) interactive: re-ask for a new slug and re-derive the root, looping
+  #       until the root is free or resolves to case (b).
+  #   (d) non-interactive/preset with a foreign occupied root: keep hard exit 2.
+  local marker_canon=""
+  if [ -f "$LITE_MARKER" ]; then
+    marker_canon="$(cat "$LITE_MARKER" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$marker_canon" ] && marker_canon="$(canon_path "$marker_canon")"
   fi
+  while :; do
+    if [ "$ROOT_FORCED" != "1" ]; then
+      INSTALL_ROOT="$HOME/.dogany/agents/$slug"
+    fi
+    # not occupied, or --root forced -> accept
+    if [ "$ROOT_FORCED" = "1" ] || [ ! -f "$INSTALL_ROOT/AGENT.md" ]; then
+      break
+    fi
+    # (b) same canonical root as the marker -> pass through to check_lite re-run
+    if [ -n "$marker_canon" ] \
+       && [ "$(canon_path "$INSTALL_ROOT")" = "$marker_canon" ]; then
+      msg "대상 루트가 기존 인스턴스와 동일합니다: $INSTALL_ROOT -- 재설정/복구 재실행으로 진행합니다." \
+          "Target root matches the existing instance: $INSTALL_ROOT -- proceeding as a reconfigure/recovery re-run." >&2
+      break
+    fi
+    # (c) interactive -> re-ask a slug; (d) non-interactive -> hard exit
+    if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+      msg "대상 루트가 이미 사용 중입니다: $INSTALL_ROOT" \
+          "Target root already occupied: $INSTALL_ROOT" >&2
+      exit 2
+    fi
+    msg "대상 루트가 이미 사용 중입니다: $INSTALL_ROOT -- 다른 슬러그를 입력하세요." \
+        "Target root already occupied: $INSTALL_ROOT -- enter a different slug." >&2
+    while :; do
+      msgn "영문 슬러그 (예: my-agent): " "Slug (e.g. my-agent): "
+      IFS= read -r slug
+      slug_valid "$slug" && break
+      msg "슬러그 형식이 아닙니다 (^[a-z][a-z0-9-]{1,30}$)" \
+          "Not a valid slug (^[a-z][a-z0-9-]{1,30}$)"
+    done
+  done
+  DOGANY_AGENT_SLUG="$slug"
+
   # slug drives the launchd label / bot display name unless --name was given
   if [ "$NAME_FORCED" != "1" ]; then
     AGENT_NAME="$slug"
-  fi
-  # target root already taken by a valid instance -> re-ask (interactive) /
-  # fail (preset)
-  if [ -f "$INSTALL_ROOT/AGENT.md" ] && [ "$ROOT_FORCED" != "1" ]; then
-    msg "대상 루트가 이미 사용 중입니다: $INSTALL_ROOT" \
-        "Target root already occupied: $INSTALL_ROOT" >&2
-    exit 2
   fi
   msg "유형: 도메인 에이전트 (pack=$DOGANY_PACK_ID, slug=$slug, root=$INSTALL_ROOT)" \
       "Type: domain agent (pack=$DOGANY_PACK_ID, slug=$slug, root=$INSTALL_ROOT)"

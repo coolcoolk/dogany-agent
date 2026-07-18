@@ -214,6 +214,15 @@ if [[ "$MODE" == "stamp-role" ]]; then
   [[ -n "$ROOT" ]] || { echo "ERROR: stamp-role requires --root <dir>" >&2; exit 1; }
   [[ -n "$ROLE_PROSE" ]] || { echo "ERROR: stamp-role requires --role <prose>" >&2; exit 1; }
   [[ -d "$ROOT" ]] || { echo "ERROR: stamp-role root not a directory: $ROOT" >&2; exit 1; }
+  # MINOR-8: the stamp-role SUBCOMMAND is a hard precondition of install (A3:
+  # Q6 excision + role stamp). A missing AGENT.md here means a partial mint --
+  # a WARN+skip (as _stamp_role does for the mint/recover callers) would let
+  # install proceed with Q6 un-excised and the role un-stamped, silently
+  # breaking A3. Fail loud on this entry; mint/recover keep the WARN semantics.
+  [[ -f "$ROOT/AGENT.md" ]] || {
+    echo "ERROR: stamp-role AGENT.md not found at $ROOT/AGENT.md (partial mint) -- refusing to proceed (A3)" >&2
+    exit 1
+  }
   _stamp_role "$ROOT" "$ROLE_PROSE" "stamp-role"
   exit $?
 fi

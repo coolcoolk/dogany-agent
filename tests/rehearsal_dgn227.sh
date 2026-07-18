@@ -309,6 +309,122 @@ assert "AGENT.md fragment pair present exactly once after upgrade" \
   bash -c "[ \"\$(grep -cF '<!-- DOGANY-PACK:dev:BEGIN -->' '$R3_ROOT/AGENT.md')\" = 1 ]"
 
 # ===========================================================================
+# R6: DGN-416 hardening regressions (MAJOR-1 / MAJOR-2 / MAJOR-3)
+# ===========================================================================
+CURRENT=R6
+hr; say "R6: DGN-416 hardening (lifekit write-if-absent / main-add class guard / occupancy re-run)"
+
+# --- MAJOR-1: LIFEKIT=on instance re-run -> lifekit state UNCHANGED ----------
+H6="$(mktemp -d /tmp/dgn227-r6.XXXXXX)"
+R6_DOM="$H6/.dogany/agents/lumen"
+mint_stub "$R6_DOM" lumen
+# simulate a live instance that opted into lifekit post-install (C2)
+printf 'LIFEKIT=on\n' > "$R6_DOM/config/lifekit.conf"
+run_flow "$H6" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=lumen
+  DOGANY_ROLE_PROSE="finance coach"
+  dgn227_postmint "'"$R6_DOM"'"
+' || bad "MAJOR-1 domain re-run flow exited non-zero (see $H6/flow.log)"
+assert "MAJOR-1: LIFEKIT=on preserved on domain reconfigure re-run" \
+  grep -qx "LIFEKIT=on" "$R6_DOM/config/lifekit.conf"
+assert "MAJOR-1: LIFEKIT not reverted to off" \
+  bash -c "! grep -qx 'LIFEKIT=off' '$R6_DOM/config/lifekit.conf'"
+
+# main path: a live LIFEKIT=on main must not be reverted to pending on re-run
+R6_MAIN="$H6/.dogany/main"
+mint_stub "$R6_MAIN" dogany
+printf 'LIFEKIT=on\n' > "$R6_MAIN/config/lifekit.conf"
+run_flow "$H6" '
+  DOGANY_AGENT_CLASS=main
+  AGENT_ROLE_PROSE="lifekit main"
+  dgn227_postmint "'"$R6_MAIN"'"
+' || bad "MAJOR-1 main re-run flow exited non-zero (see $H6/flow.log)"
+assert "MAJOR-1: LIFEKIT=on preserved on main reconfigure re-run (not pending)" \
+  grep -qx "LIFEKIT=on" "$R6_MAIN/config/lifekit.conf"
+
+# fresh absent-key path still seeds off (write-if-absent still writes)
+R6_FRESH="$H6/.dogany/agents/fresh6"
+mint_stub "$R6_FRESH" fresh6
+: > "$R6_FRESH/config/lifekit.conf"
+run_flow "$H6" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=fresh6
+  DOGANY_ROLE_PROSE="x"
+  dgn227_postmint "'"$R6_FRESH"'"
+' || bad "MAJOR-1 fresh flow exited non-zero (see $H6/flow.log)"
+assert "MAJOR-1: absent LIFEKIT key still seeded off on fresh domain" \
+  grep -qx "LIFEKIT=off" "$R6_FRESH/config/lifekit.conf"
+
+# --- MAJOR-2: domain instance reaching main-add finalize -> ABORT ------------
+# A domain selector minted a 2nd DOMAIN (class=domain) and reached finalize.
+# The class guard must abort BEFORE registry_upsert "main" overwrites the row.
+H6B="$(mktemp -d /tmp/dgn227-r6b.XXXXXX)"
+R6B_DOM1="$H6B/.dogany/agents/alpha"    # the correct existing domain
+R6B_WRONG="$H6B/.dogany/agents/beta"    # a 2nd domain mis-routed into main-add
+mint_stub "$R6B_DOM1" alpha
+mint_stub "$R6B_WRONG" beta
+# both are class=domain
+printf 'DOGANY_AGENT_CLASS=domain\n' >> "$R6B_DOM1/.instance.conf"
+printf 'DOGANY_AGENT_CLASS=domain\n' >> "$R6B_WRONG/.instance.conf"
+# seed the registry with the correct domain row for the wrong root
+run_flow "$H6B" '
+  registry_upsert domain "'"$R6B_WRONG"'"
+'
+BADREG="$H6B/.dogany/instances"
+run_flow "$H6B" '
+  MAIN_ADD_FLOW=1
+  EXISTING_DOMAIN_ROOT="'"$R6B_DOM1"'"
+  flow_main_add_finalize "'"$R6B_WRONG"'" && exit 20
+  exit 0
+' && ok "MAJOR-2: finalize aborts when target is class=domain (not main)" \
+  || bad "MAJOR-2: finalize did NOT abort on a domain target (class guard dead)"
+assert "MAJOR-2: registry row NOT overwritten to main (still domain)" \
+  bash -c "grep -q '^domain	' '$BADREG' && ! grep -q '^main	' '$BADREG'"
+
+# --- MAJOR-3: crash after mint before marker -> re-run converges -------------
+# marker-last design: instance minted, marker still points at it, --root unset.
+# step_agent_class must NOT hard-exit; it passes through (same canon root).
+H6C="$(mktemp -d /tmp/dgn227-r6c.XXXXXX)"
+R6C_ROOT="$H6C/.dogany/agents/vega"
+mint_stub "$R6C_ROOT" vega
+# the marker already records this canonical root (mint happened, marker written,
+# but a later step crashed -> user re-runs install with no --root)
+mkdir -p "$H6C/.dogany"
+( cd "$R6C_ROOT" && pwd -P ) > "$H6C/.dogany/lite_instance"
+run_flow "$H6C" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=vega
+  DOGANY_ROLE_PROSE="re-run role"
+  step_agent_class || exit 30
+  [ "$INSTALL_ROOT" = "'"$R6C_ROOT"'" ] || { echo "root drifted: $INSTALL_ROOT"; exit 31; }
+  exit 0
+' && ok "MAJOR-3: occupied same-canon root passes through (no occupancy strand)" \
+  || bad "MAJOR-3: step_agent_class stranded on same-root re-run (see $H6C/flow.log)"
+
+# foreign occupied root, non-interactive/preset -> still hard-exits (case d)
+H6D="$(mktemp -d /tmp/dgn227-r6d.XXXXXX)"
+R6D_ROOT="$H6D/.dogany/agents/nova"
+mint_stub "$R6D_ROOT" nova   # occupied, but NOT the marker/target instance
+# step_agent_class hard-exits the (sub)shell on case (d); run_flow then returns
+# non-zero -> that non-zero IS the pass signal here.
+if run_flow "$H6D" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=nova
+  DOGANY_ROLE_PROSE="collide"
+  step_agent_class
+  exit 0
+'; then
+  bad "MAJOR-3: foreign occupancy did not hard-exit under preset"
+else
+  ok "MAJOR-3: foreign occupied root under preset still hard-exits (case d preserved)"
+fi
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"
