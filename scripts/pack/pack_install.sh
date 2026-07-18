@@ -107,8 +107,8 @@ DEFAULT_CATALOG="$REPO_DIR/packs/catalog.json"
 SLUG="${1:-}"
 ROOT="${2:-}"
 PACK_ID="" DRY=0 NO_START=0 NO_STATE=0 MODEL_OPT="" MIGRATION=0 PEER_ROOT=""
-INSTANCE_ROOT="" CATALOG="$DEFAULT_CATALOG"
-shift 2 2>/dev/null || { echo "usage: pack_install.sh <slug> <root> --pack <id> [--instance-root <path>] [--catalog <file>] [--model <sonnet|opus|haiku>] [--migrate-from <peer-root>] [--no-start] [--no-state] [--dry-run]" >&2; exit 1; }
+INSTANCE_ROOT="" CATALOG="$DEFAULT_CATALOG" UPGRADE=0
+shift 2 2>/dev/null || { echo "usage: pack_install.sh <slug> <root> --pack <id> [--instance-root <path>] [--catalog <file>] [--model <sonnet|opus|haiku>] [--migrate-from <peer-root>] [--upgrade] [--no-start] [--no-state] [--dry-run]" >&2; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -117,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --catalog)       CATALOG="$2"; shift 2 ;;
     --model)         MODEL_OPT="$2"; shift 2 ;;
     --migrate-from)  PEER_ROOT="$2"; MIGRATION=1; shift 2 ;;
+    --upgrade)       UPGRADE=1; shift ;;
     --no-start)      NO_START=1; shift ;;
     --no-state)      NO_STATE=1; shift ;;
     --dry-run|--dry) DRY=1; shift ;;
@@ -186,6 +187,10 @@ _pack_field() {
 
 PACKAGE_DIR="$(_pack_field package_dir)"
 DOMAIN_FIELD="$(_pack_field "id")"
+# DGN-227 B3/P6: catalog entry pack_version (semver). Legacy entries without
+# the field install as 'unversioned' (loud in the ledger header).
+PACK_VERSION="$(_pack_field pack_version)"
+PACK_VERSION="${PACK_VERSION:-unversioned}"
 
 [[ -n "$PACKAGE_DIR" ]] || _fail "pack '$PACK_ID' missing 'package_dir' field in catalog"
 
@@ -408,7 +413,7 @@ _preserve_register() {
     {
       echo "# .dogany-preserve -- instance-local files update.sh must NOT refresh."
       echo "# One instance-root-relative path per line (trailing '/' = directory)."
-      echo "# Lines tagged '# pack-owned: <pack-id>' are managed by pack_install.sh."
+      echo "# Lines tagged '# pack:<pack-id>' are managed by pack_install.sh."
     } > "$pf"
     _log "  created .claude/.dogany-preserve"
   fi
@@ -418,40 +423,76 @@ _preserve_register() {
                       END { exit found ? 0 : 1 }' "$pf"; then
     _log "  preserve entry already present: $rel (idempotent)"
   else
-    printf '%s  # pack-owned: %s (auto, pack_install STEP 7)\n' "$rel" "$PACK_ID" >> "$pf"
-    _log "  preserve-registered: $rel (pack-owned: $PACK_ID)"
+    # DGN-227 D1/P18: pack-owned tail tag '# pack:<id>' (machine-readable;
+    # untagged lines = hand-written = untouchable).
+    printf '%s  # pack:%s\n' "$rel" "$PACK_ID" >> "$pf"
+    _log "  preserve-registered: $rel (pack:$PACK_ID)"
   fi
 }
 
-# _preserve_reconcile -- drop stale pack-owned skills-bundle SKILL.md entries
-# for THIS pack: only lines tagged '# pack-owned: <this-pack-id>' are
-# candidates; any such entry whose skill is no longer in the manifest
-# knowledge.consumer_skills set is removed (a skill dropped from the pack must
-# not stay silently frozen against framework refresh). Hand-written entries
-# (no pack-owned tag) are never touched. (DGN-402 grill r2 MAJOR-2.)
+# ---------------------------------------------------------------------------
+# DGN-227 B3/P25: installed-files ledger (config/packs/<id>.files).
+# Single record function called at EVERY copy point (H1-9: the ledger is not
+# a side product -- every install write funnels through _ledger_record).
+# The ledger is (a) the --upgrade removal-diff source (D2) and (b) the
+# preserve-reconcile verdict source (D1).
+# ---------------------------------------------------------------------------
+LEDGER_DIR="$ROOT/config/packs"
+LEDGER_FILE="$LEDGER_DIR/$PACK_ID.files"
+LEDGER_STAGE=""
+
+_ledger_record() { # _ledger_record <root-relative-path>
+  [[ -n "$LEDGER_STAGE" ]] || LEDGER_STAGE="$(mktemp)"
+  printf '%s\n' "$1" >> "$LEDGER_STAGE"
+}
+
+_ledger_finalize() {
+  mkdir -p "$LEDGER_DIR"
+  {
+    echo "# pack install ledger -- DGN-227 B3/P25"
+    echo "# pack: $PACK_ID"
+    echo "# pack_version: $PACK_VERSION"
+    echo "# installed: $(date '+%Y-%m-%dT%H:%M:%S')"
+    if [[ -n "$LEDGER_STAGE" && -s "$LEDGER_STAGE" ]]; then
+      sort -u "$LEDGER_STAGE"
+    fi
+  } > "$LEDGER_FILE"
+  [[ -n "$LEDGER_STAGE" ]] && rm -f "$LEDGER_STAGE"
+  _log "  ledger written: config/packs/$PACK_ID.files"
+}
+
+# _ledger_paths <file> -- entries only (comments stripped).
+_ledger_paths() {
+  [[ -f "$1" ]] || return 0
+  grep -v '^#' "$1" | grep -v '^[[:space:]]*$' || true
+}
+
+# _preserve_reconcile -- DGN-227 D1/P18: verdict source REPLACED. Candidates =
+# lines tail-tagged '# pack:<this-id>' (legacy '# pack-owned: <this-id>' lines
+# are also candidates and get migrated/removed -- rehearsal note: legacy-tag
+# handling is not specified by the spec, see OPEN QUESTIONS). Keep/remove =
+# is the path in THIS install's ledger (config/packs/<id>.files). Untagged
+# (hand-written) lines are never touched.
 _preserve_reconcile() {
   local pf="$ROOT/.claude/.dogany-preserve"
   [[ -f "$pf" ]] || return 0
-  local tmp removed=0 line path skill
+  local tmp removed=0 line path is_cand
   tmp="$(mktemp)"
   while IFS= read -r line || [[ -n "$line" ]]; do
+    is_cand=0
     case "$line" in
-      *"# pack-owned: ${PACK_ID} "*|*"# pack-owned: ${PACK_ID}")
-        path="${line%%#*}"
-        path="$(printf '%s' "$path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-        case "$path" in
-          .claude/skills-bundle/*/SKILL.md)
-            skill="${path#.claude/skills-bundle/}"
-            skill="${skill%/SKILL.md}"
-            if ! _is_consumer_skill "$skill"; then
-              _log "  preserve reconcile: removed stale pack-owned entry: $path"
-              removed=1
-              continue
-            fi
-            ;;
-        esac
-        ;;
+      *"# pack:${PACK_ID}") is_cand=1 ;;
+      *"# pack-owned: ${PACK_ID} "*|*"# pack-owned: ${PACK_ID}") is_cand=1 ;;
     esac
+    if [[ "$is_cand" -eq 1 ]]; then
+      path="${line%%#*}"
+      path="$(printf '%s' "$path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+      if ! _ledger_paths "$LEDGER_FILE" | grep -qxF "$path"; then
+        _log "  preserve reconcile: removed stale pack entry (not in ledger): $path"
+        removed=1
+        continue
+      fi
+    fi
     printf '%s\n' "$line" >> "$tmp"
   done < "$pf"
   if [[ "$removed" -eq 1 ]]; then
@@ -591,6 +632,34 @@ fi
 mkdir -p "$LOG_DIR"
 _log "=== pack-install START pack=$PACK_ID slug=$SLUG root=$ROOT ==="
 
+# ---------- DGN-227 D1/D2: --upgrade ledger-diff phase ----------------------
+# Runs before STEP 2 so the old ledger is read before the new one overwrites it.
+if [[ "${UPGRADE:-0}" -eq 1 ]]; then
+  _log "=== pack-install UPGRADE pack=$PACK_ID slug=$SLUG root=$ROOT ==="
+  OLD_LEDGER="$LEDGER_DIR/$PACK_ID.files"
+  if [[ ! -f "$OLD_LEDGER" ]]; then
+    _log "WARN: no existing ledger at $OLD_LEDGER -- skipping stale-file removal phase (first upgrade from pre-ledger install)"
+  else
+    _log "upgrade phase 1: diff existing ledger vs new payload"
+    while IFS= read -r entry; do
+      [[ "$entry" == \#* || -z "$entry" ]] && continue
+      full_path="$ROOT/$entry"
+      if [[ ! -f "$full_path" ]]; then
+        _log "  stale entry (file already gone): $entry"
+      else
+        _log "  [upgrade] stale: $entry"
+        case "$entry" in
+          routines/*.plist)
+            _log "  [upgrade] (stub) would: launchctl bootout gui/$(id -u) <label>"
+            ;;
+        esac
+      fi
+    done < "$OLD_LEDGER"
+    _log "upgrade phase 1: stale-file scan done"
+  fi
+  _log "upgrade phase 2/3: apply new payload and re-record ledger (falling through to normal install)"
+fi
+
 # ---------- STEP 2: package copy (declared categories only) ------------------
 _log "step 2: package copy"
 
@@ -602,6 +671,8 @@ if has_cat lib && [[ -d "$PKG_LIB" ]]; then
       [[ -n "$f" ]] || continue
       if [[ -f "$PKG_LIB/$f" ]]; then
         cp -f "$PKG_LIB/$f" "$ROOT/routines/lib/$f"
+        _ledger_record "routines/lib/$f"
+        _preserve_register "routines/lib/$f"
         _log "  copied lib/$f -> routines/lib/"
       else
         _log "  WARN: manifest lib file not in package: lib/$f (skipping)"
@@ -611,6 +682,8 @@ if has_cat lib && [[ -d "$PKG_LIB" ]]; then
     for f in "$PKG_LIB/"*.py; do
       [[ -e "$f" ]] || continue
       cp -f "$f" "$ROOT/routines/lib/$(basename "$f")"
+      _ledger_record "routines/lib/$(basename "$f")"
+      _preserve_register "routines/lib/$(basename "$f")"
       _log "  copied lib/$(basename "$f") -> routines/lib/"
     done
   fi
@@ -624,11 +697,15 @@ if has_cat routines && [[ -d "$PKG_PAYLOAD/routines" ]]; then
     [[ -e "$f" ]] || continue
     cp -f "$f" "$ROOT/routines/"
     chmod +x "$ROOT/routines/$(basename "$f")"
+    _ledger_record "routines/$(basename "$f")"
+    _preserve_register "routines/$(basename "$f")"
     _log "  copied routines/$(basename "$f")"
   done
   for f in "$PKG_PAYLOAD/routines/"*.py; do
     [[ -e "$f" ]] || continue
     cp -f "$f" "$ROOT/routines/"
+    _ledger_record "routines/$(basename "$f")"
+    _preserve_register "routines/$(basename "$f")"
     _log "  copied routines/$(basename "$f")"
   done
 else
@@ -643,12 +720,16 @@ if has_cat plists; then
     [[ -e "$f" ]] || continue
     dst_base="$(_render_basename "$(basename "$f")")"
     _render_to "$f" "$ROOT/routines/$dst_base"
+    _ledger_record "routines/$dst_base"
+    _preserve_register "routines/$dst_base"
     _log "  rendered routines/$dst_base (slug-derived label + instance paths)"
   done
   # deferral manifest basenames must match the rendered plist filenames,
   # so it is rendered with the same substitution
   if [[ -f "$PKG_PAYLOAD/routines/plists.defer" ]]; then
     _render_to "$PKG_PAYLOAD/routines/plists.defer" "$ROOT/routines/plists.defer"
+    _ledger_record "routines/plists.defer"
+    _preserve_register "routines/plists.defer"
     _log "  rendered routines/plists.defer"
   fi
 else
@@ -659,6 +740,11 @@ fi
 if has_cat prompts && [[ -d "$PKG_PAYLOAD/routines/prompts" ]]; then
   mkdir -p "$ROOT/routines/prompts"
   cp -rf "$PKG_PAYLOAD/routines/prompts/." "$ROOT/routines/prompts/"
+  while IFS= read -r _pf; do
+    _rel="routines/prompts/${_pf#"$PKG_PAYLOAD/routines/prompts/"}"
+    _ledger_record "$_rel"
+    _preserve_register "$_rel"
+  done < <(find "$PKG_PAYLOAD/routines/prompts" -type f)
   _log "  copied routines/prompts/"
 else
   has_cat prompts || _log "  category prompts not declared -- skipping"
@@ -670,6 +756,7 @@ if has_cat db_migrations && [[ -d "$PKG_PAYLOAD/database/migrations" ]]; then
   for f in "$PKG_PAYLOAD/database/migrations/"*.sql; do
     [[ -e "$f" ]] || continue
     cp -f "$f" "$ROOT/database/migrations/"
+    _ledger_record "database/migrations/$(basename "$f")"
     _log "  copied database/migrations/$(basename "$f")"
   done
 else
@@ -683,6 +770,7 @@ if has_cat scripts && [[ -d "$PKG_SCRIPTS" ]]; then
     [[ -e "$f" ]] || continue
     cp -f "$f" "$ROOT/scripts/"
     chmod +x "$ROOT/scripts/$(basename "$f")"
+    _ledger_record "scripts/$(basename "$f")"
     _log "  copied scripts/$(basename "$f")"
   done
 else
@@ -693,12 +781,17 @@ fi
 if has_cat triggers && [[ -f "$PKG_PAYLOAD/config/triggers.yaml" ]]; then
   mkdir -p "$ROOT/config"
   cp -f "$PKG_PAYLOAD/config/triggers.yaml" "$ROOT/config/triggers.yaml"
+  _ledger_record "config/triggers.yaml"
   _log "  copied config/triggers.yaml"
 else
   has_cat triggers || _log "  category triggers not declared -- skipping"
 fi
 
 _log "step 2: package copy done"
+
+# DGN-227 B3/P25: finalize the install ledger (all _ledger_record calls above
+# staged into LEDGER_STAGE; write sorted+deduped to LEDGER_FILE now).
+_ledger_finalize
 
 # ---------- STEP 3: agent.conf fragment append (idempotent) -----------------
 if has_cat agent_conf_fragment; then
@@ -708,35 +801,65 @@ if has_cat agent_conf_fragment; then
   AGENT_CONF="$ROOT/config/agent.conf"
   MARKER="$CONF_MARKER"
 
-  # Peer-integration keys (L1_DB / L1_EXPECTED_USER_VERSION / HANDOFF_PEER_AG)
-  # belong to the MIGRATION path only (DGN-284 #3/#6): on a fresh/standalone
-  # mint a present HANDOFF_PEER_AG makes the consult self-heal refuse to flip
-  # pending_data -> ready and strands the instance in consult deferral.
-  PEER_KEYS_RE='^(L1_DB|L1_EXPECTED_USER_VERSION|HANDOFF_PEER_AG)='
+  # Peer-integration keys belong to the MIGRATION path only (DGN-284 #3/#6).
+  # DGN-227 E2-1/P24: MIGRATION_PEER joins the migration key family (fresh
+  # strips it). HANDOFF_PEER_MAIN is a BRIEFING-topology key, NOT a migration
+  # key -- it is deliberately NOT in this strip list (fresh paths may write it).
+  PEER_KEYS_RE='^(L1_DB|L1_EXPECTED_USER_VERSION|HANDOFF_PEER_AG|MIGRATION_PEER)='
+
+  # DGN-227 D2/P8: fragments are managed as BEGIN/END marker-pair blocks so
+  # --upgrade can replace them (remove-and-reappend). Legacy single-marker
+  # blocks cannot be bounded mechanically -> --upgrade loud-FAILs on them.
+  CONF_PAIR_BEGIN="# DOGANY-PACK:$PACK_ID:BEGIN"
+  CONF_PAIR_END="# DOGANY-PACK:$PACK_ID:END"
 
   if [[ -f "$CONF_ADD" ]]; then
-    if grep -qF "$MARKER" "$AGENT_CONF" 2>/dev/null; then
+    if [[ "$UPGRADE" -eq 1 ]] && grep -qF "$CONF_PAIR_BEGIN" "$AGENT_CONF" 2>/dev/null; then
+      # marker-pair replacement: excise the old block, then fall through to append
+      _tmp_conf="$(mktemp)"
+      awk -v b="$CONF_PAIR_BEGIN" -v e="$CONF_PAIR_END" '
+        $0 == b { inblk=1; next }
+        $0 == e { inblk=0; next }
+        !inblk { print }' "$AGENT_CONF" > "$_tmp_conf"
+      mv "$_tmp_conf" "$AGENT_CONF"
+      _log "  upgrade: excised prior agent.conf fragment block (marker pair)"
+    elif [[ "$UPGRADE" -eq 1 ]] && grep -qF "$MARKER" "$AGENT_CONF" 2>/dev/null; then
+      _fail "step 3: --upgrade found a LEGACY single-marker fragment block (no BEGIN/END pair) in agent.conf -- cannot bound it mechanically. Manual migration: remove the old block, then re-run (loud-FAIL by design, DGN-227 D2)"
+    fi
+
+    if grep -qF "$CONF_PAIR_BEGIN" "$AGENT_CONF" 2>/dev/null \
+       || { [[ "$UPGRADE" -eq 0 ]] && grep -qF "$MARKER" "$AGENT_CONF" 2>/dev/null; }; then
       _log "  agent.conf.add already appended (idempotent, skipping)"
     elif [[ "$MIGRATION" -eq 1 ]]; then
       {
         echo ""
+        echo "$CONF_PAIR_BEGIN"
         echo "$MARKER"
         # strip comment-only header lines; point peer keys at the actual peer
         grep -v '^#' "$CONF_ADD" | grep -v '^$' \
           | sed -e "s|^L1_DB=.*|L1_DB=$PEER_ROOT/database/lifekit.db|" \
-                -e "s|^HANDOFF_PEER_AG=.*|HANDOFF_PEER_AG=$PEER_ROOT|" || true
+                -e "s|^HANDOFF_PEER_AG=.*|HANDOFF_PEER_AG=$PEER_ROOT|" \
+                -e "s|^MIGRATION_PEER=.*|MIGRATION_PEER=$PEER_ROOT|" || true
+        # DGN-227 E2-1/P24: the migration discriminator key is ALWAYS written
+        # on the migration path, even when the fragment does not carry it.
+        if ! grep -Eq '^MIGRATION_PEER=' "$CONF_ADD"; then
+          echo "MIGRATION_PEER=$PEER_ROOT"
+        fi
+        echo "$CONF_PAIR_END"
       } >> "$AGENT_CONF"
-      _log "  appended config/agent.conf.add (migration path; peer=$PEER_ROOT)"
+      _log "  appended config/agent.conf.add (migration path; peer=$PEER_ROOT; MIGRATION_PEER set)"
     else
       {
         echo ""
+        echo "$CONF_PAIR_BEGIN"
         echo "$MARKER"
-        echo "# fresh/standalone mint (DGN-284): peer-integration keys"
-        echo "# (L1_DB / L1_EXPECTED_USER_VERSION / HANDOFF_PEER_AG) intentionally omitted"
-        # keep any future non-peer keys the fragment may carry
+        echo "# fresh/standalone mint (DGN-284/DGN-227): migration-family keys"
+        echo "# (L1_DB / L1_EXPECTED_USER_VERSION / HANDOFF_PEER_AG / MIGRATION_PEER) intentionally omitted"
+        # keep any future non-migration keys the fragment may carry
         grep -v '^#' "$CONF_ADD" | grep -v '^$' | grep -Ev "$PEER_KEYS_RE" || true
+        echo "$CONF_PAIR_END"
       } >> "$AGENT_CONF"
-      _log "  appended config/agent.conf.add (fresh path; peer keys omitted)"
+      _log "  appended config/agent.conf.add (fresh path; migration keys omitted)"
     fi
   else
     _log "  no agent.conf.add in package (skipping)"
@@ -832,6 +955,9 @@ if has_cat knowledge_snapshot; then
     # ('~' expanded at parse time; empty ok -> script default).
     [[ -n "$KNOW_SOURCE" ]] && _log "  snapshot source (manifest knowledge.source): $KNOW_SOURCE"
     bash "$SNAPSHOT_SH" "$ROOT" ${KNOW_SOURCE:+"$KNOW_SOURCE"} 2>&1 | while IFS= read -r line; do _log "  snapshot: $line"; done
+    # DGN-227 B3: the warehouse root DIRECTORY is the ledger unit for
+    # knowledge (per-file churn is snapshot-internal).
+    [[ -n "$KNOW_WAREHOUSE" ]] && _ledger_record "knowledge/$KNOW_WAREHOUSE/"
     _log "step 6: knowledge snapshot done"
   else
     _log "  WARN: knowledge-snapshot.sh not found at $ROOT/scripts/ -- skipping (pack may not require it)"
@@ -866,13 +992,13 @@ if has_cat skills && [[ -d "$PKG_PAYLOAD/skills" ]]; then
     _render_to "$src_skill_md" "$bundle_dir/SKILL.md"
     _subst_mint_tokens "$bundle_dir/SKILL.md"
     _log "  installed .claude/skills-bundle/$skill_id/SKILL.md (rendered)"
+    _ledger_record ".claude/skills-bundle/$skill_id/SKILL.md"
 
-    # DGN-402 layer 3 ownership: consumer skills are frozen against the
-    # framework skills-bundle refresh (update.sh 3j) via the preserve list;
-    # pack reinstall still overwrites (preserve binds update.sh only).
-    if _is_consumer_skill "$skill_id"; then
-      _preserve_register ".claude/skills-bundle/$skill_id/SKILL.md"
-    fi
+    # DGN-227 D1/P18 (widens DGN-402 layer 3): EVERY pack file landing in an
+    # update.sh allowlist-managed zone (.claude/skills-bundle here) is
+    # preserve-registered pack-owned -- not only consumer skills. Pack
+    # reinstall still overwrites (preserve binds update.sh only).
+    _preserve_register ".claude/skills-bundle/$skill_id/SKILL.md"
 
     # ensure symlink (template wiring: skills/ -> skills-bundle/)
     mkdir -p "$ROOT/.claude/skills"
@@ -896,10 +1022,85 @@ else
   _log "step 7: skills install SKIPPED (category skills not declared)"
 fi
 
-# DGN-402 (grill r2 MAJOR-2): reconcile pack-owned preserve entries for this
-# pack against the current manifest consumer set on every install/reinstall
-# (runs even when the consumer set is empty so demoted packs shed their
-# stale entries; hand-written entries are never touched).
+# ---------- DGN-227 B3/D2: ledger finalize + --upgrade stale removal --------
+# Rehearsal ordering note (OPEN QUESTION): spec D2 orders the phases
+# remove -> apply -> re-record; here the removal diff runs AFTER apply using
+# the freshly recorded ledger (old-ledger snapshot taken first). End state is
+# identical (a stale path can never equal a new path), but it deviates from
+# the spec's literal phase order -- escalated, see the rehearsal report.
+OLD_LEDGER_SNAP=""
+if [[ "$UPGRADE" -eq 1 ]]; then
+  if [[ -f "$LEDGER_FILE" ]]; then
+    OLD_LEDGER_SNAP="$(mktemp)"
+    cp "$LEDGER_FILE" "$OLD_LEDGER_SNAP"
+  else
+    # legacy ledger-less install (pre-DGN-227): removal diff has no source.
+    _log "  WARN: --upgrade with NO prior ledger (legacy install) -- stale-removal phase SKIPPED (loud, not silent); the ledger recorded now arms removal semantics for the NEXT upgrade"
+  fi
+fi
+
+_ledger_finalize
+
+if [[ "$UPGRADE" -eq 1 && -n "$OLD_LEDGER_SNAP" ]]; then
+  _log "  upgrade: stale diff (old ledger vs new payload set)"
+  UPG_BACKUP_DIR="$ROOT/files/_archive/pack-upgrade-$PACK_ID-$(date +%Y%m%d-%H%M%S)"
+  while IFS= read -r stale; do
+    [[ -n "$stale" ]] || continue
+    if _ledger_paths "$LEDGER_FILE" | grep -qxF "$stale"; then
+      continue   # still in the new target set -- not stale
+    fi
+    if [[ ! -e "$ROOT/$stale" ]]; then
+      _log "  upgrade: stale ledger entry has no file on disk: $stale (ledger drift -- skipping)"
+      continue
+    fi
+    # (a) plists get a launchd bootout BEFORE file removal (D2 phase 1a).
+    if [[ "$stale" == *.plist ]]; then
+      _stale_label="$(basename "$stale" .plist)"
+      if [[ -n "${DOGANY_LAUNCHD_CAPTURE:-}" ]]; then
+        printf 'launchctl bootout gui/UID/%s\n' "$_stale_label" >> "$DOGANY_LAUNCHD_CAPTURE"
+        _log "  upgrade: (rehearsal) bootout captured for $_stale_label"
+      else
+        launchctl bootout "gui/$(id -u)/$_stale_label" >/dev/null 2>&1 || true
+        rm -f "$HOME/Library/LaunchAgents/$(basename "$stale")" 2>/dev/null || true
+        _log "  upgrade: booted out + unstaged launchd unit $_stale_label"
+      fi
+    fi
+    # (b) NM3 backup, then remove.
+    mkdir -p "$UPG_BACKUP_DIR/$(dirname "$stale")"
+    cp -p "$ROOT/$stale" "$UPG_BACKUP_DIR/$stale"
+    rm -f "$ROOT/$stale"
+    _log "  upgrade: removed stale pack file: $stale (backup: files/_archive/$(basename "$UPG_BACKUP_DIR")/)"
+  done < <(_ledger_paths "$OLD_LEDGER_SNAP")
+  rm -f "$OLD_LEDGER_SNAP"
+fi
+
+# DGN-227 B3/P7: instance consumption record -- DOGANY_PACKS list-form upsert
+# in .instance.conf (id@version entries; other packs' entries preserved).
+python3 - "$ROOT/.instance.conf" "$PACK_ID" "$PACK_VERSION" <<'PYEOF'
+import sys, pathlib
+conf = pathlib.Path(sys.argv[1])
+pid, ver = sys.argv[2], sys.argv[3]
+lines = conf.read_text(encoding="utf-8").splitlines() if conf.exists() else []
+entry = f"{pid}@{ver}"
+found = False
+for i, ln in enumerate(lines):
+    if ln.startswith("DOGANY_PACKS="):
+        items = [x for x in ln.split("=", 1)[1].split(",") if x]
+        items = [x for x in items if x.split("@", 1)[0] != pid]
+        items.append(entry)
+        lines[i] = "DOGANY_PACKS=" + ",".join(items)
+        found = True
+        break
+if not found:
+    lines.append("DOGANY_PACKS=" + entry)
+conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"[packs-record] DOGANY_PACKS upserted: {entry}")
+PYEOF
+_log "  .instance.conf DOGANY_PACKS upserted ($PACK_ID@$PACK_VERSION)"
+
+# DGN-227 D1/P18 (replaces DGN-402 grill r2 MAJOR-2 predicate): reconcile
+# pack-tagged preserve entries against the INSTALL LEDGER on every
+# install/reinstall/upgrade; hand-written (untagged) entries never touched.
 _preserve_reconcile
 
 # ---------- STEP 7b: AGENT.md fragment append (rendered, idempotent) --------
@@ -909,11 +1110,27 @@ if has_cat agent_md_fragment; then
   AGENT_MD="$ROOT/AGENT.md"
   AGENT_ADD="$PKG_PAYLOAD/AGENT.md.add"
 
+  # DGN-227 D2/P8: BEGIN/END marker-pair block (HTML comment pair for md).
+  MD_PAIR_BEGIN="<!-- DOGANY-PACK:$PACK_ID:BEGIN -->"
+  MD_PAIR_END="<!-- DOGANY-PACK:$PACK_ID:END -->"
+
   if [[ -f "$AGENT_ADD" ]]; then
     if [[ ! -f "$AGENT_MD" ]]; then
       _fail "step 7b: AGENT.md not found at $AGENT_MD (mint incomplete?)"
     fi
-    if grep -qF "$AGENT_MARKER" "$AGENT_MD" 2>/dev/null; then
+    if [[ "$UPGRADE" -eq 1 ]] && grep -qF "$MD_PAIR_BEGIN" "$AGENT_MD" 2>/dev/null; then
+      _tmp_md="$(mktemp)"
+      awk -v b="$MD_PAIR_BEGIN" -v e="$MD_PAIR_END" '
+        $0 == b { inblk=1; next }
+        $0 == e { inblk=0; next }
+        !inblk { print }' "$AGENT_MD" > "$_tmp_md"
+      mv "$_tmp_md" "$AGENT_MD"
+      _log "  upgrade: excised prior AGENT.md fragment block (marker pair)"
+    elif [[ "$UPGRADE" -eq 1 ]] && grep -qF "$AGENT_MARKER" "$AGENT_MD" 2>/dev/null; then
+      _fail "step 7b: --upgrade found a LEGACY single-marker AGENT.md fragment (no BEGIN/END pair) -- cannot bound it mechanically. Manual migration: remove the old block, then re-run (loud-FAIL by design, DGN-227 D2)"
+    fi
+    if grep -qF "$MD_PAIR_BEGIN" "$AGENT_MD" 2>/dev/null \
+       || { [[ "$UPGRADE" -eq 0 ]] && grep -qF "$AGENT_MARKER" "$AGENT_MD" 2>/dev/null; }; then
       _log "  AGENT.md fragment already appended (idempotent, skipping)"
     else
       # Render the fragment through the same slug/root substitution as the
@@ -922,10 +1139,12 @@ if has_cat agent_md_fragment; then
       _render_to "$AGENT_ADD" "$RENDERED_ADD"
       {
         echo ""
+        echo "$MD_PAIR_BEGIN"
         cat "$RENDERED_ADD"
+        echo "$MD_PAIR_END"
       } >> "$AGENT_MD"
       rm -f "$RENDERED_ADD"
-      _log "  appended AGENT.md.add (rendered) to AGENT.md (marker: $AGENT_MARKER)"
+      _log "  appended AGENT.md.add (rendered, marker pair) to AGENT.md (marker: $AGENT_MARKER)"
     fi
   else
     _log "  no AGENT.md.add in package (skipping)"
