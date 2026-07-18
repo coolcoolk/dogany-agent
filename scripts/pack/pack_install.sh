@@ -632,32 +632,12 @@ fi
 mkdir -p "$LOG_DIR"
 _log "=== pack-install START pack=$PACK_ID slug=$SLUG root=$ROOT ==="
 
-# ---------- DGN-227 D1/D2: --upgrade ledger-diff phase ----------------------
-# Runs before STEP 2 so the old ledger is read before the new one overwrites it.
+# DGN-227 D2 note: the --upgrade stale-removal phase (ledger diff + bootout +
+# NM3 backup + removal + ledger re-record) lives AFTER the apply steps, next
+# to _preserve_reconcile -- the old ledger stays untouched on disk until
+# _ledger_finalize there, so the diff source survives the whole apply pass.
 if [[ "${UPGRADE:-0}" -eq 1 ]]; then
   _log "=== pack-install UPGRADE pack=$PACK_ID slug=$SLUG root=$ROOT ==="
-  OLD_LEDGER="$LEDGER_DIR/$PACK_ID.files"
-  if [[ ! -f "$OLD_LEDGER" ]]; then
-    _log "WARN: no existing ledger at $OLD_LEDGER -- skipping stale-file removal phase (first upgrade from pre-ledger install)"
-  else
-    _log "upgrade phase 1: diff existing ledger vs new payload"
-    while IFS= read -r entry; do
-      [[ "$entry" == \#* || -z "$entry" ]] && continue
-      full_path="$ROOT/$entry"
-      if [[ ! -f "$full_path" ]]; then
-        _log "  stale entry (file already gone): $entry"
-      else
-        _log "  [upgrade] stale: $entry"
-        case "$entry" in
-          routines/*.plist)
-            _log "  [upgrade] (stub) would: launchctl bootout gui/$(id -u) <label>"
-            ;;
-        esac
-      fi
-    done < "$OLD_LEDGER"
-    _log "upgrade phase 1: stale-file scan done"
-  fi
-  _log "upgrade phase 2/3: apply new payload and re-record ledger (falling through to normal install)"
 fi
 
 # ---------- STEP 2: package copy (declared categories only) ------------------
@@ -788,10 +768,6 @@ else
 fi
 
 _log "step 2: package copy done"
-
-# DGN-227 B3/P25: finalize the install ledger (all _ledger_record calls above
-# staged into LEDGER_STAGE; write sorted+deduped to LEDGER_FILE now).
-_ledger_finalize
 
 # ---------- STEP 3: agent.conf fragment append (idempotent) -----------------
 if has_cat agent_conf_fragment; then

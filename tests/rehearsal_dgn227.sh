@@ -1,245 +1,316 @@
-#!/usr/bin/env bash
-# rehearsal_dgn227.sh -- DGN-227 sandbox rehearsal harness (R1-R5)
-# Tests agent class install paths using FAKE_HOME. No launchctl. No ~/.dogany touch.
-set -euo pipefail
+#!/bin/bash
+# rehearsal_dgn227.sh -- DGN-227 sandbox implementation rehearsal harness.
+# Scripted assertions R1-R5; exits non-zero on any failure.
+#
+# SAFETY: every scenario runs against a throwaway FAKE_HOME (mktemp).
+# No launchd unit is ever bootstrapped (DOGANY_LAUNCHD_CAPTURE seam),
+# no real ~/.dogany state is touched, no network, no bot token.
+# mint.sh is STUBBED (real minting needs token + venv build): the inline
+# stub builds the instance skeleton from the shipped template, mirroring
+# the mint steps this rehearsal depends on (AGENT.md copy, plist rename,
+# plists.defer render, .instance.conf identity keys).
+set -u
 
-SANDBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MINT_STUB="$SANDBOX_ROOT/scripts/mint_stub.sh"
-MINT_RUN="$SANDBOX_ROOT/scripts/pack/mint_run.sh"
-PACK_INSTALL="$SANDBOX_ROOT/scripts/pack/pack_install.sh"
-CATALOG="$SANDBOX_ROOT/packs/catalog.json"
+SANDBOX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PASS=0
+FAIL=0
+CURRENT=""
 
-PASS=0; FAIL=0; ERRORS=""
-REAL_HOME="$HOME"
+say()  { printf '%s\n' "$*"; }
+ok()   { PASS=$((PASS+1)); say "  ok: $*"; }
+bad()  { FAIL=$((FAIL+1)); say "  FAIL[$CURRENT]: $*"; }
+assert() { # assert <desc> <cmd...>
+  local desc="$1"; shift
+  if "$@" >/dev/null 2>&1; then ok "$desc"; else bad "$desc"; fi
+}
 
-_assert() {
-  local desc="$1" cond="$2"
-  if eval "$cond" 2>/dev/null; then
-    echo "  PASS: $desc"
-    PASS=$((PASS+1))
-  else
-    echo "  FAIL: $desc  [cond: $cond]"
-    FAIL=$((FAIL+1))
-    ERRORS="${ERRORS}\n  - $desc"
+# ---------------------------------------------------------------------------
+# mint stub -- skeleton of a minted instance (see header note)
+# ---------------------------------------------------------------------------
+mint_stub() { # mint_stub <root> <slug>
+  local root="$1" slug="$2"
+  local tpl="$SANDBOX/agents/.template"
+  mkdir -p "$root/bridge" "$root/config" "$root/database" "$root/routines/lib" \
+           "$root/files/handoff" "$root/files/_archive" "$root/scripts" \
+           "$root/.claude/skills-bundle" "$root/.claude/skills" \
+           "$root/.telegram_bot/logs" "$root/memories"
+  cp "$tpl/AGENT.md" "$root/AGENT.md"
+  cp "$tpl/routines/"*.sh "$root/routines/" 2>/dev/null || true
+  cp "$tpl/routines/"*.py "$root/routines/" 2>/dev/null || true
+  cp -R "$tpl/routines/lib/." "$root/routines/lib/" 2>/dev/null || true
+  local p np
+  for p in "$tpl/routines/"*.plist; do
+    [ -e "$p" ] || continue
+    np="$(basename "$p")"
+    np="${np//telegram-agent/$slug}"
+    cp "$p" "$root/routines/$np"
+  done
+  if [ -f "$tpl/routines/plists.defer" ]; then
+    sed "s/telegram-agent/$slug/g" "$tpl/routines/plists.defer" > "$root/routines/plists.defer"
   fi
+  printf '{\n  "model": "sonnet"\n}\n' > "$root/.claude/settings.json"
+  echo "AGENT_LANG=ko" > "$root/config/agent.conf"
+  : > "$root/config/lifekit.conf"
+  {
+    echo "DOGANY_AGENT_NAME=$slug"
+    echo "DOGANY_AGENT_LABEL=$slug"
+    echo "DOGANY_USER_LABEL=you"
+    echo "DOGANY_AGENT_PREFIX=[agent]"
+    echo "DOGANY_MINTED_AT=2026-07-18"
+  } > "$root/.instance.conf"
+  : > "$root/bridge/start.sh"
+}
+export SANDBOX
+export -f mint_stub
+
+# run_flow <fake_home> <script> -- run a driver snippet in a subshell with
+# install.sh sourced as a library against the fake HOME.
+run_flow() {
+  local fake_home="$1"; shift
+  local log="$fake_home/flow.log"
+  (
+    export HOME="$fake_home"
+    export DOGANY_INSTALL_LIB=1
+    export DOGANY_INSTALL_PINNED=1
+    export DOGANY_LAUNCHD_CAPTURE="$fake_home/launchd.capture"
+    cd "$SANDBOX"
+    driver="$*"
+    set --   # clear positional params: install.sh top-level parses "$@"
+    # shellcheck disable=SC1091
+    source "$SANDBOX/install.sh"
+    trap - ERR
+    DOGANY_LANG=ko
+    DRY_RUN=0
+    eval "$driver"
+  ) >>"$log" 2>&1
 }
 
-_setup_fake_home() {
-  local fh; fh="$(mktemp -d)"
-  export HOME="$fh"
-  echo "$fh"
-}
+hr() { printf -- '------------------------------------------------------------\n'; }
+canon() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
 
-_teardown_fake_home() {
-  local fh="$1"
-  export HOME="$REAL_HOME"
-  rm -rf "$fh" 2>/dev/null || true
-}
+# ===========================================================================
+# R1: MAIN mint via the new branch path
+# ===========================================================================
+CURRENT=R1
+hr; say "R1: main mint (class record / marker / registry / defer respected)"
+H1="$(mktemp -d /tmp/dgn227-r1.XXXXXX)"
+R1_ROOT="$H1/.dogany/main"
+mint_stub "$R1_ROOT" "dogany"
+run_flow "$H1" '
+  step_agent_class
+  [ "$DOGANY_AGENT_CLASS" = "main" ] || { echo "class not main"; exit 10; }
+  dgn227_postmint "'"$R1_ROOT"'"
+  write_lite_marker "'"$R1_ROOT"'"
+' || bad "flow exited non-zero (see $H1/flow.log)"
 
-_stub_mint() {
-  local root="$1" name="${2:-dogany}" lang="${3:-en}"
-  bash "$MINT_STUB" --root "$root" --name "$name" --lang "$lang" \
-    --owner-id "12345" --tz "Asia/Seoul" --core-only --force
-}
+assert "class recorded main in .instance.conf" \
+  grep -qx "DOGANY_AGENT_CLASS=main" "$R1_ROOT/.instance.conf"
+assert "marker points to main root" \
+  bash -c "[ \"\$(cat '$H1/.dogany/lite_instance')\" = \"\$(cd '$R1_ROOT' && pwd -P)\" ]"
+assert "registry has exactly 1 entry" \
+  bash -c "[ \"\$(wc -l < '$H1/.dogany/instances' | tr -d ' ')\" = 1 ]"
+assert "registry entry is main" \
+  grep -q "^main	" "$H1/.dogany/instances"
+assert "role stamped (placeholder gone)" \
+  bash -c "! grep -qF '(set at onboarding -- one prose line' '$R1_ROOT/AGENT.md'"
+assert "Q6 excised from onboarding block" \
+  bash -c "! grep -q '6\\. role' '$R1_ROOT/AGENT.md'"
+assert "KIT=lifekit anchored (main)" \
+  grep -qx "KIT=lifekit" "$R1_ROOT/config/agent.conf"
+assert "lifekit.conf pending (main)" \
+  grep -qx "LIFEKIT=pending" "$R1_ROOT/config/lifekit.conf"
+assert "no generic-brief scheduling on main (no deferred load captured)" \
+  bash -c "! grep -q -- '--deferred' '$H1/launchd.capture' 2>/dev/null"
+run_flow "$H1" '
+  plist_is_deferred "'"$R1_ROOT"'/routines" "com.telegram-skill-bot.dogany.generic-brief-morning.plist" || exit 11
+  plist_is_deferred "'"$R1_ROOT"'/routines" "com.telegram-skill-bot.dogany.consolidate-0430.plist" && exit 12
+  exit 0
+' && ok "loader defer predicate: generic-brief deferred, core routine not" \
+  || bad "loader defer predicate wrong (see $H1/flow.log)"
 
-_stamp_role() {
-  local root="$1" prose="$2"
-  bash "$MINT_RUN" stamp-role --root "$root" --role "$prose"
-}
+# ===========================================================================
+# R2: BLANK DOMAIN standalone mint
+# ===========================================================================
+CURRENT=R2
+hr; say "R2: blank domain (lifekit off / generic-brief scheduled / no migration keys)"
+H2="$(mktemp -d /tmp/dgn227-r2.XXXXXX)"
+R2_ROOT="$H2/.dogany/agents/zenith"
+run_flow "$H2" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=zenith
+  DOGANY_ROLE_PROSE="tax adviser -- personal tax filing and deduction strategy"
+  step_agent_class
+  [ "$INSTALL_ROOT" = "'"$R2_ROOT"'" ] || { echo "domain root not derived: $INSTALL_ROOT"; exit 10; }
+  mint_stub "'"$R2_ROOT"'" zenith
+  dgn227_postmint "'"$R2_ROOT"'"
+  write_lite_marker "'"$R2_ROOT"'"
+' || bad "flow exited non-zero (see $H2/flow.log)"
 
-_conf_set() {
-  local conf="$1" key="$2" val="$3"
-  if grep -q "^${key}=" "$conf" 2>/dev/null; then
-    local tmp; tmp="$(mktemp)"
-    grep -v "^${key}=" "$conf" > "$tmp"
-    printf '%s=%s\n' "$key" "$val" >> "$tmp"
-    mv "$tmp" "$conf"
-  else
-    printf '%s=%s\n' "$key" "$val" >> "$conf"
-  fi
-}
+assert "class recorded domain" \
+  grep -qx "DOGANY_AGENT_CLASS=domain" "$R2_ROOT/.instance.conf"
+assert "LIFEKIT=off" \
+  grep -qx "LIFEKIT=off" "$R2_ROOT/config/lifekit.conf"
+assert "generic-brief explicit scheduling captured (deferred load call)" \
+  grep -q "start --root $R2_ROOT --deferred" "$H2/launchd.capture"
+assert "registry has exactly 1 entry (domain)" \
+  bash -c "[ \"\$(wc -l < '$H2/.dogany/instances' | tr -d ' ')\" = 1 ] && grep -q '^domain	' '$H2/.dogany/instances'"
+assert "marker points to domain root" \
+  bash -c "[ \"\$(cat '$H2/.dogany/lite_instance')\" = \"\$(cd '$R2_ROOT' && pwd -P)\" ]"
+assert "role stamped with blank prose" \
+  grep -q "tax adviser" "$R2_ROOT/AGENT.md"
+assert "no MIGRATION_PEER key (fresh => discriminator false)" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$R2_ROOT/config/agent.conf'"
+assert "no legacy HANDOFF_PEER_AG key" \
+  bash -c "! grep -q '^HANDOFF_PEER_AG=' '$R2_ROOT/config/agent.conf'"
+assert "no launchd bootstrap actually executed (capture-only seam)" \
+  bash -c "! grep -q 'bootstrap' '$H2/launchd.capture'"
 
-_registry_write() {
-  local fh="$1" class="$2" root="$3"
-  mkdir -p "$fh/.dogany"
-  local reg="$fh/.dogany/instances"
-  if [ -f "$reg" ]; then
-    local tmp; tmp="$(mktemp)"
-    grep -v "	${root}$" "$reg" > "$tmp" 2>/dev/null || true
-    printf '%s\t%s\n' "$class" "$root" >> "$tmp"
-    mv "$tmp" "$reg"
-  else
-    printf '%s\t%s\n' "$class" "$root" > "$reg"
-  fi
-}
+# ===========================================================================
+# R3: domain-from-catalog with the dev pack (real pack_install chain)
+# ===========================================================================
+CURRENT=R3
+hr; say "R3: domain-from-catalog (dev pack: ledger / preserve tags / reconcile)"
+H3="$(mktemp -d /tmp/dgn227-r3.XXXXXX)"
+R3_ROOT="$H3/.dogany/agents/dev"
+run_flow "$H3" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=dev
+  step_agent_class
+  [ "$DOGANY_AGENT_SLUG" = "dev" ] || { echo "slug not derived from catalog id"; exit 10; }
+  [ -n "$AGENT_ROLE_PROSE" ] || { echo "role prose not resolved from catalog"; exit 11; }
+  mint_stub "'"$R3_ROOT"'" dev
+  dgn227_postmint "'"$R3_ROOT"'"
+  write_lite_marker "'"$R3_ROOT"'"
+' || bad "flow exited non-zero (see $H3/flow.log)"
 
-# ---- R1: mint MAIN ----
-echo ""
-echo "=== R1: main mint ==="
-FH1="$(_setup_fake_home)"
-R1_ROOT="$FH1/.dogany/main"
-mkdir -p "$R1_ROOT"
-_stub_mint "$R1_ROOT" "dogany" "en"
+LEDGER="$R3_ROOT/config/packs/dev.files"
+PRESERVE="$R3_ROOT/.claude/.dogany-preserve"
+assert "pack ledger file written" test -f "$LEDGER"
+assert "ledger records pack routine" \
+  grep -qx "routines/dev-digest.sh" "$LEDGER"
+assert "ledger records rendered plist (slug-derived name)" \
+  grep -qx "routines/com.telegram-skill-bot.dev.dev-digest.plist" "$LEDGER"
+assert "ledger records pack script" \
+  grep -qx "scripts/secret-sweep.sh" "$LEDGER"
+assert "ledger header carries pack_version" \
+  grep -q "^# pack_version: 0.1.0" "$LEDGER"
+assert "preserve entry tagged '# pack:dev' (routines zone)" \
+  grep -q "^routines/dev-digest.sh  # pack:dev" "$PRESERVE"
+assert "reconcile kept net-new entries in the SAME run" \
+  grep -q "routines/com.telegram-skill-bot.dev.dev-digest.plist  # pack:dev" "$PRESERVE"
+assert "AGENT.md fragment wrapped in BEGIN/END pair" \
+  bash -c "grep -qF '<!-- DOGANY-PACK:dev:BEGIN -->' '$R3_ROOT/AGENT.md' && grep -qF '<!-- DOGANY-PACK:dev:END -->' '$R3_ROOT/AGENT.md'"
+assert "DOGANY_PACKS list-form upsert (dev@0.1.0)" \
+  grep -q "^DOGANY_PACKS=dev@0.1.0" "$R3_ROOT/.instance.conf"
+assert "ledger-vs-disk consistency (every entry exists, H1-9)" \
+  bash -c "rc=0; while read -r e; do [ -e \"$R3_ROOT/\$e\" ] || rc=1; done < <(grep -v '^#' '$LEDGER' | grep -v '^$'); exit \$rc"
 
-_conf_set "$R1_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "main"
-_registry_write "$FH1" "main" "$R1_ROOT"
-printf '%s\n' "$R1_ROOT" > "$FH1/.dogany/lite_instance"
-_stamp_role "$R1_ROOT" "생활비서 -- 일정/소통/정보/생활 전반 지원"
+# ===========================================================================
+# R4: main-add flow onto R2's HOME (G2)
+# ===========================================================================
+CURRENT=R4
+hr; say "R4: main-add onto R2 home (registry 2 / marker last / gated flip)"
+R4_MAIN="$H2/.dogany/main"
 
-_assert "R1: class=main in .instance.conf" "grep -q 'DOGANY_AGENT_CLASS=main' '$R1_ROOT/.instance.conf'"
-_assert "R1: lite_instance marker exists" "[ -f '$FH1/.dogany/lite_instance' ]"
-_assert "R1: registry has 1 entry" "[ \"\$(wc -l < '$FH1/.dogany/instances' | tr -d ' ')\" -eq 1 ]"
-_assert "R1: role stamped (placeholder absent)" "! grep -q 'set at onboarding' '$R1_ROOT/AGENT.md'"
-_assert "R1: AGENT.md exists" "[ -f '$R1_ROOT/AGENT.md' ]"
-_teardown_fake_home "$FH1"
+# 4a. crash-order guard: finalize with NO minted main -> marker must not move
+run_flow "$H2" '
+  MAIN_ADD_FLOW=1
+  EXISTING_DOMAIN_ROOT="'"$R2_ROOT"'"
+  flow_main_add_finalize "'"$R4_MAIN"'" && exit 13
+  exit 0
+' && ok "finalize refuses before mint success (P28)" \
+  || bad "finalize did not refuse on missing AGENT.md"
+assert "marker STILL points at domain after refused finalize (marker-last)" \
+  bash -c "[ \"\$(cat '$H2/.dogany/lite_instance')\" = \"\$(cd '$R2_ROOT' && pwd -P)\" ]"
 
-# ---- R2: blank domain mint ----
-echo ""
-echo "=== R2: blank domain mint ==="
-FH2="$(_setup_fake_home)"
-R2_SLUG="my-domain"
-R2_ROOT="$FH2/.dogany/agents/$R2_SLUG"
-mkdir -p "$R2_ROOT"
-_stub_mint "$R2_ROOT" "$R2_SLUG" "en"
+# 4b. real flow: choice=2 -> relax ledger -> mint main -> finalize (gate FAIL)
+mint_stub "$R4_MAIN" "dogany"
+rm -f "$R4_MAIN/routines/lib/handoff-aggregate"   # break the edition gate
+run_flow "$H2" '
+  DOGANY_MAIN_ADD_CHOICE=2
+  export DOGANY_GATE_LOADED_OVERRIDE=1
+  check_lite_single_agent "'"$R4_MAIN"'" || { echo "single-agent check refused"; exit 10; }
+  [ "$MAIN_ADD_FLOW" = "1" ] || { echo "main-add flow not armed"; exit 11; }
+  step_agent_class
+  dgn227_postmint "'"$R4_MAIN"'"
+  flow_main_add_finalize "'"$R4_MAIN"'"
+' || bad "main-add flow exited non-zero (see $H2/flow.log)"
 
-_conf_set "$R2_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "domain"
-printf 'LIFEKIT=off\n' > "$R2_ROOT/config/lifekit.conf"
-_registry_write "$FH2" "domain" "$R2_ROOT"
-printf '%s\n' "$R2_ROOT" > "$FH2/.dogany/lite_instance"
-_stamp_role "$R2_ROOT" "my custom role -- blank domain agent"
+assert "limit ledger persisted (DOGANY_MAX_AGENTS=2)" \
+  grep -qx "DOGANY_MAX_AGENTS=2" "$H2/.dogany/config"
+assert "registry grew to 2 entries" \
+  bash -c "[ \"\$(wc -l < '$H2/.dogany/instances' | tr -d ' ')\" = 2 ]"
+assert "registry holds domain + main" \
+  bash -c "grep -q '^domain	' '$H2/.dogany/instances' && grep -q '^main	' '$H2/.dogany/instances'"
+assert "marker re-pointed to main root LAST" \
+  bash -c "[ \"\$(cat '$H2/.dogany/lite_instance')\" = \"\$(cd '$R4_MAIN' && pwd -P)\" ]"
+assert "peer registered on main with display name" \
+  bash -c "grep -q \"BRIEF_PEERS=.*\$(cd '$R2_ROOT' && pwd -P)|zenith\" '$R4_MAIN/config/agent.conf'"
+assert "gate FAIL => domain stays standalone" \
+  grep -qx "BRIEF_ROUTING=standalone" "$R2_ROOT/config/agent.conf"
+assert "gate FAIL => no HANDOFF_PEER_MAIN written" \
+  bash -c "! grep -q '^HANDOFF_PEER_MAIN=' '$R2_ROOT/config/agent.conf'"
 
-_assert "R2: class=domain in .instance.conf" "grep -q 'DOGANY_AGENT_CLASS=domain' '$R2_ROOT/.instance.conf'"
-_assert "R2: LIFEKIT=off in lifekit.conf" "grep -q 'LIFEKIT=off' '$R2_ROOT/config/lifekit.conf'"
-_assert "R2: registry has 1 entry" "[ \"\$(wc -l < '$FH2/.dogany/instances' | tr -d ' ')\" -eq 1 ]"
-_assert "R2: no MIGRATION_PEER in agent.conf (fresh)" "! grep -q 'MIGRATION_PEER' '$R2_ROOT/config/agent.conf'"
-_assert "R2: role stamped" "! grep -q 'set at onboarding' '$R2_ROOT/AGENT.md'"
-_teardown_fake_home "$FH2"
+# 4c. resolve the gate (aggregation edition present) -> re-run -> flips
+cp "$SANDBOX/agents/.template/routines/lib/handoff-aggregate" \
+   "$R4_MAIN/routines/lib/handoff-aggregate"
+run_flow "$H2" '
+  export DOGANY_GATE_LOADED_OVERRIDE=1
+  MAIN_ADD_FLOW=1
+  EXISTING_DOMAIN_ROOT="$(cd "'"$R2_ROOT"'" && pwd -P)"
+  flow_main_add_finalize "'"$R4_MAIN"'"
+' || bad "gate-pass re-run exited non-zero (see $H2/flow.log)"
+assert "gate PASS => domain flips to submit" \
+  grep -qx "BRIEF_ROUTING=submit" "$R2_ROOT/config/agent.conf"
+assert "gate PASS => HANDOFF_PEER_MAIN recorded (briefing axis)" \
+  grep -qx "HANDOFF_PEER_MAIN=$R4_MAIN" "$R2_ROOT/config/agent.conf"
+assert "flip did NOT leak into migration family (still no MIGRATION_PEER)" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$R2_ROOT/config/agent.conf'"
 
-# ---- R3: domain-from-catalog (dev pack) ----
-echo ""
-echo "=== R3: domain-from-catalog (dev pack) ==="
-FH3="$(_setup_fake_home)"
-R3_SLUG="dev"
-R3_ROOT="$FH3/.dogany/agents/$R3_SLUG"
-mkdir -p "$R3_ROOT"
-_stub_mint "$R3_ROOT" "$R3_SLUG" "en"
-_conf_set "$R3_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "domain"
+# ===========================================================================
+# R5: --upgrade rehearsal (dev pack payload rename -> stale removal)
+# ===========================================================================
+CURRENT=R5
+hr; say "R5: --upgrade (ledger diff removal / bootout stub / re-record)"
+PK="$(mktemp -d /tmp/dgn227-r5-packs.XXXXXX)"
+cp -R "$SANDBOX/packs/." "$PK/"
+mv "$PK/dev/refdev/routines/dev-digest.sh" "$PK/dev/refdev/routines/dev-digest2.sh"
+mv "$PK/dev/refdev/routines/com.telegram-skill-bot.refdev.dev-digest.plist" \
+   "$PK/dev/refdev/routines/com.telegram-skill-bot.refdev.dev-digest2.plist"
 
-DEV_PACK_DIR="$SANDBOX_ROOT/packs/dev"
-DEV_MANIFEST="$DEV_PACK_DIR/pack-manifest.json"
-if [[ -f "$DEV_MANIFEST" ]]; then
-  set +e
-  PACK_OUT="$(bash "$PACK_INSTALL" "$R3_SLUG" "$R3_ROOT" \
-    --pack dev --catalog "$CATALOG" \
-    --no-start --no-state 2>&1)"
-  PACK_RC=$?
-  set -e
-  echo "  pack_install exit=$PACK_RC"
-  if [[ $PACK_RC -ne 0 ]]; then
-    echo "$PACK_OUT" | tail -15 | sed 's/^/    /'
-  fi
-  _assert "R3: pack_install succeeded" "[ $PACK_RC -eq 0 ]"
-  _assert "R3: ledger file written" "[ -f '$R3_ROOT/config/packs/dev.files' ]"
-  if [[ -f "$R3_ROOT/.claude/.dogany-preserve" ]]; then
-    # dev pack has no lib/routines/plists/skills categories, so it generates
-    # no pack-owned preserve entries -- the file exists but only has header lines.
-    # Check: any pack-tagged entries use the new format, never the old one.
-    _assert "R3: old tag format absent" "! grep -q '# pack-owned:' '$R3_ROOT/.claude/.dogany-preserve'"
-    if grep -q '# pack:dev' "$R3_ROOT/.claude/.dogany-preserve" 2>/dev/null; then
-      _assert "R3: preserve tagged # pack:dev (if any)" "grep -q '# pack:dev' '$R3_ROOT/.claude/.dogany-preserve'"
-    else
-      echo "  INFO: no pack:dev entries in .dogany-preserve (dev pack has no preserve-generating categories) -- PASS"
-      PASS=$((PASS+1))
-    fi
-  else
-    echo "  INFO: no .dogany-preserve (pack has no preserve entries) -- counting as PASS"
-    PASS=$((PASS+2))
-  fi
-else
-  echo "  INFO: dev pack has no pack-manifest.json -- skipping pack_install subtests"
-  _assert "R3: dev pack dir exists" "[ -d '$DEV_PACK_DIR' ]"
-  PASS=$((PASS+3))
-fi
-_teardown_fake_home "$FH3"
+R5_LOG="$H3/upgrade.log"
+(
+  export HOME="$H3"
+  export DOGANY_LAUNCHD_CAPTURE="$H3/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" dev "$R3_ROOT" \
+    --pack dev --catalog "$PK/catalog.json" --upgrade --no-start --no-state
+) >"$R5_LOG" 2>&1 || bad "upgrade run exited non-zero (see $R5_LOG)"
 
-# ---- R4: main-add flow (domain exists, add main) ----
-echo ""
-echo "=== R4: main-add flow (domain -> add main) ==="
-FH4="$(_setup_fake_home)"
+assert "stale routine removed per ledger diff" \
+  bash -c "! test -e '$R3_ROOT/routines/dev-digest.sh'"
+assert "stale plist removed per ledger diff" \
+  bash -c "! test -e '$R3_ROOT/routines/com.telegram-skill-bot.dev.dev-digest.plist'"
+assert "renamed payload files applied" \
+  bash -c "test -f '$R3_ROOT/routines/dev-digest2.sh' && test -f '$R3_ROOT/routines/com.telegram-skill-bot.dev.dev-digest2.plist'"
+assert "bootout captured for the stale plist (stub, no live launchctl)" \
+  grep -q "bootout gui/UID/com.telegram-skill-bot.dev.dev-digest" "$H3/launchd.capture"
+assert "ledger re-recorded (new set, old entry gone)" \
+  bash -c "grep -qx 'routines/dev-digest2.sh' '$LEDGER' && ! grep -qx 'routines/dev-digest.sh' '$LEDGER'"
+assert "NM3 backup of removed files exists" \
+  bash -c "ls '$R3_ROOT/files/_archive/' | grep -q 'pack-upgrade-dev'"
+assert "preserve reconcile shed the stale tagged entries" \
+  bash -c "! grep -q '^routines/dev-digest.sh  # pack:dev' '$PRESERVE'"
+assert "preserve keeps the new tagged entries" \
+  grep -q "^routines/dev-digest2.sh  # pack:dev" "$PRESERVE"
+assert "hand-written preserve header untouched" \
+  bash -c "grep -q '^# .dogany-preserve' '$PRESERVE'"
+assert "AGENT.md fragment pair present exactly once after upgrade" \
+  bash -c "[ \"\$(grep -cF '<!-- DOGANY-PACK:dev:BEGIN -->' '$R3_ROOT/AGENT.md')\" = 1 ]"
 
-R4_DOMAIN_SLUG="my-domain"
-R4_DOMAIN_ROOT="$FH4/.dogany/agents/$R4_DOMAIN_SLUG"
-mkdir -p "$R4_DOMAIN_ROOT"
-_stub_mint "$R4_DOMAIN_ROOT" "$R4_DOMAIN_SLUG" "en"
-_conf_set "$R4_DOMAIN_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "domain"
-_registry_write "$FH4" "domain" "$R4_DOMAIN_ROOT"
-printf '%s\n' "$R4_DOMAIN_ROOT" > "$FH4/.dogany/lite_instance"
-
-R4_MAIN_ROOT="$FH4/.dogany/main"
-mkdir -p "$R4_MAIN_ROOT"
-_stub_mint "$R4_MAIN_ROOT" "dogany" "en"
-_conf_set "$R4_MAIN_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "main"
-_registry_write "$FH4" "main" "$R4_MAIN_ROOT"
-# main-add flow: marker re-pointed to main
-printf '%s\n' "$R4_MAIN_ROOT" > "$FH4/.dogany/lite_instance"
-
-_assert "R4: registry has 2 entries" "[ \"\$(wc -l < '$FH4/.dogany/instances' | tr -d ' ')\" -eq 2 ]"
-_assert "R4: registry has domain entry" "grep -q 'domain' '$FH4/.dogany/instances'"
-_assert "R4: registry has main entry" "grep -q 'main' '$FH4/.dogany/instances'"
-_assert "R4: marker re-pointed to main" "grep -q '$R4_MAIN_ROOT' '$FH4/.dogany/lite_instance'"
-_teardown_fake_home "$FH4"
-
-# ---- R5: --upgrade rehearsal ----
-echo ""
-echo "=== R5: --upgrade rehearsal ==="
-FH5="$(_setup_fake_home)"
-R5_SLUG="dev"
-R5_ROOT="$FH5/.dogany/agents/$R5_SLUG"
-mkdir -p "$R5_ROOT"
-_stub_mint "$R5_ROOT" "$R5_SLUG" "en"
-_conf_set "$R5_ROOT/.instance.conf" "DOGANY_AGENT_CLASS" "domain"
-
-DEV_MANIFEST="$SANDBOX_ROOT/packs/dev/pack-manifest.json"
-if [[ -f "$DEV_MANIFEST" ]]; then
-  set +e
-  bash "$PACK_INSTALL" "$R5_SLUG" "$R5_ROOT" \
-    --pack dev --catalog "$CATALOG" \
-    --no-start --no-state > /dev/null 2>&1
-  INSTALL_RC=$?
-  set -e
-
-  if [[ $INSTALL_RC -eq 0 && -f "$R5_ROOT/config/packs/dev.files" ]]; then
-    # Inject a fake stale entry
-    printf 'routines/old-stale-routine.sh\n' >> "$R5_ROOT/config/packs/dev.files"
-    # Create a real file for it so the upgrade path finds it as stale-but-present
-    touch "$R5_ROOT/routines/old-stale-routine.sh"
-
-    set +e
-    UPGRADE_OUT="$(bash "$PACK_INSTALL" "$R5_SLUG" "$R5_ROOT" \
-      --pack dev --catalog "$CATALOG" \
-      --no-start --no-state --upgrade 2>&1)"
-    UPGRADE_RC=$?
-    set -e
-    echo "  upgrade exit=$UPGRADE_RC"
-    _assert "R5: upgrade succeeded" "[ $UPGRADE_RC -eq 0 ]"
-    _assert "R5: ledger re-recorded after upgrade" "[ -f '$R5_ROOT/config/packs/dev.files' ]"
-    _assert "R5: stale entry logged" "echo \"\$UPGRADE_OUT\" | grep -q 'stale'"
-  else
-    echo "  INFO: initial install failed (RC=$INSTALL_RC) or no ledger -- counting as PASS"
-    PASS=$((PASS+3))
-  fi
-else
-  echo "  INFO: dev pack has no pack-manifest.json -- skipping R5"
-  PASS=$((PASS+3))
-fi
-_teardown_fake_home "$FH5"
-
-# ---- Summary ----
-echo ""
-echo "=============================="
-echo "RESULTS: $PASS passed, $FAIL failed"
-if [[ $FAIL -gt 0 ]]; then
-  printf "FAILURES:%b\n" "$ERRORS"
-  exit 1
-fi
-echo "ALL PASSED"
+# ===========================================================================
+hr
+say "RESULT: pass=$PASS fail=$FAIL"
+say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"
+[ "$FAIL" -eq 0 ] || exit 1
+exit 0

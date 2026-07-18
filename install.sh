@@ -449,8 +449,12 @@ submit_flip_gate() {
         "  [gate] aggregation library absent (routines/lib/handoff-aggregate) -- submit flip blocked" >&2
     return 1
   fi
-  if ! grep -l "handoff-aggregate" "$main_root/routines/generic-brief.sh" \
-         "$main_root"/routines/bundle/*.sh >/dev/null 2>&1; then
+  local edition_ok=1 s
+  for s in "$main_root/routines/generic-brief.sh" "$main_root"/routines/bundle/*.sh; do
+    [ -f "$s" ] || continue
+    if grep -q "handoff-aggregate" "$s" 2>/dev/null; then edition_ok=0; break; fi
+  done
+  if [ "$edition_ok" -ne 0 ]; then
     msg "  [게이트] 로드된 브리핑 스크립트가 취합판이 아님 -- submit 전환 불가" \
         "  [gate] loaded briefing script is not an aggregation-capable edition -- submit flip blocked" >&2
     return 1
