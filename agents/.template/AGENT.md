@@ -15,11 +15,11 @@ ALWAYS ASK ALL 5 IDENTITY QUESTIONS in order: Q1(name) -> Q2(emoji) -> Q3(addres
 Q6 (role) IS CONDITIONAL, not part of the always-5 (DGN-227 A3 "conditional retention"):
   ask Q6 ONLY IF the Role "Primary focus" slot STILL holds its onboarding placeholder
   (the line that begins with an open paren and the words "set at onboarding", naming the
-  main hat). If the placeholder is
-  absent (install stamped the role at A3 on ALL three paths -- main kit prose /
-  catalog role_prose / blank free-input prose -- which fills the slot AND excises this
-  Q6 block), the role is already set: DO NOT ask Q6, DO NOT re-ask it. Placeholder present
-  = old un-stamped instance (manual/pre-A3 mint) -> Q6 lives so the slot gets filled.
+  main hat). If the placeholder is absent (install stamped the role at A3 on ALL three
+  paths -- main kit prose / catalog role_prose / blank free-input prose -- which fills
+  the slot AND excises this Q6 block), the role is already set: DO NOT ask Q6, DO NOT
+  re-ask it. Placeholder present = old un-stamped instance (manual/pre-A3 mint) -> Q6
+  lives so the slot gets filled.
   The placeholder presence is the SINGLE discriminator (same test in the onboarding
   SKILL.md and onboarding-check.py -- the 3 copies must agree).
 
