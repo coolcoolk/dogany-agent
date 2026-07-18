@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.__AGENT_NAME__.generic-brief-weekly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.__AGENT_NAME__.generic-brief-weekly</string>
+        <string>--friendly-name</string>
+        <string>generic-brief-weekly</string>
+        <string>--log</string>
+        <string>__PROJECT_ROOT__/.telegram_bot/logs/generic-brief-weekly.stdout.log</string>
+        <string>--</string>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/generic-brief.sh</string>
+        <string>weekly</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/generic-brief-weekly.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/generic-brief-weekly.stderr.log</string>
+</dict>
+</plist>

@@ -9,7 +9,9 @@
 #       on success: render structured diet/workout/balance from live values.
 #       on failure: fall back to Warg's inbox report.section.retro verbatim
 #         + annotate with snapshot generation time ("HH:MM 기준").
-#     section absent or stale: "워그 건강 리포트 미도착" one-liner.
+#     section absent or stale: a config-driven "<peer> health report not received"
+#       one-liner (peer name = RETRO_HEALTH_PEER_NAME, i18n default; never a
+#       hardcoded persona name -- DGN-420 generalization).
 #   always:
 #     (3) today's appointments (ask how they went)
 #     (4) tomorrow's appointments (next-day preview)
@@ -52,10 +54,22 @@ TZ_OFFSET_H="$(grep -E '^AGENT_TZ_OFFSET_HOURS=' "$AGENT_DIR/config/agent.conf" 
 TZ_OFFSET_H="${TZ_OFFSET_H:-0}"
 
 # ---- health source gate (config-driven, DEFAULT local) ----
-# RETRO_HEALTH_SOURCE=warg: attempt live read via Warg's lifekit.sh (DGN-396);
-# fall back to inbox section on any failure. Unset/empty -> local (no change).
+# RETRO_HEALTH_SOURCE=warg: attempt live read via a health peer's lifekit.sh
+# (DGN-396); fall back to inbox section on any failure. Unset/empty -> local.
+# NOTE (DGN-227 E1 / DGN-420): the "warg" value name is retained as the live
+# integration selector, but every USER-FACING string is parameterized by
+# RETRO_HEALTH_PEER_NAME below so this bundle routine is no longer literally
+# Warg-bound. A full N-peer generalization of the live-read machinery is a
+# separately-scoped work item (spec E1 tail).
 RETRO_HEALTH_SOURCE="$(grep -E '^RETRO_HEALTH_SOURCE=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 | tr -d '[:space:]' || true)"
 RETRO_HEALTH_SOURCE="${RETRO_HEALTH_SOURCE:-local}"
+# Health-peer display name for user-facing strings (config-driven; i18n default).
+# Empty/missing -> locale default ("건강 파트너" / "health partner"): never a
+# hardcoded persona name.
+RETRO_HEALTH_PEER_NAME="$(grep -E '^RETRO_HEALTH_PEER_NAME=' "$AGENT_DIR/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true)"
+if [[ -z "$RETRO_HEALTH_PEER_NAME" ]]; then
+  if [[ "$AGENT_LANG" == "ko" ]]; then RETRO_HEALTH_PEER_NAME="건강 파트너"; else RETRO_HEALTH_PEER_NAME="health partner"; fi
+fi
 
 # ---- (1)(2) health data: local or Warg section ----
 WARG_HEALTH_SECTION=""
@@ -183,7 +197,14 @@ except Exception:
       done
     fi
     # Fallback: section absent or stale -> one-liner (no time annotation needed).
-    [[ -z "$WARG_HEALTH_SECTION" ]] && WARG_HEALTH_SECTION="워그 건강 리포트 미도착"
+    if [[ -z "$WARG_HEALTH_SECTION" ]]; then
+      if [[ "$AGENT_LANG" == "ko" ]]; then
+        WARG_HEALTH_SECTION="${RETRO_HEALTH_PEER_NAME} 건강 리포트 미도착"
+      else
+        WARG_HEALTH_SECTION="${RETRO_HEALTH_PEER_NAME} health report not received"
+      fi
+    fi
+    HEALTH_MISSING_LINE="$WARG_HEALTH_SECTION"
   fi
 
 else
@@ -333,8 +354,8 @@ fi
 # Warg section render instruction (warg mode only, snapshot fallback path).
 WARG_HEALTH_NOTE=""
 if [[ "$RETRO_HEALTH_SOURCE" == "warg" && "$WARG_LIVE_OK" -eq 0 ]]; then
-  if [[ "$WARG_HEALTH_SECTION" == "워그 건강 리포트 미도착" ]]; then
-    WARG_HEALTH_NOTE="The warg health section reports '워그 건강 리포트 미도착' -- output that exact one-liner for the health section without elaboration."
+  if [[ "$WARG_HEALTH_SECTION" == "${HEALTH_MISSING_LINE:-}" ]]; then
+    WARG_HEALTH_NOTE="The health-peer section reports '${WARG_HEALTH_SECTION}' -- output that exact one-liner for the health section without elaboration."
   else
     # Snapshot fallback: annotate with generation time if available.
     if [[ -n "$WARG_SNAPSHOT_TIME" ]]; then

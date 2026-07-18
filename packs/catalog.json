@@ -4,15 +4,21 @@
     {
       "id": "health-trainer",
       "name_ko": "Dogany 헬스 트레이너",
+      "name_en": "Dogany Health Trainer",
       "tagline_ko": "운동/식단/영양을 관리해 장기적인 신체·정신 건강을 향상·유지하는 전담 트레이너",
+      "tagline_en": "A dedicated trainer managing workouts, diet, and nutrition for long-term physical and mental health",
       "role_prose_ko": "헬스트레이너 -- 운동/식단/영양 관리와 프로그램 실운용 (장기 신체적·정신적 건강 향상·유지)",
+      "role_prose_en": "Health trainer -- managing workouts/diet/nutrition and running programs (long-term physical and mental health)",
       "includes_ko": [
         "식단·운동 기록/설계",
         "프로젝트 원장(목표·제약·자원·취향) + 안전캡",
         "주간 코칭 브리핑 섹션",
         "기존 기록 이관"
       ],
-      "emoji_hints": ["💪", "🏋️"],
+      "emoji_hints": [
+        "💪",
+        "🏋️"
+      ],
       "tone_presets_ko": [
         "빡세게 몰아붙이는 코치형",
         "따뜻하게 격려하는 트레이너형",
@@ -21,29 +27,50 @@
       "migration_tooling": "database/migrations/health_to_warg.py",
       "knowledge_ko": "지식창고 kimwog 스냅샷 동봉 (릴리스 핀)",
       "package_dir": "health-trainer",
-      "domains": ["health", "헬스", "운동", "식단", "다이어트", "트레이닝"],
-      "status": "official"
+      "domains": [
+        "health",
+        "헬스",
+        "운동",
+        "식단",
+        "다이어트",
+        "트레이닝"
+      ],
+      "status": "official",
+      "pack_version": "0.0.1"
     },
     {
       "id": "dev",
       "name_ko": "Dogany 개발 에이전트",
+      "name_en": "Dogany Dev Agent",
       "tagline_ko": "코딩·시스템·자동화·인프라를 전담하는 개발 스페셜리스트",
+      "tagline_en": "A development specialist dedicated to coding, systems, automation, and infrastructure",
       "role_prose_ko": "개발 스페셜리스트 -- 코딩/시스템/자동화/인프라 (developer specialist)",
+      "role_prose_en": "Developer specialist -- coding/systems/automation/infrastructure",
       "includes_ko": [
         "티켓 규율 (worklog 기반, 슬러그 파생 ID)",
         "설계 그릴 워크플로 (adversarial review)",
         "스펙 우선 패칭 + 위임 규율",
         "커밋 체크포인트 + 시크릿 스윕/사용량 확인 스크립트"
       ],
-      "emoji_hints": ["⚙️", "🛠️"],
+      "emoji_hints": [
+        "⚙️",
+        "🛠️"
+      ],
       "tone_presets_ko": [
         "군더더기 없는 엔지니어형",
         "친절하게 설명하는 페어 프로그래머형",
         "직설적인 코드 리뷰어형"
       ],
       "package_dir": "dev",
-      "domains": ["dev", "개발", "코딩", "인프라", "자동화"],
-      "status": "official"
+      "domains": [
+        "dev",
+        "개발",
+        "코딩",
+        "인프라",
+        "자동화"
+      ],
+      "status": "official",
+      "pack_version": "0.1.0"
     }
   ]
 }

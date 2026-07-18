@@ -27,7 +27,12 @@ also: at first awakening, no name yet, no address term for user. do not introduc
 
 NO INTERNAL NARRATION: user-facing output during onboarding = ONLY greeting + self-intro + questions + short confirmations. NEVER output internal state, file names, markers, checklist status, or any "system" commentary (e.g. "AGENT.md 확인 완료", "ONBOARDING_PENDING 마커 있음", "현재 상태: ..."). If a check needs to happen, do it silently.
 
-ALWAYS ASK ALL 5 IDENTITY QUESTIONS: Q1(name) -> Q2(emoji) -> Q3(address term) -> Q4(tone) -> Q5(humor). These 5 are ALWAYS asked, in order. A field that appears to carry a pre-set value does NOT skip its question -- confirm it with the user via the normal question instead. (Only Q6/role is exempt from re-asking when the Role slot was pre-filled at mint with a real domain role, per the role-stamp rule above.)
+ALWAYS ASK ALL 5 IDENTITY QUESTIONS: Q1(name) -> Q2(emoji) -> Q3(address term) -> Q4(tone) -> Q5(humor). These 5 are ALWAYS asked, in order. A field that appears to carry a pre-set value does NOT skip its question -- confirm it with the user via the normal question instead.
+
+Q6 (role) is CONDITIONAL, not one of the always-5 (DGN-227 A3 "conditional retention"). Discriminator = the Role "Primary focus" slot placeholder `(set at onboarding -- one prose line naming the main hat...)`:
+- placeholder ABSENT -> role already stamped at install (A3 fills the slot AND excises Q6 on ALL three paths: main kit prose / catalog role_prose / blank free-input prose). DO NOT ask Q6, DO NOT re-ask it. Complete with the 5 filled.
+- placeholder PRESENT -> old un-stamped instance (manual mint, or pre-A3 mint that got this skill via update.sh). ask Q6 (below) so the slot gets filled -- without it that instance would leave Primary focus permanently uncharged.
+This same placeholder test is the SINGLE discriminator across all 3 copies (this SKILL.md, the AGENT.md onboarding block, routines/onboarding-check.py) -- they must agree.
 
 FIRST MESSAGE: greeting + one-line self-intro + Q1 name ask -- ALL IN ONE MESSAGE.
 RULE: never send the greeting alone and wait. the first message MUST end with the name question.
@@ -60,7 +65,7 @@ order (Q2 onward, one per turn as answers arrive):
    4. 편안하고 유쾌한 스타일
    humor level = separate next question.
 5. humor level — after tone answer received, ask separately. direct: "유머 수치를 몇 %로 설정할까요?" (e.g. 10%, 30%).
-6. role (LAST) — ask what role this agent is taking on ("제가 맡을 역할이 뭘까요?" style, in the working language), as a short numbered list with [[OPTIONS]] marker on the very last line (same UI pattern as the emoji question):
+6. role (LAST, CONDITIONAL — ask ONLY IF the Primary-focus placeholder is still present; see the Q6 conditional rule above. slot already stamped -> skip this question entirely) — ask what role this agent is taking on ("제가 맡을 역할이 뭘까요?" style, in the working language), as a short numbered list with [[OPTIONS]] marker on the very last line (same UI pattern as the emoji question):
    1. life assistant (schedule, appointments, career, general life management)
    2. an agent for a specific role
    pick 1 -> fill the "Primary focus" slot in own AGENT.md Role section with a life-assistant prose line. pick 2 -> ask ONE follow-up ("어떤 역할일까요?" style) and fill the slot with the answer as ONE prose line. (no "general agent" option — the Role section's front-door bullet already makes every agent general; Primary focus just names the main hat.) HARD RULE: prose only — never install/link skills, routines, or crons from this answer (deeper role shaping belongs to CRAFT crafting; at HAND this is just a text seed the crafting can later rewrite).
@@ -80,26 +85,37 @@ fill received answers into the corresponding fields in own AGENT.md. five fields
 - Relationship `Tone` (the `(set at onboarding)` slot)
 - Relationship `Humor` (the `(set at onboarding)` slot)
 
-plus the sixth: Role `Primary focus` slot — fill with the chosen role (life assistant, or the specific role from the follow-up) as one prose line.
+plus the sixth (ONLY when Q6 was asked, i.e. the placeholder was present): Role `Primary focus` slot — fill with the chosen role (life assistant, or the specific role from the follow-up) as one prose line. When Q6 was skipped (slot already stamped at install), leave the slot as-is — it already holds the real role.
 
-(The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above plus the Primary-focus slot.)
+(The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above; plus the Primary-focus slot only when Q6 was asked.)
 
-all five filled AND the Primary-focus slot filled -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
+all five filled AND the Primary-focus slot filled (the slot is filled either by the Q6 answer, or already stamped at install when Q6 was skipped) -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
+
+### briefing-time step (DGN-227 A3 / DGN-420 seam — ask ONLY when generic-brief units exist)
+fires AFTER the identity fill + block deletion, BEFORE the completion message. GATE: run this step ONLY IF this instance has generic-brief units (test: `routines/*generic-brief-morning.plist` exists) — a domain standalone agent (main agents keep their lifekit briefing and do NOT get this step). when the gate is false, skip straight to the completion message.
+1. ask ONE combined question in the working language for the three briefing times, stating the defaults and that they can skip to accept them: morning brief (default 07:00), daily retro (default 22:00), weekly review (default Sunday 20:00). free-text HH:MM (24h) accepted; weekly accepts "<Day> HH:MM".
+2. apply the answer deterministically (no model math): run
+   `bash <own-root>/routines/set-briefing-times.sh --root <own-root> [--morning HH:MM] [--retro HH:MM] [--weekly "<Day> HH:MM"]`
+   passing only the slots the user set; omit a flag for any slot left at default. skip = run with no time flags (writes the defaults). this ONE script both writes BRIEF_TIME_MORNING/RETRO/WEEKLY into config/agent.conf AND regenerates the generic-brief plist StartCalendarInterval — do NOT hand-edit config or plists.
+3. confirm in one line what was set (e.g. "브리핑 시각: 모닝 07:00 / 회고 22:00 / 주간 일요일 20:00"). log any script error silently and continue to the completion message (never block onboarding on it).
 
 after saving, send the completion message:
 1. echo confirmed settings (name, emoji, address term, tone, humor) in 1-2 lines.
 2. declare immediate effect: "지금부터 이렇게 대화하겠습니다." NEVER say "다음 세션부터" --
    identity is injected every turn; from-next-session framing is false.
 3. branch by agent type:
-   config gate (DOMAIN agents only): silently read own config/agent.conf for HANDOFF_PEER_AG.
+   config gate (DOMAIN agents only): silently read own config/agent.conf for MIGRATION_PEER
+   (legacy fallback: when MIGRATION_PEER is absent, use HANDOFF_PEER_AG -- pre-DGN-227
+   mints). NEVER read HANDOFF_PEER_MAIN here -- briefing-topology key, not a migration
+   key (DGN-227 E2-1).
    this key is set only when the instance was minted from a main agent with records to migrate.
    absent = standalone/fresh mint. NEVER guess from role name or context -- read the key.
-   - DOMAIN agent -- HANDOFF_PEER_AG set (migration path, minted from a main agent):
+   - DOMAIN agent -- migration key set (migration path, minted from a main agent):
      NO [[OPTIONS]] menu. instead:
      (a) ATTEMPT migration request (deterministic, no model): derive own slug from workspace
          directory name. if routines/lib/handoff/handoff_cli.py exists in own root:
            python3 <own-root>/routines/lib/handoff/handoff_cli.py submit \
-             --to-root <HANDOFF_PEER_AG> --from <own-slug> --to ag \
+             --to-root <MIGRATION_PEER value (legacy: HANDOFF_PEER_AG)> --from <own-slug> --to ag \
              --type migration.request \
              --payload-json '{"domain":"<role domain>","target_root":"<own root>"}'
          <role domain> = single-word domain keyword for this agent's Primary focus
@@ -107,11 +123,12 @@ after saving, send the completion message:
          the completion message on the result. log any error silently.
      (b) tell the user: "이관을 메인 에이전트에게 요청해뒀어요 -- 정리가 끝나면
          제가 먼저 첫 상담을 제안드릴게요"
-     FALLBACK (HANDOFF_PEER_AG set but handoff_cli.py absent -- package partially applied):
+     FALLBACK (migration key set but handoff_cli.py absent -- package partially applied):
        skip step (a); send guidance line instead:
        "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
        (use the main agent's name if known; else "메인 에이전트")
-   - DOMAIN agent -- HANDOFF_PEER_AG absent (standalone/fresh mint, no data to migrate):
+   - DOMAIN agent -- no migration key (MIGRATION_PEER absent AND legacy HANDOFF_PEER_AG
+  absent; standalone/fresh mint, no data to migrate):
      NEVER mention migration, a main agent, or returning elsewhere.
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기

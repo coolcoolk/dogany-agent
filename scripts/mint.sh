@@ -342,6 +342,14 @@ for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist \
   [ "$np" != "$p" ] && mv "$p" "$np"
 done
 
+# 3a) plists.defer basename manifest (DGN-227 E1-1): its entries must keep
+#     matching the plist filenames after the rename above, and the file has no
+#     extension so the step-2 render pass does not cover it -- substitute here.
+if [ -f "$PROJECT_ROOT/routines/plists.defer" ]; then
+  sed -i.bak "s/telegram-agent/$AGENT_NAME/g" "$PROJECT_ROOT/routines/plists.defer" \
+    && rm -f "$PROJECT_ROOT/routines/plists.defer.bak"
+fi
+
 # 3b) write an instance manifest so update.sh can re-substitute the same five
 #     placeholders when it refreshes framework files, and record the framework
 #     version this instance was built from. Non-secret; no token/chat id here.
@@ -364,6 +372,16 @@ SAVED_PREFIX="$(grep -E '^DOGANY_AGENT_PREFIX=' "$PROJECT_ROOT/.instance.conf" 2
 if [ -n "$SAVED_PREFIX" ] && [ "$AGENT_PREFIX" = "[agent]" ]; then
   AGENT_PREFIX="$SAVED_PREFIX"
 fi
+# DGN-227 MAJOR-4 (A4/P4): agent class + pack-consumption record are preserved
+# across re-mints (keep-if-present, same contract as MINTED_AT/TIER/PREFIX).
+# mint.sh itself does not author these -- install.sh (dgn227_postmint) stamps
+# DOGANY_AGENT_CLASS and pack_install upserts DOGANY_PACKS -- but a re-mint /
+# recover rewrites .instance.conf wholesale, so without this a domain instance
+# would silently reclassify to main (P13 default) and its pack record (which
+# --upgrade version comparison depends on) would be wiped. Re-emit only when a
+# prior value exists so a fresh direct mint keeps its current lean manifest.
+SAVED_CLASS="$(grep -E '^DOGANY_AGENT_CLASS=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+SAVED_PACKS="$(grep -E '^DOGANY_PACKS=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
 cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
 # .instance.conf -- non-secret instance manifest written by mint.sh.
 # Consumed by update.sh to re-substitute placeholders on framework refresh.
@@ -377,6 +395,12 @@ DOGANY_REPO_ROOT=${REPO_ROOT}
 DOGANY_MINTED_AT=${MINTED_AT}
 DOGANY_TIER=${TIER}
 MANIFEST
+# DGN-227 MAJOR-4: append preserved class/pack records only when they existed
+# (keep-if-present). Emitting them conditionally keeps a fresh direct mint's
+# manifest unchanged while a re-mint of a domain / pack-consuming instance
+# retains DOGANY_AGENT_CLASS and DOGANY_PACKS.
+[ -n "$SAVED_CLASS" ] && printf 'DOGANY_AGENT_CLASS=%s\n' "$SAVED_CLASS" >> "$PROJECT_ROOT/.instance.conf"
+[ -n "$SAVED_PACKS" ] && printf 'DOGANY_PACKS=%s\n' "$SAVED_PACKS" >> "$PROJECT_ROOT/.instance.conf"
 echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
 
 # 3c) write the dogany-* skills checksum manifest. This records the sha of every
