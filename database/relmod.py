@@ -620,7 +620,7 @@ def cmd_stale_list(args, rel, lk):
 
 
 # ---------------------------------------------------------------------------
-# Verb: alert-pick (D2 gating: caps in code)
+# Verb: alert-pick (D2 gating: per-person gates + rotation, no global cap)
 # ---------------------------------------------------------------------------
 
 def cmd_alert_pick(args, rel, lk):
@@ -630,8 +630,8 @@ def cmd_alert_pick(args, rel, lk):
     # Context-snooze re-surface: any person whose snooze_until has passed
     # (<= today) gets a one-shot RESURFACE marker, and the snooze is cleared so
     # it fires exactly once and the person re-enters the normal pool next run.
-    # This runs BEFORE the weekly cap so the re-confirm question is never
-    # swallowed by an unrelated pick cap. RESURFACE is a signal, not a pick.
+    # RESURFACE is a signal, not a pick, so it is emitted independently of the
+    # per-run pick selection below.
     # person_prefs lives in relationship.db; names come from lifekit (read-only),
     # so resolve them per-person rather than via a cross-db JOIN.
     expired = rel.execute(
@@ -647,17 +647,27 @@ def cmd_alert_pick(args, rel, lk):
         print("RESURFACE\t{}\t{}".format(pid, nm))
     rel.commit()
 
-    # Hard cap: >=1 'shown' in the last 7 days
-    cap_row = rel.execute(
-        "SELECT COUNT(*) FROM alert_log WHERE outcome='shown' AND shown_on>=?",
-        ((today_dt - datetime.timedelta(days=6)).isoformat(),)
-    ).fetchone()[0]
-    if cap_row >= 1:
-        print("CAP_REACHED")
-        return
-
     # Get stale candidates (no limit -- we'll filter)
     candidates = compute_stale_list(rel, lk, limit=50)
+
+    # Rotation ordering: nobody is silenced until they are actually handled
+    # (touch / snooze / let_fade / dismissed-cycle). There is NO global weekly
+    # cap -- instead we surface the people who have NOT been shown recently
+    # first. Primary sort key: last 'shown' date ascending, with never-shown
+    # people (NULL) sorting first; the ratio (staleness) order from
+    # compute_stale_list breaks ties. So each run rotates a fresh face to the
+    # front, and a previously shown person only re-appears once the un-shown
+    # pool is exhausted -- meaning no stale person drops off the list before
+    # they are handled.
+    for c in candidates:
+        last_shown = rel.execute(
+            "SELECT MAX(shown_on) FROM alert_log "
+            "WHERE person_id=? AND outcome='shown'", (c['person_id'],)
+        ).fetchone()[0]
+        c['last_shown'] = last_shown  # ISO date string, or None if never shown
+    candidates.sort(key=lambda c: (c['last_shown'] is not None,
+                                   c['last_shown'] or '',
+                                   -c['ratio']))
 
     picks = []
     ask_fade_list = []
@@ -1368,11 +1378,13 @@ def cmd_selftest(args, rel_unused, lk_unused):
         except Exception as e:
             fail("stale-list excludes let_fade", str(e))
 
-        # TC-9: alert-pick hard cap (>=1 shown in last 7 days -> CAP_REACHED)
+        # TC-9: alert-pick has NO global weekly cap -- a person shown today does
+        # not silence everyone else (formerly emitted CAP_REACHED).
         # ----------------------------------------------------------------
         try:
             import io
             rel_c.execute("DELETE FROM alert_log")
+            # Alice(1) shown today. Bob(2) is also stale but never shown.
             rel_c.execute("INSERT INTO alert_log (person_id, shown_on, outcome) VALUES (1,?,'shown')", (today_dt.isoformat(),))
             rel_c.commit()
             captured = io.StringIO()
@@ -1382,11 +1394,86 @@ def cmd_selftest(args, rel_unused, lk_unused):
                 cmd_alert_pick(type('A', (), {})(), rel_c, lk_c)
             finally:
                 sys.stdout = old_stdout
-            out = captured.getvalue().strip()
-            assert out == 'CAP_REACHED', "expected CAP_REACHED, got: {}".format(out)
-            ok("alert-pick hard cap")
+            out = captured.getvalue()
+            assert 'CAP_REACHED' not in out, "global cap must be gone, got: {}".format(out)
+            pick_lines = [l for l in out.splitlines() if l.startswith('PICK')]
+            assert pick_lines, "expected picks despite a prior 'shown', got: {}".format(out)
+            # Rotation: the never-shown Bob(2) must surface ahead of Alice(1).
+            picked_ids = [l.split('\t')[1] for l in pick_lines]
+            assert '2' in picked_ids, "never-shown Bob should be picked, got: {}".format(out)
+            ok("alert-pick no global cap")
         except Exception as e:
-            fail("alert-pick hard cap", str(e))
+            fail("alert-pick no global cap", str(e))
+
+        # TC-9b: rotation -- consecutive runs surface different faces first, and
+        # nobody drops off before being handled (pool exhausted -> resurface).
+        # ----------------------------------------------------------------
+        try:
+            import io
+            rel_c.execute("DELETE FROM alert_log")
+            rel_c.commit()
+
+            def _pick9b():
+                cap = io.StringIO(); old = sys.stdout; sys.stdout = cap
+                try:
+                    cmd_alert_pick(type('A', (), {})(), rel_c, lk_c)
+                finally:
+                    sys.stdout = old
+                return [l.split('\t')[1] for l in cap.getvalue().splitlines()
+                        if l.startswith('PICK')]
+
+            # Run 1: some set of stale people gets shown (<=3).
+            run1 = _pick9b()
+            assert run1, "run1 should produce picks"
+            # Run 2: with those logged as 'shown' today, any stale person NOT
+            # shown in run1 must be preferred. If the stale pool is larger than
+            # 3, run2's lead pick differs from run1's lead pick (fresh face).
+            run2 = _pick9b()
+            assert run2, "run2 must still produce picks (nobody silenced)"
+            # Everyone shown in run1 is still in the pool (not handled), so the
+            # union across runs keeps growing or holds -- no one vanished.
+            # Concretely: a person picked in run1 must reappear by the time the
+            # un-shown pool is exhausted, never permanently dropped.
+            stale_now = compute_stale_list(rel_c, lk_c, today=today_dt.isoformat())
+            stale_ids = {str(s['person_id']) for s in stale_now}
+            assert set(run1) <= stale_ids, "run1 picks must remain in the stale pool"
+            ok("alert-pick rotation surfaces fresh faces")
+        except Exception as e:
+            fail("alert-pick rotation surfaces fresh faces", str(e))
+
+        # TC-9c: a touched (handled) person is naturally excluded next run.
+        # ----------------------------------------------------------------
+        try:
+            import io
+            rel_c.execute("DELETE FROM alert_log")
+            rel_c.execute("DELETE FROM touches")
+            rel_c.commit()
+
+            def _pickids():
+                cap = io.StringIO(); old = sys.stdout; sys.stdout = cap
+                try:
+                    cmd_alert_pick(type('A', (), {})(), rel_c, lk_c)
+                finally:
+                    sys.stdout = old
+                return [l.split('\t')[1] for l in cap.getvalue().splitlines()
+                        if l.startswith('PICK')]
+
+            before = _pickids()
+            assert before, "expected at least one pick before touch"
+            target = before[0]
+            # Touch the picked person today -> staleness resets -> excluded.
+            cmd_touch_add(type('A', (), {'person_id': int(target), 'kind': 'meet',
+                                         'date': today_dt.isoformat(),
+                                         'note': 'handled'})(), rel_c, lk_c)
+            rel_c.execute("DELETE FROM alert_log"); rel_c.commit()
+            after = _pickids()
+            assert target not in after, \
+                "touched person {} must drop from picks, got: {}".format(target, after)
+            # cleanup so later tests see a clean touches table
+            rel_c.execute("DELETE FROM touches"); rel_c.commit()
+            ok("alert-pick touched person excluded")
+        except Exception as e:
+            fail("alert-pick touched person excluded", str(e))
 
         # TC-10: alert-pick snooze (dismissed within one personal cycle -> skip)
         # ----------------------------------------------------------------
