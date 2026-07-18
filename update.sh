@@ -1689,6 +1689,18 @@ if [ "$DRY_RUN" = "0" ]; then
       fi
     done
 
+    # DGN-227 MAJOR-5: plists.defer carries literal telegram-agent plist
+    # basenames and has no extension, so neither the section-4 subst_one pass
+    # (name-filtered) nor the plist rename loop above touches it. Substitute it
+    # here so its entries keep matching the renamed plist filenames -- otherwise
+    # a later defer-honoring loader (pack_install STEP 10 mint_run start) treats
+    # the entries as non-matching and bootstraps the generic-brief units onto the
+    # live user channel by default. Same substitution as mint.sh step 3a.
+    if [ -f "$INSTANCE/routines/plists.defer" ]; then
+      sed_inplace "$INSTANCE/routines/plists.defer" \
+        -e "s/telegram-agent/$AGENT_NAME/g"
+    fi
+
     # DGN-140: (re)register the polling watchdog now that the watchdog files
     # are refreshed, substituted, and renamed. Non-fatal by contract.
     if [ -f "$INSTANCE/bridge/watchdog_setup.sh" ]; then

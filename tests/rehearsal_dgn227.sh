@@ -425,6 +425,74 @@ else
 fi
 
 # ===========================================================================
+# R7: DGN-417 (MAJOR-4 re-mint keep-if-present / MAJOR-5 plists.defer subst)
+# ===========================================================================
+# These use the REAL mint.sh (--no-venv --force) so the actual .instance.conf
+# heredoc + keep-if-present block and the step-3a plists.defer substitution are
+# exercised -- the mint_stub above hand-writes .instance.conf and cannot cover
+# the re-mint blind spot the grill flagged.
+CURRENT=R7
+hr; say "R7: DGN-417 (real mint.sh: class/pack keep-if-present + defer subst)"
+H7="$(mktemp -d /tmp/dgn227-r7.XXXXXX)"
+R7_ROOT="$H7/inst"
+UPDATE_SH="$SANDBOX/update.sh"
+
+# 7a. fresh real mint -- no CLASS/PACKS authored by mint.sh (install.sh/pack own
+#     those); a fresh manifest must NOT carry spurious empty keys.
+DOGANY_LAUNCHD_CAPTURE="$H7/cap" \
+  bash "$SANDBOX/scripts/mint.sh" --root "$R7_ROOT" --name probe7 --no-venv --force \
+  >"$H7/mint1.log" 2>&1 || bad "R7 fresh mint exited non-zero (see $H7/mint1.log)"
+assert "MAJOR-4: fresh mint writes no empty DOGANY_AGENT_CLASS line" \
+  bash -c "! grep -q '^DOGANY_AGENT_CLASS=$' '$R7_ROOT/.instance.conf'"
+assert "MAJOR-4: fresh mint writes no empty DOGANY_PACKS line" \
+  bash -c "! grep -q '^DOGANY_PACKS=$' '$R7_ROOT/.instance.conf'"
+
+# 7b. simulate install.sh/pack_install having stamped class + pack record, then
+#     RE-MINT (recover/reconfigure) and assert both survive the wholesale rewrite.
+printf 'DOGANY_AGENT_CLASS=domain\n' >> "$R7_ROOT/.instance.conf"
+printf 'DOGANY_PACKS=health-trainer@1.2.0\n' >> "$R7_ROOT/.instance.conf"
+DOGANY_LAUNCHD_CAPTURE="$H7/cap" \
+  bash "$SANDBOX/scripts/mint.sh" --root "$R7_ROOT" --name probe7 --no-venv --force \
+  >"$H7/mint2.log" 2>&1 || bad "R7 re-mint exited non-zero (see $H7/mint2.log)"
+assert "MAJOR-4: DOGANY_AGENT_CLASS=domain preserved across re-mint (not reset to main)" \
+  grep -qx "DOGANY_AGENT_CLASS=domain" "$R7_ROOT/.instance.conf"
+assert "MAJOR-4: DOGANY_PACKS preserved across re-mint (pack record not wiped)" \
+  grep -qx "DOGANY_PACKS=health-trainer@1.2.0" "$R7_ROOT/.instance.conf"
+assert "MAJOR-4: each preserved key appears exactly once (no duplication on re-mint)" \
+  bash -c "[ \"\$(grep -c '^DOGANY_AGENT_CLASS=' '$R7_ROOT/.instance.conf')\" = 1 ] && [ \"\$(grep -c '^DOGANY_PACKS=' '$R7_ROOT/.instance.conf')\" = 1 ]"
+
+# 7c. MAJOR-5 (mint side, step 3a): the real mint just ran -- plists.defer must
+#     carry the agent name and no literal telegram-agent leftover, and its
+#     entries must match the renamed plist filenames on disk.
+DEFER7="$R7_ROOT/routines/plists.defer"
+assert "MAJOR-5: mint 3a substituted defer -- no telegram-agent literal leftover" \
+  bash -c "! grep -q 'telegram-agent' '$DEFER7'"
+assert "MAJOR-5: defer entry carries agent name (com.telegram-skill-bot.probe7.*)" \
+  grep -q "^com.telegram-skill-bot.probe7.generic-brief-morning.plist$" "$DEFER7"
+assert "MAJOR-5: every non-comment defer entry matches a renamed plist on disk" \
+  bash -c "rc=0; while read -r b; do [ -e \"$R7_ROOT/routines/\$b\" ] || rc=1; done < <(grep -v '^#' '$DEFER7' | grep -v '^\$'); exit \$rc"
+
+# 7d. MAJOR-5 (update side): the update.sh rename block cannot be run end-to-end
+#     in this harness (no library seam; full framework rsync), so guard the fix
+#     statically -- update.sh MUST substitute plists.defer inside the rename
+#     block, otherwise a re-vendored defer keeps literal telegram-agent entries
+#     that a later defer-honoring loader bootstraps onto the live channel.
+assert "MAJOR-5: update.sh substitutes routines/plists.defer (rename block guard)" \
+  grep -q 'sed_inplace "\$INSTANCE/routines/plists.defer"' "$UPDATE_SH"
+# and prove that exact substitution is faithful to mint 3a on a defer file that
+# still carries literal telegram-agent (the post-rsync state update.sh sees):
+DEFER_SIM="$H7/defer.sim"
+cp "$SANDBOX/agents/.template/routines/plists.defer" "$DEFER_SIM"
+( AGENT_NAME=probe7
+  # exact substitution update.sh's block applies (LC_ALL=C sed, in place)
+  LC_ALL=C sed "s/telegram-agent/$AGENT_NAME/g" "$DEFER_SIM" > "$DEFER_SIM.new" \
+    && mv "$DEFER_SIM.new" "$DEFER_SIM" )
+assert "MAJOR-5: update-side substitution yields no telegram-agent literal" \
+  bash -c "! grep -q 'telegram-agent' '$DEFER_SIM'"
+assert "MAJOR-5: update-side substitution renames the generic-brief basename" \
+  grep -q "^com.telegram-skill-bot.probe7.generic-brief-retro.plist$" "$DEFER_SIM"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"
