@@ -5,6 +5,66 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-18
+
+### Added
+- Install-time agent class selection: `install.sh` now asks whether to mint a
+  "main" agent (lifekit-bearing, aggregates domain sections) or a "domain"
+  agent (specialist, standalone). The class is stamped into `.instance.conf`
+  at install time and preserved across re-mints and updates.
+- Domain agent briefing runtime: domain agents run their own morning brief,
+  daily retro, and weekly retro. In standalone mode they push directly; when
+  a main agent is present they write a section to the submit queue and the
+  main agent aggregates. Config-driven fire times (defaults: morning 07:00,
+  retro 22:00, weekly Sunday 20:00) with an onboarding step that lets the user
+  set them at first contact.
+- Standalone-to-submit mode transition: when a main agent is added after a
+  domain agent is already live, the domain agent automatically switches from
+  direct briefing to submit mode. The transition gate verifies that the main
+  agent is running before flipping the routing flag.
+- Pack publish pipeline: `scripts/pack/pack_publish.sh` (new) produces a
+  publish-ready pack payload from a live agent snapshot. Three mandatory gates:
+  personal-data strip, persona-field blank, and knowledge-pin verification.
+  Generates `checksums.sha` for downstream install verification.
+- Pack lifecycle completion: `pack_install.sh` gains a frozen-knowledge
+  snapshot delivery channel (B5) so bundled knowledge reaches the instance at
+  install time, and a net-new skill directory install mode (B6) for packs
+  that introduce skills not already present. Checksum verification (NM3) at
+  install time: mismatch is a loud failure; absent checksum file warns and
+  continues. Pack-owned `plists.defer` entries are merge-appended rather than
+  overwritten.
+- Pack catalog: `en` locale fields added (previously `ko`-only); packs with
+  `status != official` are filtered from install menus.
+- Onboarding: briefing-time configuration step added for domain agents;
+  role-question conditional retention aligned across all three template copies
+  (AGENT.md, SKILL.md, onboarding-check.py).
+
+### Changed
+- `mint.sh` preserves `DOGANY_AGENT_CLASS` and `DOGANY_PACKS` across
+  re-mints, preventing a domain agent from being silently reclassified as main
+  on recovery or re-run.
+- `update.sh` now substitutes the agent name into `plists.defer` during the
+  routine-rename pass, matching the existing `.plist` substitution. Without
+  this fix, generic-brief defer entries could reference mismatched plist labels
+  after an update, causing unintended briefing activations on pack install.
+
+### Fixed
+- Fresh domain agent installs now correctly seed `LIFEKIT=off` in
+  `lifekit.conf`, even when the mint scaffold ships a `pending` value. The
+  prior behaviour left new domain agents with a pending lifekit state that
+  triggered a lifekit setup prompt on first session.
+- `install.sh` crash-and-resume path: a domain install that crashed after
+  minting but before writing the class marker previously hard-exited on
+  re-run. The installer now re-enters the class selection loop so recovery
+  reaches the same final state without `--root` flag knowledge.
+- `install.sh` main-add guard: adding a main agent from a domain install now
+  enforces the single-main invariant before writing the registry entry,
+  preventing a domain instance from being permanently mis-stamped as main.
+- Briefing schedule clock and config now stay in sync: `BRIEF_TIME_*` config
+  values are updated alongside the launchd plist when slot times are adjusted
+  post-install, so the agent's internal time reference never drifts from the
+  actual fire time.
+
 ## [1.11.1] - 2026-07-18
 
 ### Fixed
