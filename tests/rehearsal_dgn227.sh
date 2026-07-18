@@ -50,7 +50,7 @@ mint_stub() { # mint_stub <root> <slug>
   fi
   printf '{\n  "model": "sonnet"\n}\n' > "$root/.claude/settings.json"
   echo "AGENT_LANG=ko" > "$root/config/agent.conf"
-  : > "$root/config/lifekit.conf"
+  printf 'LIFEKIT=pending\n' > "$root/config/lifekit.conf"
   {
     echo "DOGANY_AGENT_NAME=$slug"
     echo "DOGANY_AGENT_LABEL=$slug"
@@ -423,6 +423,43 @@ if run_flow "$H6D" '
 else
   ok "MAJOR-3: foreign occupied root under preset still hard-exits (case d preserved)"
 fi
+
+# marker-ABSENT crash: a first-install that crashed before the marker was
+# written leaves an occupied root but NO marker.  A bare preset re-run (same
+# slug, no --root) has no same-canon pass-through to rely on -> must hard-exit
+# with a clear error (case d).  Recovery requires an explicit --root re-run.
+# This documents the ACTUAL behavior -- do NOT assert strand-free auto-recovery.
+H6E="$(mktemp -d /tmp/dgn227-r6e.XXXXXX)"
+R6E_ROOT="$H6E/.dogany/agents/orbit"
+mint_stub "$R6E_ROOT" orbit   # occupied, no marker written (crash-before-marker)
+# marker file absent -> no lite_instance file
+if run_flow "$H6E" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=orbit
+  DOGANY_ROLE_PROSE="pre-marker crash"
+  step_agent_class
+  exit 0
+'; then
+  bad "MAJOR-3: marker-absent pre-marker-crash re-run did not hard-exit (should require --root)"
+else
+  ok "MAJOR-3: marker-absent occupied root hard-exits (recovery requires --root <occupied-root>)"
+fi
+# explicit --root re-run converges: ROOT_FORCED bypasses occupancy re-derivation (case a)
+H6F="$(mktemp -d /tmp/dgn227-r6f.XXXXXX)"
+R6F_ROOT="$H6F/.dogany/agents/orbit2"
+mint_stub "$R6F_ROOT" orbit2   # occupied, no marker
+run_flow "$H6F" '
+  DOGANY_AGENT_CLASS=domain
+  DOGANY_PACK_ID=blank
+  DOGANY_AGENT_SLUG=orbit2
+  DOGANY_ROLE_PROSE="explicit root recovery"
+  INSTALL_ROOT="'"$R6F_ROOT"'"
+  ROOT_FORCED=1
+  step_agent_class || exit 40
+  exit 0
+' && ok "MAJOR-3: explicit --root re-run converges on marker-absent occupied root (case a)" \
+  || bad "MAJOR-3: --root re-run failed on marker-absent occupied root (see $H6F/flow.log)"
 
 # ===========================================================================
 # R7: DGN-417 (MAJOR-4 re-mint keep-if-present / MAJOR-5 plists.defer subst)

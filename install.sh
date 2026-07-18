@@ -519,10 +519,17 @@ dgn227_postmint() {
 
   if [ "$class" = "domain" ]; then
     # P3: suppress the SessionStart lifekit proposal; opt-in stays via C2.
-    # MAJOR-1 (D1/G1 write-if-absent): only seed LIFEKIT when the key is
-    # ABSENT -- a reconfigure re-run must not silently revert a live
-    # LIFEKIT=on instance that the user opted into post-install (C2).
-    conf_set_if_absent "$target/config/lifekit.conf" LIFEKIT "off"
+    # MAJOR-1 (D1/G1): seed LIFEKIT=off for fresh installs, but preserve any
+    # real user choice already present.  Real mint.sh scaffolds LIFEKIT=pending
+    # (not absent), so conf_set_if_absent is a guaranteed NO-OP on first install.
+    # Required semantics:
+    #   on  -> leave (C2 opt-in preserved)
+    #   off -> leave (already correct / user choice)
+    #   pending | empty | absent -> force off (fresh domain = lifekit dormant)
+    local _lk_cur; _lk_cur="$(conf_read "$target/config/lifekit.conf" LIFEKIT)"
+    if [ "$_lk_cur" != "on" ] && [ "$_lk_cur" != "off" ]; then
+      conf_upsert "$target/config/lifekit.conf" LIFEKIT "off"
+    fi
 
     # A4: catalog pack install (--no-start is MANDATORY -- service start is
     # owned by step_service alone, P23; fresh/standalone => no --migrate-from)
@@ -1717,9 +1724,14 @@ EOF
   # code hard-exited even interactively). Resolution:
   #   (a) --root forced: honor it verbatim, no occupancy re-derivation.
   #   (b) occupied root is the SAME canonical root the lite marker records:
-  #       this is a crash-recovery / reconfigure re-run of the same instance
-  #       (marker-last design leaves a minted-but-unmarked instance re-runnable)
-  #       -> pass through to check_lite_single_agent's same-root allowance.
+  #       the marker was written before the crash, so re-running without --root
+  #       converges via same-canon pass-through -> check_lite_single_agent's
+  #       same-root allowance handles it.
+  #       NOTE: "re-runnable" applies only to marker-PRESENT crashes (case b).
+  #       A crash that happened BEFORE the first marker write leaves no marker,
+  #       so there is no automatic same-canon pass-through. Recovery requires an
+  #       explicit `--root <occupied-root>` re-run (which converges via case a);
+  #       a bare non-interactive re-run of the same slug will hard-exit (case d).
   #   (c) interactive: re-ask for a new slug and re-derive the root, looping
   #       until the root is free or resolves to case (b).
   #   (d) non-interactive/preset with a foreign occupied root: keep hard exit 2.
