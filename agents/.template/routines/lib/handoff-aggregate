@@ -1,0 +1,37 @@
+#!/bin/bash
+# handoff-aggregate -- kit-neutral peer-section aggregation library
+# (DGN-227 E1-3/P19). Shared by generic-brief.sh and the lifekit bundle
+# briefing scripts: peer section file discovery + verbatim insertion +
+# missing-section ping + N-peer loop, in ONE home so kit swap stays
+# symmetric (F-(c)).
+#
+# PII-free skeleton (rehearsal): API surface only; full composition logic is
+# a separate implementation work item (E1 tail note: user-facing string
+# generalization + i18n is split out).
+#
+# handoff_aggregate <main_root> <slot> <peers-csv>
+#   peers-csv: "<peer_root>|<display>[,<peer_root>|<display>...]"
+#   slot: morning|retro|weekly -> looks for report.section.<slot> files of
+#   today in <main_root>/files/handoff; prints the aggregated block.
+handoff_aggregate() {
+  local main_root="$1" slot="$2" peers="$3"
+  local today; today="$(date +%Y%m%d)"
+  local entry peer_root disp f found
+  local IFS=','
+  for entry in $peers; do
+    peer_root="${entry%%|*}"
+    disp="${entry##*|}"
+    [ -n "$disp" ] || disp="$(basename "$peer_root")"
+    found=""
+    for f in "$main_root/files/handoff/"*"$today"*"report.section.$slot"*; do
+      [ -e "$f" ] && { found="$f"; break; }
+    done
+    if [ -n "$found" ]; then
+      printf '(%s)\n' "$disp"
+      cat "$found"
+    else
+      # absence != error: one ping line, briefing still publishes (E2-2)
+      printf '%s section not submitted\n' "$disp"
+    fi
+  done
+}

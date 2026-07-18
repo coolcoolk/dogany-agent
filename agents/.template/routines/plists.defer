@@ -1,0 +1,10 @@
+# plists.defer -- launchd units staged behind an explicit gate (DGN-227 E1-1).
+# One plist basename per line; '#' comments allowed. Loaders (install.sh
+# schedule_routines_launchd + mint_run.sh start) SKIP these on the default
+# scan; they load only via an explicit `mint_run.sh start --deferred` call
+# (domain install path / C2 swap / E3 resolution / G3 alignment).
+# NOTE: mint.sh renders 'telegram-agent' to the minted agent name in this
+# file (same substitution as the plist filenames).
+com.telegram-skill-bot.telegram-agent.generic-brief-morning.plist
+com.telegram-skill-bot.telegram-agent.generic-brief-retro.plist
+com.telegram-skill-bot.telegram-agent.generic-brief-weekly.plist

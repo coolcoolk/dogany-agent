@@ -67,8 +67,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACHINERY_REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 MODE="${1:-}"
-[[ "$MODE" == "mint" || "$MODE" == "start" || "$MODE" == "pipeline" || "$MODE" == "recover" ]] || {
-  echo "usage: mint_run.sh {mint|start|pipeline|recover} ..." >&2; exit 1; }
+[[ "$MODE" == "mint" || "$MODE" == "start" || "$MODE" == "pipeline" || "$MODE" == "recover" || "$MODE" == "stamp-role" ]] || {
+  echo "usage: mint_run.sh {mint|start|pipeline|recover|stamp-role} ..." >&2; exit 1; }
 shift
 
 SLUG="" ROOT="" OWNER_IDS="" AGENT_TZ="" LANG_OPT="" DRY=0 CORE_ONLY=0
@@ -133,6 +133,91 @@ conf_get() { # conf_get <file> <key> -- empty (not fatal) when key/file absent
   { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; } || true
 }
 
+# ---- role stamp: SINGLE canonical implementation (DGN-227 A3/P15) ----------
+# _stamp_role <root> <prose> [log-prefix]
+# Stamps the Role Primary-focus prose into <root>/AGENT.md, excises the
+# onboarding Q6 block and inserts the do-not-ask line. Idempotent (guard
+# inside the python block). Three entry points call this ONE function:
+#   (1) mint mode post-mint step, (2) recover mode journal replay,
+#   (3) the stamp-role subcommand.
+# Returns non-zero on stamp failure; missing AGENT.md is a WARN + return 0
+# (preserves the legacy per-caller skip semantics).
+_stamp_role() {
+  local root="$1" prose="$2" prefix="${3:-role-stamp}"
+  local agent_md="$root/AGENT.md"
+  if [[ ! -f "$agent_md" ]]; then
+    echo "[$prefix] WARN AGENT.md not found at $agent_md; skipping role stamp" >&2
+    return 0
+  fi
+  python3 - "$agent_md" "$prose" "$prefix" <<'PYEOF'
+import sys, re, pathlib
+
+agent_md = pathlib.Path(sys.argv[1])
+role_prose = sys.argv[2]
+prefix = sys.argv[3]
+text = agent_md.read_text(encoding="utf-8")
+
+# Idempotence guard: if Primary focus is already stamped, do not re-stamp.
+placeholder = "(set at onboarding -- one prose line naming the main hat;"
+if placeholder not in text:
+    print(f"[{prefix}] Primary focus already stamped or placeholder absent; skipping (idempotent).", file=sys.stderr)
+    sys.exit(0)
+
+# 1. Fill Primary-focus placeholder line.
+pf_pattern = re.compile(
+    r'\(set at onboarding -- one prose line naming the main hat;\s*'
+    r'the general front-door bullet above still applies\)',
+    re.DOTALL,
+)
+new_text, count = pf_pattern.subn(role_prose, text)
+if count != 1:
+    print(f"[{prefix}] ERROR: expected 1 Primary-focus placeholder match, got {count}; aborting", file=sys.stderr)
+    sys.exit(1)
+
+# 2. Excise Q6 bullet (the "6. role -- LAST: ..." block).
+q6_pattern = re.compile(
+    r'\n  6\. role\s+--\s+LAST:.*?(?=\nKeep each question)',
+    re.DOTALL,
+)
+new_text, q6_count = q6_pattern.subn("", new_text)
+if q6_count != 1:
+    print(f"[{prefix}] ERROR: expected 1 Q6 block match, got {q6_count}; aborting", file=sys.stderr)
+    sys.exit(1)
+
+# 3. Update completion criterion.
+new_text = new_text.replace(
+    "when all are filled (question 6 = the Primary-focus slot filled),",
+    "when all 5 are filled,",
+)
+
+# 4. Insert do-not-ask instruction before "Keep each question".
+do_not_ask = (
+    "Do NOT ask about your role -- it is already set"
+    " (filled at mint; see Role section)."
+)
+keep_marker = "\nKeep each question"
+if do_not_ask not in new_text:
+    new_text = new_text.replace(
+        keep_marker,
+        "\n" + do_not_ask + keep_marker,
+    )
+
+agent_md.write_text(new_text, encoding="utf-8")
+print(f"[{prefix}] OK: Primary focus stamped, Q6 excised, do-not-ask added.")
+PYEOF
+}
+
+# ---- stamp-role mode: standalone entry point (DGN-227 A3/P15 entry 3) ------
+# install.sh calls this on every install path right after mint:
+#   mint_run.sh stamp-role --root <root> --role "<prose>"
+if [[ "$MODE" == "stamp-role" ]]; then
+  [[ -n "$ROOT" ]] || { echo "ERROR: stamp-role requires --root <dir>" >&2; exit 1; }
+  [[ -n "$ROLE_PROSE" ]] || { echo "ERROR: stamp-role requires --role <prose>" >&2; exit 1; }
+  [[ -d "$ROOT" ]] || { echo "ERROR: stamp-role root not a directory: $ROOT" >&2; exit 1; }
+  _stamp_role "$ROOT" "$ROLE_PROSE" "stamp-role"
+  exit $?
+fi
+
 # ---- recover mode: replay post-mint stamps from journal (crash recovery) ----
 if [[ "$MODE" == "recover" ]]; then
   [[ -n "$SLUG" ]] || {
@@ -193,66 +278,12 @@ PYEOF
     echo "[recover] WARN settings.json not found at $INSTANCE_SETTINGS; skipping model stamp" >&2
   fi
 
-  # Role stamp (idempotent guard inside the python block).
+  # Role stamp -- single canonical implementation (DGN-227 A3/P15).
   if [[ -n "$J_ROLE" ]]; then
-    AGENT_MD="$EFFECTIVE_ROOT/AGENT.md"
-    if [[ ! -f "$AGENT_MD" ]]; then
-      echo "[recover] WARN AGENT.md not found at $AGENT_MD; skipping role stamp" >&2
-    else
-      python3 - "$AGENT_MD" "$J_ROLE" <<'PYEOF'
-import sys, re, pathlib
-
-agent_md = pathlib.Path(sys.argv[1])
-role_prose = sys.argv[2]
-text = agent_md.read_text(encoding="utf-8")
-
-# Idempotence guard: if Primary focus is already stamped, do not re-stamp.
-placeholder = "(set at onboarding -- one prose line naming the main hat;"
-if placeholder not in text:
-    print(f"[recover/role-stamp] Primary focus already stamped; skipping (idempotent).", file=sys.stderr)
-    sys.exit(0)
-
-pf_pattern = re.compile(
-    r'\(set at onboarding -- one prose line naming the main hat;\s*'
-    r'the general front-door bullet above still applies\)',
-    re.DOTALL,
-)
-new_text, count = pf_pattern.subn(role_prose, text)
-if count != 1:
-    print(f"[recover/role-stamp] ERROR: expected 1 Primary-focus placeholder match, got {count}; aborting", file=sys.stderr)
-    sys.exit(1)
-
-q6_pattern = re.compile(
-    r'\n  6\. role\s+--\s+LAST:.*?(?=\nKeep each question)',
-    re.DOTALL,
-)
-new_text, q6_count = q6_pattern.subn("", new_text)
-if q6_count != 1:
-    print(f"[recover/role-stamp] ERROR: expected 1 Q6 block match, got {q6_count}; aborting", file=sys.stderr)
-    sys.exit(1)
-
-new_text = new_text.replace(
-    "when all are filled (question 6 = the Primary-focus slot filled),",
-    "when all 5 are filled,",
-)
-
-do_not_ask = (
-    "Do NOT ask about your role -- it is already set"
-    " (filled at mint; see Role section)."
-)
-keep_marker = "\nKeep each question"
-if do_not_ask not in new_text:
-    new_text = new_text.replace(
-        keep_marker,
-        "\n" + do_not_ask + keep_marker,
-    )
-
-agent_md.write_text(new_text, encoding="utf-8")
-print(f"[recover/role-stamp] OK: Primary focus stamped, Q6 excised, do-not-ask added.")
-PYEOF
+    _stamp_role "$EFFECTIVE_ROOT" "$J_ROLE" "recover/role-stamp" || {
       STATUS=$?
-      [[ $STATUS -ne 0 ]] && { echo "[recover] ERROR: role-stamp step failed (exit $STATUS)" >&2; exit $STATUS; }
-    fi
+      echo "[recover] ERROR: role-stamp step failed (exit $STATUS)" >&2; exit $STATUS
+    }
   else
     echo "[recover] no role prose in journal; skipping role stamp"
   fi
@@ -522,75 +553,10 @@ fi
 # NOTE: the fuller Role-section rewrite (generic front-door bullet -> domain line)
 # is intentionally NOT done here -- keep it a post-mint CRAFT specialization step.
 if [[ -n "$ROLE_PROSE" ]]; then
-  AGENT_MD="$ROOT/AGENT.md"
-  if [[ ! -f "$AGENT_MD" ]]; then
-    echo "[mint_run] WARN --role supplied but $AGENT_MD not found; skipping role stamp" >&2
-  else
-    python3 - "$AGENT_MD" "$ROLE_PROSE" <<'PYEOF'
-import sys, re, pathlib
-
-agent_md = pathlib.Path(sys.argv[1])
-role_prose = sys.argv[2]
-text = agent_md.read_text(encoding="utf-8")
-
-# --- Idempotence guard: if Primary focus is already stamped, do not re-stamp.
-placeholder = "(set at onboarding -- one prose line naming the main hat;"
-if placeholder not in text:
-    print(f"[role-stamp] WARN Primary focus already stamped or placeholder absent; skipping (idempotent).", file=sys.stderr)
-    sys.exit(0)
-
-# 1. Fill Primary-focus placeholder line.
-#    Match the full parenthetical spanning from "(set at onboarding -- one prose line..."
-#    through the closing ")". The template spans two lines -- use re.DOTALL.
-pf_pattern = re.compile(
-    r'\(set at onboarding -- one prose line naming the main hat;\s*'
-    r'the general front-door bullet above still applies\)',
-    re.DOTALL,
-)
-new_text, count = pf_pattern.subn(role_prose, text)
-if count != 1:
-    print(f"[role-stamp] ERROR: expected 1 Primary-focus placeholder match, got {count}; aborting", file=sys.stderr)
-    sys.exit(1)
-
-# 2. Excise Q6 bullet (the "6. role -- LAST: ..." block and its continuation lines).
-#    The block starts at "  6. role" and ends just before the line that starts
-#    "Keep each question". We drop the whole block including trailing whitespace line.
-q6_pattern = re.compile(
-    r'\n  6\. role\s+--\s+LAST:.*?(?=\nKeep each question)',
-    re.DOTALL,
-)
-new_text, q6_count = q6_pattern.subn("", new_text)
-if q6_count != 1:
-    print(f"[role-stamp] ERROR: expected 1 Q6 block match, got {q6_count}; aborting", file=sys.stderr)
-    sys.exit(1)
-
-# 3. Update completion criterion: "question 6 = the Primary-focus slot filled"
-#    -> "all 5 are filled".
-new_text = new_text.replace(
-    "when all are filled (question 6 = the Primary-focus slot filled),",
-    "when all 5 are filled,",
-)
-
-# 4. Insert do-not-ask instruction after the "5. humor level" line and before
-#    "Keep each question". Also works if the updated criterion text appears first.
-#    Insert before "Keep each question".
-do_not_ask = (
-    "Do NOT ask about your role -- it is already set"
-    " (filled at mint; see Role section)."
-)
-keep_marker = "\nKeep each question"
-if do_not_ask not in new_text:
-    new_text = new_text.replace(
-        keep_marker,
-        "\n" + do_not_ask + keep_marker,
-    )
-
-agent_md.write_text(new_text, encoding="utf-8")
-print(f"[role-stamp] OK: Primary focus stamped, Q6 excised, do-not-ask added.")
-PYEOF
+  _stamp_role "$ROOT" "$ROLE_PROSE" "role-stamp" || {
     STATUS=$?
-    [[ $STATUS -ne 0 ]] && { echo "[mint_run] ERROR: role-stamp python step failed (exit $STATUS)" >&2; exit $STATUS; }
-  fi
+    echo "[mint_run] ERROR: role-stamp step failed (exit $STATUS)" >&2; exit $STATUS
+  }
 fi
 
 # Model stamp: write the requested model into the new instance's settings.json.

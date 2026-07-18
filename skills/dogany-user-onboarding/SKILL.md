@@ -91,15 +91,18 @@ after saving, send the completion message:
 2. declare immediate effect: "지금부터 이렇게 대화하겠습니다." NEVER say "다음 세션부터" --
    identity is injected every turn; from-next-session framing is false.
 3. branch by agent type:
-   config gate (DOMAIN agents only): silently read own config/agent.conf for HANDOFF_PEER_AG.
+   config gate (DOMAIN agents only): silently read own config/agent.conf for MIGRATION_PEER
+   (legacy fallback: when MIGRATION_PEER is absent, use HANDOFF_PEER_AG -- pre-DGN-227
+   mints). NEVER read HANDOFF_PEER_MAIN here -- briefing-topology key, not a migration
+   key (DGN-227 E2-1).
    this key is set only when the instance was minted from a main agent with records to migrate.
    absent = standalone/fresh mint. NEVER guess from role name or context -- read the key.
-   - DOMAIN agent -- HANDOFF_PEER_AG set (migration path, minted from a main agent):
+   - DOMAIN agent -- migration key set (migration path, minted from a main agent):
      NO [[OPTIONS]] menu. instead:
      (a) ATTEMPT migration request (deterministic, no model): derive own slug from workspace
          directory name. if routines/lib/handoff/handoff_cli.py exists in own root:
            python3 <own-root>/routines/lib/handoff/handoff_cli.py submit \
-             --to-root <HANDOFF_PEER_AG> --from <own-slug> --to ag \
+             --to-root <MIGRATION_PEER value (legacy: HANDOFF_PEER_AG)> --from <own-slug> --to ag \
              --type migration.request \
              --payload-json '{"domain":"<role domain>","target_root":"<own root>"}'
          <role domain> = single-word domain keyword for this agent's Primary focus
@@ -107,11 +110,12 @@ after saving, send the completion message:
          the completion message on the result. log any error silently.
      (b) tell the user: "이관을 메인 에이전트에게 요청해뒀어요 -- 정리가 끝나면
          제가 먼저 첫 상담을 제안드릴게요"
-     FALLBACK (HANDOFF_PEER_AG set but handoff_cli.py absent -- package partially applied):
+     FALLBACK (migration key set but handoff_cli.py absent -- package partially applied):
        skip step (a); send guidance line instead:
        "아그(메인 에이전트) 방으로 돌아가면 기존 기록 이관이 이어집니다."
        (use the main agent's name if known; else "메인 에이전트")
-   - DOMAIN agent -- HANDOFF_PEER_AG absent (standalone/fresh mint, no data to migrate):
+   - DOMAIN agent -- no migration key (MIGRATION_PEER absent AND legacy HANDOFF_PEER_AG
+  absent; standalone/fresh mint, no data to migrate):
      NEVER mention migration, a main agent, or returning elsewhere.
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기

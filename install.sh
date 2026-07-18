@@ -123,6 +123,26 @@ PYTHON_BIN=""
 LITE_MARKER_DIR="$HOME/.dogany"
 LITE_MARKER="$LITE_MARKER_DIR/lite_instance"
 
+# DGN-227: install-time agent class split (A1/A2). Env presets keep the
+# non-interactive dry-run battery green: no preset = main (H1-7).
+DOGANY_AGENT_CLASS="${DOGANY_AGENT_CLASS:-}"   # main | domain (env preset P2)
+DOGANY_PACK_ID="${DOGANY_PACK_ID:-}"           # <catalog id> | blank (P2)
+DOGANY_AGENT_SLUG="${DOGANY_AGENT_SLUG:-}"     # blank-domain slug preset (P2)
+# OPEN QUESTION (rehearsal): the spec defines no env preset for the
+# blank-domain role prose (A2 choice 3 asks it interactively); this knob is a
+# sandbox addition so the non-interactive battery can exercise the path.
+DOGANY_ROLE_PROSE="${DOGANY_ROLE_PROSE:-}"
+AGENT_ROLE_PROSE=""        # resolved role prose for the stamp-role step (A3)
+ROOT_FORCED=0              # --root given explicitly (wins over the A4 default)
+NAME_FORCED=0              # --name given explicitly
+MAIN_ADD_FLOW=0            # G2 main-add flow armed by check_lite_single_agent
+EXISTING_DOMAIN_ROOT=""    # G2: the pre-existing domain instance root
+# OPEN QUESTION (rehearsal): A3 says the main Role prose is kit-determined
+# (default kit = lifekit -> "생활비서 프로즈 1줄") but the spec does not fix
+# the prose text itself. Placeholder below; final wording is a product call.
+LIFEKIT_MAIN_ROLE_PROSE_KO="생활 비서 -- 일정/기억/알림/이메일 등 생활 전반을 맡는 범용 비서"
+LIFEKIT_MAIN_ROLE_PROSE_EN="life assistant -- general life management (schedule, memory, reminders, email)"
+
 # ---------------------------------------------------------------------------
 # 1. Bilingual string helper (inline; NOT a full i18n system by design)
 # ---------------------------------------------------------------------------
@@ -187,7 +207,10 @@ check_lite_single_agent() {
   current_canon="$(canon_path "$current_root")"
 
   # Config knob: a non-1 limit bypasses the single-agent refusal.
-  if [ "${DOGANY_MAX_AGENTS:-1}" != "1" ]; then
+  # DGN-227 G2-1: the persisted ledger (~/.dogany/config) is read when the
+  # env override is unset -- the main-add flow writes the ledger so the
+  # relaxation survives across runs ("no multi without an explicit user act").
+  if [ "$(effective_max_agents)" != "1" ]; then
     return 0
   fi
 
@@ -236,6 +259,54 @@ check_lite_single_agent() {
     return 0
   fi
 
+  # --- DGN-227 G2: existing instance is a DOMAIN agent -> offer the 3-way
+  # main-add choice instead of the flat refusal. Env preset
+  # DOGANY_MAIN_ADD_CHOICE=1|2|3 covers the non-interactive path (rehearsal
+  # note: the spec defines no env preset for this prompt -- OPEN QUESTION).
+  if [ "$(instance_class_of "$recorded_canon")" = "domain" ]; then
+    local choice="${DOGANY_MAIN_ADD_CHOICE:-}"
+    if [ -z "$choice" ]; then
+      if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+        choice=3   # no preset, non-interactive -> cancel (safe default)
+      else
+        local g1 g2 g3
+        g1="$(msgn "그 에이전트를 재설정한다 (--root 재지정 안내, 현행 동작)" \
+                   "Reconfigure that agent (rerun with --root, current behavior)")"
+        g2="$(msgn "메인 에이전트를 추가한다 (멀티 에이전트로 전환)" \
+                   "Add a main agent (switch to multi-agent)")"
+        g3="$(msgn "취소" "Cancel")"
+        select_menu "$(msgn "도메인 에이전트가 이미 있습니다: $recorded_canon" \
+                           "A domain agent already exists: $recorded_canon")" \
+                    2 "$g1" "$g2" "$g3"
+        choice=$((SELECT_RESULT + 1))
+      fi
+    fi
+    case "$choice" in
+      2)
+        # G2 step 1: explicit, persisted limit relaxation + flow arming.
+        MAIN_ADD_FLOW=1
+        EXISTING_DOMAIN_ROOT="$recorded_canon"
+        if [ "$DRY_RUN" != "1" ]; then
+          local cur_reg; cur_reg="$(wc -l < "$REGISTRY_FILE" 2>/dev/null | tr -d ' ' || true)"
+          [ -n "$cur_reg" ] && [ "$cur_reg" -ge 1 ] || cur_reg=1
+          conf_upsert "$GLOBAL_CONF" DOGANY_MAX_AGENTS "$((cur_reg + 1))"
+          # ensure the existing domain instance is in the registry
+          registry_upsert "domain" "$recorded_canon"
+        fi
+        msg "메인 에이전트 추가 플로우로 진행합니다 (한도 완화 기록됨)." \
+            "Proceeding with the main-add flow (limit relaxation recorded)."
+        return 0
+        ;;
+      1)
+        : # fall through to the current refusal text (points at --root)
+        ;;
+      *)
+        msg "설치를 취소했습니다." "Install cancelled." >&2
+        exit 2
+        ;;
+    esac
+  fi
+
   # --- DGN-145: a valid instance already exists at a different path -> stop and
   # point the user at the reset command. No tier language, no upsell.
   hr >&2
@@ -255,6 +326,255 @@ write_lite_marker() {
   [ "$DRY_RUN" = "1" ] && return 0
   mkdir -p "$LITE_MARKER_DIR"
   printf '%s\n' "$(canon_path "$root_to_record")" > "$LITE_MARKER"
+}
+
+# ---------------------------------------------------------------------------
+# 1c. DGN-227: agent class split helpers (A/G sections)
+# ---------------------------------------------------------------------------
+# Registry (G2-3a): one line per instance, "<class>\t<canon-root>". The
+# lite_instance marker is NOT deleted on multi -- it becomes the "primary
+# instance root pointer" and is always (re)written LAST (G2-3b / P28).
+REGISTRY_FILE="$LITE_MARKER_DIR/instances"
+# Persisted limit ledger (G2-1 / P14): ~/.dogany/config, DOGANY_MAX_AGENTS=<n>.
+GLOBAL_CONF="$LITE_MARKER_DIR/config"
+
+# conf_upsert <file> <key> <value> -- replace the KEY= line or append it.
+conf_upsert() {
+  local file="$1" key="$2" val="$3"
+  mkdir -p "$(dirname "$file")"
+  touch "$file"
+  if grep -q "^${key}=" "$file" 2>/dev/null; then
+    # portable in-place edit (bash 3.2 / BSD sed)
+    local tmp; tmp="$(mktemp)"
+    sed "s|^${key}=.*|${key}=${val}|" "$file" > "$tmp" && mv "$tmp" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+
+# conf_read <file> <key> -- print the value ('' when absent).
+conf_read() {
+  grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- || true
+}
+
+# registry_upsert <class> <root> -- add/refresh this instance's registry line.
+registry_upsert() {
+  local class="$1" root="$2"
+  local canon; canon="$(canon_path "$root")"
+  [ "$DRY_RUN" = "1" ] && return 0
+  mkdir -p "$LITE_MARKER_DIR"
+  touch "$REGISTRY_FILE"
+  local tmp; tmp="$(mktemp)"
+  # drop any prior line for the same root, then append the fresh one
+  awk -F'\t' -v r="$canon" '$2 != r' "$REGISTRY_FILE" > "$tmp" || true
+  printf '%s\t%s\n' "$class" "$canon" >> "$tmp"
+  mv "$tmp" "$REGISTRY_FILE"
+}
+
+# registry_count_class <class> -- how many registry entries carry this class.
+registry_count_class() {
+  [ -f "$REGISTRY_FILE" ] || { printf '0'; return 0; }
+  awk -F'\t' -v c="$1" '$1 == c { n++ } END { printf "%d", n }' "$REGISTRY_FILE"
+}
+
+# instance_class_of <root> -- DOGANY_AGENT_CLASS from .instance.conf;
+# absent key/file = main (G1 / P13).
+instance_class_of() {
+  local v
+  v="$(conf_read "$1/.instance.conf" DOGANY_AGENT_CLASS)"
+  case "$v" in domain) printf 'domain' ;; *) printf 'main' ;; esac
+}
+
+# effective_max_agents -- a non-1 env DOGANY_MAX_AGENTS wins (current bypass
+# contract; note the installer defaults the env var to 1 at parse time, so
+# "unset" is indistinguishable from default -- only non-1 counts as explicit);
+# otherwise the persisted ledger (~/.dogany/config); default 1.
+effective_max_agents() {
+  local v="${DOGANY_MAX_AGENTS:-1}"
+  if [ "$v" = "1" ] && [ -f "$GLOBAL_CONF" ]; then
+    local lv; lv="$(conf_read "$GLOBAL_CONF" DOGANY_MAX_AGENTS)"
+    [ -n "$lv" ] && v="$lv"
+  fi
+  printf '%s' "${v:-1}"
+}
+
+# schedule_deferred_briefs <root> -- E1-1 explicit scheduling of the deferred
+# (generic-brief) units via mint_run.sh start --deferred. Rehearsal seam:
+# when DOGANY_LAUNCHD_CAPTURE is set, the call is captured to that file
+# instead of touching launchd (sandbox rehearsal only -- no live bootstrap).
+schedule_deferred_briefs() {
+  local root="$1"
+  local mint_run="$REPO_ROOT/scripts/pack/mint_run.sh"
+  if [ -n "${DOGANY_LAUNCHD_CAPTURE:-}" ]; then
+    printf 'mint_run.sh start --root %s --deferred\n' "$root" >> "$DOGANY_LAUNCHD_CAPTURE"
+    msg "  (리허설) generic-brief 명시 예약 호출 캡처됨" \
+        "  (rehearsal) generic-brief explicit scheduling call captured"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    bash "$mint_run" start --root "$root" --deferred --dry-run || true
+    return 0
+  fi
+  bash "$mint_run" start --root "$root" --deferred
+}
+
+# submit_flip_gate <main_root> -- E3 two-stage gate before flipping a domain
+# instance to submit routing. Stage 1: the main briefing unit is actually
+# loaded (launchd query; DOGANY_GATE_LOADED_OVERRIDE=0|1 is the rehearsal
+# seam). Stage 2 (edition): main root carries routines/lib/handoff-aggregate
+# AND its briefing script consumes it (grep). Returns 0 = flip allowed.
+submit_flip_gate() {
+  local main_root="$1"
+  # stage 1: load check
+  local loaded=1
+  if [ -n "${DOGANY_GATE_LOADED_OVERRIDE:-}" ]; then
+    [ "$DOGANY_GATE_LOADED_OVERRIDE" = "1" ] && loaded=0
+  else
+    local uid; uid="$(id -u)"
+    local lbl
+    for lbl in $(cd "$main_root/routines" 2>/dev/null && ls *.plist 2>/dev/null \
+                  | grep -E 'generic-brief-morning|morning-brief' \
+                  | sed 's/\.plist$//'); do
+      if launchctl print "gui/$uid/$lbl" >/dev/null 2>&1; then loaded=0; break; fi
+    done
+  fi
+  if [ "$loaded" -ne 0 ]; then
+    msg "  [게이트] 메인 브리핑 유닛 로드 미확인 -- submit 전환 불가" \
+        "  [gate] main briefing unit not verified loaded -- submit flip blocked" >&2
+    return 1
+  fi
+  # stage 2: aggregation-capable edition check
+  if [ ! -e "$main_root/routines/lib/handoff-aggregate" ]; then
+    msg "  [게이트] 취합 라이브러리 부재 (routines/lib/handoff-aggregate) -- submit 전환 불가" \
+        "  [gate] aggregation library absent (routines/lib/handoff-aggregate) -- submit flip blocked" >&2
+    return 1
+  fi
+  if ! grep -l "handoff-aggregate" "$main_root/routines/generic-brief.sh" \
+         "$main_root"/routines/bundle/*.sh >/dev/null 2>&1; then
+    msg "  [게이트] 로드된 브리핑 스크립트가 취합판이 아님 -- submit 전환 불가" \
+        "  [gate] loaded briefing script is not an aggregation-capable edition -- submit flip blocked" >&2
+    return 1
+  fi
+  return 0
+}
+
+# peer_display_name <peer_root> -- E2-2/P27 one-shot resolution at
+# registration time: DOGANY_AGENT_LABEL -> DOGANY_AGENT_NAME -> slug.
+peer_display_name() {
+  local root="$1" v
+  v="$(conf_read "$root/.instance.conf" DOGANY_AGENT_LABEL)"
+  [ -n "$v" ] || v="$(conf_read "$root/.instance.conf" DOGANY_AGENT_NAME)"
+  [ -n "$v" ] || v="$(basename "$root")"
+  printf '%s' "$v"
+}
+
+# dgn227_postmint <root> -- A4 per-path chain, runs right after a successful
+# mint: class record (keep-if-present contract is mint-side, G1), KIT anchor,
+# stamp-role, lifekit.conf, pack_install (--no-start, P23), generic-brief
+# explicit scheduling (domain), registry upsert. The lite marker write stays
+# OUTSIDE this function and comes LAST (G2-3 / P28).
+dgn227_postmint() {
+  local target="$1"
+  local class="${DOGANY_AGENT_CLASS:-main}"
+
+  # class stamp (A4; readers with no key treat the instance as main, P13)
+  conf_upsert "$target/.instance.conf" DOGANY_AGENT_CLASS "$class"
+
+  # F-(b): KIT anchor on main (single value today).
+  # OPEN QUESTION (rehearsal): the spec anchors KIT on "the main's kit slot";
+  # whether a domain instance also records KIT is unspecified -- main only here.
+  if [ "$class" = "main" ]; then
+    conf_upsert "$target/config/agent.conf" KIT "lifekit"
+  fi
+
+  # A3/A4: role stamp on EVERY path via the single stamp machine (P15).
+  if [ -n "$AGENT_ROLE_PROSE" ]; then
+    bash "$REPO_ROOT/scripts/pack/mint_run.sh" stamp-role \
+      --root "$target" --role "$AGENT_ROLE_PROSE" \
+      || { msg "[에러] role 스탬프 실패" "[ERROR] role stamp failed" >&2; exit 1; }
+  fi
+
+  if [ "$class" = "domain" ]; then
+    # P3: suppress the SessionStart lifekit proposal; opt-in stays via C2.
+    conf_upsert "$target/config/lifekit.conf" LIFEKIT "off"
+
+    # A4: catalog pack install (--no-start is MANDATORY -- service start is
+    # owned by step_service alone, P23; fresh/standalone => no --migrate-from)
+    if [ -n "$DOGANY_PACK_ID" ] && [ "$DOGANY_PACK_ID" != "blank" ]; then
+      bash "$REPO_ROOT/scripts/pack/pack_install.sh" \
+        "$DOGANY_AGENT_SLUG" "$target" --pack "$DOGANY_PACK_ID" --no-start \
+        || { msg "[에러] 팩 설치 실패: $DOGANY_PACK_ID" \
+                 "[ERROR] pack install failed: $DOGANY_PACK_ID" >&2; exit 1; }
+    fi
+
+    # E1-1/A4: explicit generic-brief scheduling (standalone default) --
+    # without this a blank/pack-less domain would have zero briefings.
+    schedule_deferred_briefs "$target"
+  else
+    # main path: LIFEKIT=pending keeps the post-onboarding lifekit proposal
+    conf_upsert "$target/config/lifekit.conf" LIFEKIT "pending"
+  fi
+
+  # G2-3a/G3-(a): registry before marker; marker is written LAST by caller.
+  registry_upsert "$class" "$target"
+}
+
+# flow_main_add_finalize <main_root> -- G2 steps 3..5 (main-add). Called
+# after the main mint attempt; enforces the pointer order: success check ->
+# registry -> marker LAST -> peer registration -> gated mode flip.
+flow_main_add_finalize() {
+  local main_root="$1"
+  local domain_root="$EXISTING_DOMAIN_ROOT"
+
+  # step 3 precondition: REAL success check before any pointer moves (P28)
+  if [ ! -f "$main_root/AGENT.md" ]; then
+    msg "[에러] main mint 미완료 (AGENT.md 부재) -- 포인터 갱신을 중단합니다. 마커는 기존 도메인을 유지합니다 (재실행 안전)." \
+        "[ERROR] main mint incomplete (no AGENT.md) -- aborting pointer updates. Marker still points at the existing domain (safe to re-run)." >&2
+    return 1
+  fi
+
+  # step 3a: registry (domain entry ensured at choice time; add main)
+  registry_upsert "main" "$main_root"
+  # step 3b: marker re-pointed LAST among the state pointers
+  write_lite_marker "$main_root"
+
+  # step 4: peer registration on main + display-name capture (P27).
+  # OPEN QUESTION (rehearsal): the spec leaves the peer list's storage home
+  # ambiguous ("레지스트리(G2)/agent.conf에서 읽어" E2-2); recorded here as
+  # BRIEF_PEERS in the main's agent.conf ("<root>|<display>" CSV).
+  local disp; disp="$(peer_display_name "$domain_root")"
+  local peers; peers="$(conf_read "$main_root/config/agent.conf" BRIEF_PEERS)"
+  case ",$peers," in
+    *",$domain_root|"*) : ;;  # already registered
+    *)
+      if [ -n "$peers" ]; then peers="$peers,$domain_root|$disp"; else peers="$domain_root|$disp"; fi
+      conf_upsert "$main_root/config/agent.conf" BRIEF_PEERS "$peers"
+      ;;
+  esac
+
+  # step 5: mode flip, gate-first (E3). Ensure main has an aggregation shell:
+  # lifekit active -> bundle briefing; else generic-brief explicit scheduling.
+  local lk; lk="$(conf_read "$main_root/config/lifekit.conf" LIFEKIT)"
+  if [ "$lk" != "on" ]; then
+    schedule_deferred_briefs "$main_root"
+  fi
+  if submit_flip_gate "$main_root"; then
+    # timing discipline (G2-5): domain section cron must precede the main
+    # publish time. OPEN QUESTION (rehearsal): the spec mandates the check
+    # but not the comparison source pair (which units) nor the adjustment
+    # policy -- logged as a loud note here, no auto-adjust implemented.
+    msg "  [주의] 섹션 생성/발행 시각 검증은 리허설 미구현 (OPEN QUESTION)" \
+        "  [note] section/publish timing verification not implemented in rehearsal (OPEN QUESTION)"
+    conf_upsert "$domain_root/config/agent.conf" HANDOFF_PEER_MAIN "$main_root"
+    conf_upsert "$domain_root/config/agent.conf" BRIEF_ROUTING "submit"
+    msg "도메인 -> submit 라우팅 전환 완료 (게이트 통과)" \
+        "Domain flipped to submit routing (gate passed)"
+  else
+    conf_upsert "$domain_root/config/agent.conf" BRIEF_ROUTING "standalone"
+    msg "게이트 실패: 도메인은 standalone 유지 (브리핑 소실 방지). 해소: 메인에 취합 셸 예약 후 재시도" \
+        "Gate failed: domain stays standalone (no briefing loss). Resolve: schedule an aggregation shell on main, retry"
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1153,6 +1473,204 @@ step_language() {
     fi
   fi
   msg "언어: 한국어" "Language: English"
+}
+
+# ---------------------------------------------------------------------------
+# Step 1b (DGN-227 A1/A2): agent class -- main / domain-from-catalog / blank
+# ---------------------------------------------------------------------------
+# Placement per A1/P1: right after the language step, before the heavy
+# dependency downloads (catalog read is a local JSON parse -- cheap).
+CATALOG_FILE=""   # resolved in step_agent_class (repo-relative)
+
+# catalog_entries -- print "id<TAB>display<TAB>payload_ok(0/1)" per pack.
+catalog_entries() {
+  python3 - "$CATALOG_FILE" "$DOGANY_LANG" <<'PYEOF' 2>/dev/null || true
+import json, os, sys
+path, lang = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cat = json.load(f)
+base = os.path.dirname(os.path.abspath(path))
+for p in cat.get("packs", []):
+    pid = p.get("id", "")
+    name = p.get("name_ko" if lang == "ko" else "name") or p.get("name_ko") or pid
+    tag = p.get("tagline_ko" if lang == "ko" else "tagline") or p.get("tagline_ko") or ""
+    pkg = p.get("package_dir") or ""
+    if pkg and not os.path.isabs(pkg):
+        pkg = os.path.join(base, pkg)
+    ok = 1 if (pkg and os.path.isfile(os.path.join(pkg, "pack-manifest.json"))) else 0
+    print("%s\t%s -- %s\t%d" % (pid, name, tag, ok))
+PYEOF
+}
+
+# catalog_role_prose <id> -- role_prose_ko / role_prose per language.
+catalog_role_prose() {
+  python3 - "$CATALOG_FILE" "$1" "$DOGANY_LANG" <<'PYEOF' 2>/dev/null || true
+import json, sys
+path, pid, lang = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    cat = json.load(f)
+for p in cat.get("packs", []):
+    if p.get("id") == pid:
+        print(p.get("role_prose_ko" if lang == "ko" else "role_prose")
+              or p.get("role_prose_ko") or "")
+        break
+PYEOF
+}
+
+slug_valid() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9-]{1,30}$'; }
+
+step_agent_class() {
+  hr
+  msg "[1b] 에이전트 유형" "[1b] Agent type"
+  hr
+  CATALOG_FILE="$REPO_ROOT/packs/catalog.json"
+
+  # --- resolve the class (env preset > interactive > default main) ---
+  local class="${DOGANY_AGENT_CLASS:-}"
+  case "$class" in
+    main|domain) : ;;
+    "")
+      if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+        class="main"   # H1-7: no preset = main; the battery passes unchanged
+      else
+        local o1 o2 o3
+        o1="$(msgn "메인 에이전트 (기본) -- 생활 전반을 맡는 범용 에이전트" \
+                   "Main agent (default) -- a general agent for everyday life")"
+        o2="$(msgn "도메인 에이전트 -- 카탈로그에서 검증된 전문 에이전트를 골라 시작" \
+                   "Domain agent -- start from a verified specialist in the catalog")"
+        o3="$(msgn "도메인 에이전트 -- 빈 상태로 시작 (역할만 정하고 직접 키움)" \
+                   "Domain agent -- start blank (set the role, grow it yourself)")"
+        select_menu "$(msgn "어떤 에이전트를 만들까요?" "Which agent should we create?")" \
+                    0 "$o1" "$o2" "$o3"
+        case "$SELECT_RESULT" in
+          0) class="main" ;;
+          1) class="domain" ;;
+          2) class="domain"; DOGANY_PACK_ID="blank" ;;
+        esac
+      fi
+      ;;
+    *)
+      echo "invalid DOGANY_AGENT_CLASS: $class (main|domain)" >&2; exit 1 ;;
+  esac
+  DOGANY_AGENT_CLASS="$class"
+
+  if [ "$class" = "main" ]; then
+    if [ "$DOGANY_LANG" = "ko" ]; then
+      AGENT_ROLE_PROSE="$LIFEKIT_MAIN_ROLE_PROSE_KO"
+    else
+      AGENT_ROLE_PROSE="$LIFEKIT_MAIN_ROLE_PROSE_EN"
+    fi
+    msg "유형: 메인 에이전트" "Type: main agent"
+    return 0
+  fi
+
+  # --- domain: pack selection (catalog or blank) ---
+  local pack="${DOGANY_PACK_ID:-}"
+  if [ -z "$pack" ]; then
+    if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+      pack="blank"   # non-interactive without preset -> safest path
+    else
+      local entries; entries="$(catalog_entries)"
+      local usable; usable="$(printf '%s\n' "$entries" | awk -F'\t' '$3==1' || true)"
+      if [ -z "$usable" ]; then
+        msg "카탈로그에 설치 가능한 팩이 없습니다 (payload 부재). 빈 도메인으로 진행합니다." \
+            "No installable pack in the catalog (payload absent). Falling back to a blank domain."
+        pack="blank"
+      else
+        # arrow selector over usable entries + a blank fallback row
+        local ids="" labels="" n=0
+        local IFS_SAVE="$IFS"
+        IFS="$(printf '\n')"
+        # bash 3.2: build parallel newline lists
+        ids="$(printf '%s\n' "$usable" | cut -f1)"
+        labels="$(printf '%s\n' "$usable" | cut -f2)"
+        IFS="$IFS_SAVE"
+        # shellcheck disable=SC2086
+        local menu_items=()
+        while IFS= read -r l; do [ -n "$l" ] && menu_items+=("$l"); done <<EOF
+$labels
+EOF
+        menu_items+=("$(msgn "빈 상태로 시작" "Start blank")")
+        select_menu "$(msgn "어떤 전문 에이전트로 시작할까요?" "Which specialist should we start from?")" \
+                    0 "${menu_items[@]}"
+        n="$SELECT_RESULT"
+        local usable_count; usable_count="$(printf '%s\n' "$ids" | grep -c . || true)"
+        if [ "$n" -ge "$usable_count" ]; then
+          pack="blank"
+        else
+          pack="$(printf '%s\n' "$ids" | sed -n "$((n+1))p")"
+        fi
+      fi
+    fi
+  fi
+  DOGANY_PACK_ID="$pack"
+
+  local slug=""
+  if [ "$pack" != "blank" ]; then
+    # validate the preset pack id against the catalog + payload presence
+    local row; row="$(catalog_entries | awk -F'\t' -v p="$pack" '$1==p')"
+    if [ -z "$row" ]; then
+      echo "unknown pack id: $pack (not in catalog)" >&2; exit 1
+    fi
+    if [ "$(printf '%s' "$row" | cut -f3)" != "1" ]; then
+      msg "선택한 팩의 payload가 없습니다: $pack. 빈 도메인으로 진행합니다." \
+          "Selected pack has no payload: $pack. Falling back to a blank domain."
+      pack="blank"; DOGANY_PACK_ID="blank"
+    else
+      slug="$pack"   # A4/P5: catalog id doubles as the slug
+      AGENT_ROLE_PROSE="$(catalog_role_prose "$pack")"
+      [ -n "$AGENT_ROLE_PROSE" ] || { echo "pack $pack has no role prose in catalog" >&2; exit 1; }
+    fi
+  fi
+
+  if [ "$pack" = "blank" ]; then
+    # role prose: one free-form question (A3); env knob for non-interactive
+    AGENT_ROLE_PROSE="${DOGANY_ROLE_PROSE:-}"
+    if [ -z "$AGENT_ROLE_PROSE" ]; then
+      if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+        echo "blank domain needs a role prose (interactive TTY or DOGANY_ROLE_PROSE)" >&2
+        exit 1
+      fi
+      msgn "이 에이전트가 맡을 역할은? (한 줄) " "What role will this agent take? (one line) "
+      IFS= read -r AGENT_ROLE_PROSE
+      [ -n "$AGENT_ROLE_PROSE" ] || { echo "role prose required" >&2; exit 1; }
+    fi
+    slug="${DOGANY_AGENT_SLUG:-}"
+    if [ -z "$slug" ]; then
+      if [ "$DRY_RUN" = "1" ] || [ ! -t 0 ]; then
+        echo "blank domain needs a slug (interactive TTY or DOGANY_AGENT_SLUG)" >&2
+        exit 1
+      fi
+      while :; do
+        msgn "영문 슬러그 (예: my-agent): " "Slug (e.g. my-agent): "
+        IFS= read -r slug
+        slug_valid "$slug" && break
+        msg "슬러그 형식이 아닙니다 (^[a-z][a-z0-9-]{1,30}$)" \
+            "Not a valid slug (^[a-z][a-z0-9-]{1,30}$)"
+      done
+    fi
+  fi
+
+  slug_valid "$slug" || { echo "invalid slug: $slug" >&2; exit 1; }
+  DOGANY_AGENT_SLUG="$slug"
+
+  # A4/P5: domain default root ~/.dogany/agents/<slug>; explicit --root wins.
+  if [ "$ROOT_FORCED" != "1" ]; then
+    INSTALL_ROOT="$HOME/.dogany/agents/$slug"
+  fi
+  # slug drives the launchd label / bot display name unless --name was given
+  if [ "$NAME_FORCED" != "1" ]; then
+    AGENT_NAME="$slug"
+  fi
+  # target root already taken by a valid instance -> re-ask (interactive) /
+  # fail (preset)
+  if [ -f "$INSTALL_ROOT/AGENT.md" ] && [ "$ROOT_FORCED" != "1" ]; then
+    msg "대상 루트가 이미 사용 중입니다: $INSTALL_ROOT" \
+        "Target root already occupied: $INSTALL_ROOT" >&2
+    exit 2
+  fi
+  msg "유형: 도메인 에이전트 (pack=$DOGANY_PACK_ID, slug=$slug, root=$INSTALL_ROOT)" \
+      "Type: domain agent (pack=$DOGANY_PACK_ID, slug=$slug, root=$INSTALL_ROOT)"
 }
 
 # ---------------------------------------------------------------------------
@@ -2309,8 +2827,18 @@ step_mint_and_env() {
   #     The bundle dir ships from .template; the symlink makes it visible to Claude.
   browser_activate_skill "$target"
 
-  # Record this install root as the single Lite instance.
-  write_lite_marker "$target"
+  # 7e) DGN-227 A4/G: class stamp + role stamp + per-class chain + registry.
+  dgn227_postmint "$target"
+
+  if [ "$MAIN_ADD_FLOW" = "1" ]; then
+    # G2 main-add: pointer order is normative -- registry done above, marker
+    # re-point + peer registration + gated mode flip happen here, marker LAST.
+    flow_main_add_finalize "$target"
+  else
+    # Record this install root as the single Lite instance -- LAST pointer
+    # write (G2-3/P28: a crash before this line leaves the old marker valid).
+    write_lite_marker "$target"
+  fi
 }
 
 # --core-only unless voice is opted in.
@@ -2608,6 +3136,24 @@ convert_oncalendar() {
   printf '*-*-* %02d:%02d:00' "$new_hh" "$new_mm"
 }
 
+# DGN-227 E1-1: defer manifest predicate. Reads <plist_dir>/plists.defer
+# (one plist basename per line, '#' comments allowed) -- same semantics as
+# mint_run.sh start. Returns 0 when <basename> is deferred (skip on the
+# default scan; explicit load only via `mint_run.sh start --deferred`).
+plist_is_deferred() {
+  local plist_dir="$1" base="$2"
+  local defer_file="$plist_dir/plists.defer"
+  [ -f "$defer_file" ] || return 1
+  local line
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line="$(printf '%s' "$line" | tr -d '[:space:]')"
+    [ -n "$line" ] || continue
+    [ "$base" = "$line" ] && return 0
+  done < "$defer_file"
+  return 1
+}
+
 # --- macOS: load each minted routine plist, verify via launchctl print/list ---
 schedule_routines_launchd() {
   local uid; uid="$(id -u)"
@@ -2623,6 +3169,11 @@ schedule_routines_launchd() {
     local p
     for p in "$plist_dir"/*.plist; do
       [ -e "$p" ] || continue
+      if plist_is_deferred "$plist_dir" "$(basename "$p")"; then
+        msg "  모의: 예약 보류(defer): $(basename "$p")" \
+            "  mock: deferred: $(basename "$p") (listed in plists.defer)"
+        continue
+      fi
       msg "  모의: cp '$(basename "$p")' && launchctl bootstrap gui/$uid" \
           "  mock: cp '$(basename "$p")' && launchctl bootstrap gui/$uid"
     done
@@ -2634,6 +3185,13 @@ schedule_routines_launchd() {
   local p
   for p in "$plist_dir"/*.plist; do
     [ -e "$p" ] || continue
+    # DGN-227 E1-1: units listed in routines/plists.defer are NOT loaded on
+    # the default scan (generic-brief set) -- explicit scheduling paths only.
+    if plist_is_deferred "$plist_dir" "$(basename "$p")"; then
+      msg "  예약 보류(defer): $(basename "$p") -- 명시 예약 경로에서만 로드" \
+          "  deferred: $(basename "$p") -- loaded only by an explicit scheduling path"
+      continue
+    fi
     any=1
     local name dest label
     name="$(basename "$p")"
@@ -2991,8 +3549,8 @@ while [ $# -gt 0 ]; do
     --lang)
       case "$2" in ko|en) : ;; *) echo "invalid --lang: $2 (ko|en)" >&2; exit 1 ;; esac
       DOGANY_LANG="$2"; LANG_FORCED=1; shift 2 ;;
-    --root) INSTALL_ROOT="$2"; shift 2 ;;
-    --name) AGENT_NAME="$2"; shift 2 ;;
+    --root) INSTALL_ROOT="$2"; ROOT_FORCED=1; shift 2 ;;
+    --name) AGENT_NAME="$2"; NAME_FORCED=1; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -3035,6 +3593,7 @@ main() {
   #   - step_dependencies runs its own machine-spec detection (disk/RAM) inline
   #     before each recommendation, and gates every download behind its opt-in.
   step_language
+  step_agent_class
   check_prereqs
   step_dependencies
   step_model
@@ -3047,4 +3606,8 @@ main() {
   step_final
 }
 
-main "$@"
+# DGN-227 rehearsal seam: the test harness sources this file for its
+# functions (DOGANY_INSTALL_LIB=1) without running the wizard.
+if [ "${DOGANY_INSTALL_LIB:-0}" != "1" ]; then
+  main "$@"
+fi

@@ -12,7 +12,10 @@
         "주간 코칭 브리핑 섹션",
         "기존 기록 이관"
       ],
-      "emoji_hints": ["💪", "🏋️"],
+      "emoji_hints": [
+        "💪",
+        "🏋️"
+      ],
       "tone_presets_ko": [
         "빡세게 몰아붙이는 코치형",
         "따뜻하게 격려하는 트레이너형",
@@ -21,8 +24,16 @@
       "migration_tooling": "database/migrations/health_to_warg.py",
       "knowledge_ko": "지식창고 kimwog 스냅샷 동봉 (릴리스 핀)",
       "package_dir": "health-trainer",
-      "domains": ["health", "헬스", "운동", "식단", "다이어트", "트레이닝"],
-      "status": "official"
+      "domains": [
+        "health",
+        "헬스",
+        "운동",
+        "식단",
+        "다이어트",
+        "트레이닝"
+      ],
+      "status": "official",
+      "pack_version": "0.0.1"
     },
     {
       "id": "dev",
@@ -35,15 +46,25 @@
         "스펙 우선 패칭 + 위임 규율",
         "커밋 체크포인트 + 시크릿 스윕/사용량 확인 스크립트"
       ],
-      "emoji_hints": ["⚙️", "🛠️"],
+      "emoji_hints": [
+        "⚙️",
+        "🛠️"
+      ],
       "tone_presets_ko": [
         "군더더기 없는 엔지니어형",
         "친절하게 설명하는 페어 프로그래머형",
         "직설적인 코드 리뷰어형"
       ],
       "package_dir": "dev",
-      "domains": ["dev", "개발", "코딩", "인프라", "자동화"],
-      "status": "official"
+      "domains": [
+        "dev",
+        "개발",
+        "코딩",
+        "인프라",
+        "자동화"
+      ],
+      "status": "official",
+      "pack_version": "0.1.0"
     }
   ]
 }

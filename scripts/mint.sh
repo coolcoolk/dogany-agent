@@ -342,6 +342,14 @@ for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist \
   [ "$np" != "$p" ] && mv "$p" "$np"
 done
 
+# 3a) plists.defer basename manifest (DGN-227 E1-1): its entries must keep
+#     matching the plist filenames after the rename above, and the file has no
+#     extension so the step-2 render pass does not cover it -- substitute here.
+if [ -f "$PROJECT_ROOT/routines/plists.defer" ]; then
+  sed -i.bak "s/telegram-agent/$AGENT_NAME/g" "$PROJECT_ROOT/routines/plists.defer" \
+    && rm -f "$PROJECT_ROOT/routines/plists.defer.bak"
+fi
+
 # 3b) write an instance manifest so update.sh can re-substitute the same five
 #     placeholders when it refreshes framework files, and record the framework
 #     version this instance was built from. Non-secret; no token/chat id here.
