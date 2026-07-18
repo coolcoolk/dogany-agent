@@ -22,6 +22,7 @@ outside the pack; read-if-present contract). -->
   -- no counter file.
 - States: open > wip > blocked > done. `parked` = idea/design on hold
   behind an unmet gate (not actionable now, not dead).
+- Deferred-execution work: open a ticket AT SCHEDULING TIME -- any work item leaving the live conversation for a future return path (one-shot reminder, scheduled/one-shot cron, queue placement, wakeup/wait gate). The ticket records the return path (schedule time / reminder / queue + expected pickup); the scheduled artifact references the ticket id. No ticketless deferred work -- a reservation alone is not a ledger.
 
 ### Design grill (adversarial design review)
 - Complex or irreversible designs (architecture / data model / deploy /
