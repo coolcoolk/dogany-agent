@@ -1,2 +1,5 @@
 # fake stub token in DGN-395 push-retry test (heredoc, "fake:token123" -- not a real secret)
 agents/.template/routines/tests/test-push-retry.sh
+# fake fixture secrets in DGN-227 install-split harness (synthetic .env/USER.md/memories
+# injected into a temp fixture to prove the publish data-strip gate removes them -- not real)
+tests/rehearsal_dgn227.sh
