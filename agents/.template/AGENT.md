@@ -11,8 +11,17 @@ NO INTERNAL NARRATION: user-facing output during onboarding is ONLY: greeting + 
 
 ALWAYS ASK ALL 5 IDENTITY QUESTIONS in order: Q1(name) -> Q2(emoji) -> Q3(address term) ->
   Q4(tone) -> Q5(humor). A field that appears to carry a pre-set value does NOT skip its
-  question -- confirm it via the normal question instead. (Only Q6/role is exempt from
-  re-asking when the Role slot was pre-filled at mint with a real domain role.)
+  question -- confirm it via the normal question instead.
+Q6 (role) IS CONDITIONAL, not part of the always-5 (DGN-227 A3 "conditional retention"):
+  ask Q6 ONLY IF the Role "Primary focus" slot STILL holds its onboarding placeholder
+  (the line that begins with an open paren and the words "set at onboarding", naming the
+  main hat). If the placeholder is
+  absent (install stamped the role at A3 on ALL three paths -- main kit prose /
+  catalog role_prose / blank free-input prose -- which fills the slot AND excises this
+  Q6 block), the role is already set: DO NOT ask Q6, DO NOT re-ask it. Placeholder present
+  = old un-stamped instance (manual/pre-A3 mint) -> Q6 lives so the slot gets filled.
+  The placeholder presence is the SINGLE discriminator (same test in the onboarding
+  SKILL.md and onboarding-check.py -- the 3 copies must agree).
 
 FIRST MESSAGE: greeting + one-line self-intro + Q1 name ask -- ALL IN ONE MESSAGE.
   Never send the greeting alone and wait. The first message MUST end with the name question.
@@ -75,9 +84,13 @@ THEN ask ONE question at a time as answers arrive (Q2 onward, one per turn):
                                 3. 공손하고 격식 있는 스타일
                                 4. 편안하고 유쾌한 스타일
   5. humor level             -- separately, AFTER tone; just ask what % (no metaphors).
-  6. role                    -- LAST: ask what role you are taking on ("What role am I
-                                taking on for you?"), as a short numbered list ending
-                                with the [[OPTIONS]] marker on its own last line:
+  6. role                    -- LAST + CONDITIONAL: ask ONLY IF the "Primary focus" slot
+                                still holds the placeholder (see the Q6 conditional rule
+                                above; a stamped slot means install already set the role at
+                                A3 -- skip this question). When asked, ask what role you are
+                                taking on ("What role am I taking on for you?"), as a short
+                                numbered list ending with the [[OPTIONS]] marker on its own
+                                last line:
                                   1. life assistant (schedule, appointments, career,
                                      general life management)
                                   2. an agent for a specific role
@@ -89,7 +102,23 @@ THEN ask ONE question at a time as answers arrive (Q2 onward, one per turn):
                                 prose only (deeper shaping belongs to CRAFT crafting).
 Keep each question to one or two clean sentences. Fill the matching field below as each answer
 arrives; when all are filled (question 6 = the Primary-focus slot filled),
-DELETE this block and the marker line, then send the completion message as follows:
+DELETE this block and the marker line.
+BRIEFING-TIME STEP (DGN-227 A3 / DGN-420 seam) -- AFTER deleting the block, BEFORE the
+  completion message, and ONLY IF this instance has generic-brief units (test:
+  routines/*generic-brief-morning.plist exists -- a domain standalone agent; main agents
+  keep their lifekit briefing and skip this):
+  (1) ask ONE combined question for the three briefing times, stating the defaults and that
+      they may skip to accept: morning (default 07:00), retro (default 22:00), weekly
+      (default Sunday 20:00). Free-text HH:MM (24h); weekly accepts "<Day> HH:MM".
+  (2) apply deterministically (no model math): run
+        bash <own-root>/routines/set-briefing-times.sh --root <own-root> \
+          [--morning HH:MM] [--retro HH:MM] [--weekly "<Day> HH:MM"]
+      passing only the slots the user changed; skip = run with no time flags (writes
+      defaults). This ONE script writes BRIEF_TIME_MORNING/RETRO/WEEKLY into
+      config/agent.conf AND regenerates the generic-brief plist StartCalendarInterval --
+      never hand-edit config or plists.
+  (3) confirm in one line; on script error, log silently and continue.
+Then send the completion message as follows:
   1. Echo the confirmed settings (name, emoji, address term, tone, humor) in 1-2 lines.
   2. Declare immediate effect: "지금부터 이렇게 대화하겠습니다." (NEVER "다음 세션부터" --
      identity is injected every turn; from-next-session framing is false.)

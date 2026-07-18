@@ -28,8 +28,14 @@
 #            [--root <dir>] [--instance-root <dir>] [--owner-id <ids>]
 #            [--tz <tz>] [--lang <en|ko>] [--role <prose>] [--core-only]
 #            [--model <sonnet|opus|haiku>] [--catalog <file>]
-#            [--migrate-from <peer-root>] [--no-start] [--no-state]
-#            [--dry-run]
+#            [--migrate-from <peer-root>] [--peer-main <main-root>]
+#            [--no-start] [--no-state] [--dry-run]
+#            # --peer-main: G3-b (DGN-227/DGN-422) main-install -> later
+#            #          domain-add via v2 path. FRESH mint attaching to an
+#            #          existing main: registry register + limit ledger +
+#            #          BRIEFING-axis HANDOFF_PEER_MAIN + gated BRIEF_ROUTING.
+#            #          NEVER writes MIGRATION_PEER (E2-1 axis separation).
+#            #          Mutually exclusive with --migrate-from.
 #            # --migrate-from: MIGRATION PATH (DGN-284): the new instance
 #            #          migrates an existing user's records from the main
 #            #          agent at <peer-root>. Sets peer keys
@@ -67,13 +73,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MACHINERY_REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 MODE="${1:-}"
-[[ "$MODE" == "mint" || "$MODE" == "start" || "$MODE" == "pipeline" || "$MODE" == "recover" || "$MODE" == "stamp-role" ]] || {
-  echo "usage: mint_run.sh {mint|start|pipeline|recover|stamp-role} ..." >&2; exit 1; }
+[[ "$MODE" == "mint" || "$MODE" == "start" || "$MODE" == "pipeline" || "$MODE" == "recover" || "$MODE" == "stamp-role" || "$MODE" == "align-peer-main" ]] || {
+  echo "usage: mint_run.sh {mint|start|pipeline|recover|stamp-role|align-peer-main} ..." >&2; exit 1; }
 shift
 
 SLUG="" ROOT="" OWNER_IDS="" AGENT_TZ="" LANG_OPT="" DRY=0 CORE_ONLY=0
 ONLY_DEFERRED=0 ROLE_PROSE="" PACK_ID="" NO_START=0 NO_STATE=0 MODEL_OPT=""
-PEER_ROOT="" INSTANCE_ROOT="" CATALOG_OPT=""
+PEER_ROOT="" INSTANCE_ROOT="" CATALOG_OPT="" PEER_MAIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --slug)      SLUG="$2"; shift 2 ;;
@@ -89,6 +95,13 @@ while [[ $# -gt 0 ]]; do
     --pack)      PACK_ID="$2"; shift 2 ;;
     --catalog)   CATALOG_OPT="$2"; shift 2 ;;
     --migrate-from) PEER_ROOT="$2"; shift 2 ;;
+    # G3-b (DGN-227 / DGN-422): main install -> later domain-add via the v2
+    # mint-agent path. --peer-main names the EXISTING main root the new domain
+    # attaches to. This is a FRESH mint (NOT --migrate-from): it records the
+    # BRIEFING-axis key HANDOFF_PEER_MAIN, never the migration-axis MIGRATION_PEER
+    # (E2-1 key-axis separation -- so the onboarding migration discriminator does
+    # NOT mis-fire on this fresh domain).
+    --peer-main) PEER_MAIN="$2"; shift 2 ;;
     --no-start)  NO_START=1; shift ;;
     --no-state)  NO_STATE=1; shift ;;
     --model)     MODEL_OPT="$2"; shift 2 ;;
@@ -116,6 +129,14 @@ fi
 # Apply default after validation so error messages are accurate.
 MODEL_OPT="${MODEL_OPT:-sonnet}"
 
+# G3-b guard: --peer-main (briefing-axis attach, fresh domain-add) is mutually
+# exclusive with --migrate-from (migration-axis). Mixing the two axes is exactly
+# the E2-1 conflation this design forbids.
+if [[ -n "$PEER_MAIN" && -n "$PEER_ROOT" ]]; then
+  echo "ERROR: --peer-main and --migrate-from are mutually exclusive (E2-1: briefing axis vs migration axis)" >&2
+  exit 1
+fi
+
 # Validate --instance-root if supplied.
 if [[ -n "$INSTANCE_ROOT" ]]; then
   [[ -d "$INSTANCE_ROOT" ]] || {
@@ -131,6 +152,110 @@ JOURNAL_DIR=""
 
 conf_get() { # conf_get <file> <key> -- empty (not fatal) when key/file absent
   { grep -E "^$2=" "$1" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; } || true
+}
+
+# conf_upsert <file> <key> <value> -- replace the KEY= line or append it.
+_conf_upsert() {
+  local file="$1" key="$2" val="$3" tmp
+  touch "$file"
+  if grep -qE "^$key=" "$file" 2>/dev/null; then
+    # grep -v exits 1 when it filters out ALL lines (single-key file); the
+    # trailing `|| true` keeps that from tripping `set -e`.
+    tmp="$(mktemp)"; grep -vE "^$key=" "$file" > "$tmp" || true; mv "$tmp" "$file"
+  fi
+  printf '%s=%s\n' "$key" "$val" >> "$file"
+}
+
+_canon() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+
+# ---- G3-b alignment (DGN-227 / DGN-422) ------------------------------------
+# _g3b_submit_gate <main_root> -- E3 two-stage gate mirror (install.sh
+# submit_flip_gate). Stage 1: main briefing unit loaded (launchd query, or the
+# DOGANY_GATE_LOADED_OVERRIDE testing shim). Stage 2: aggregation-capable
+# edition (routines/lib/handoff-aggregate present AND a briefing script consumes
+# it). Returns 0 = flip allowed.
+_g3b_submit_gate() {
+  local main_root="$1" loaded=1
+  if [[ -n "${DOGANY_GATE_LOADED_OVERRIDE:-}" ]]; then
+    [[ "$DOGANY_GATE_LOADED_OVERRIDE" = "1" ]] && loaded=0
+  else
+    local uid lbl; uid="$(id -u)"
+    for lbl in $(cd "$main_root/routines" 2>/dev/null && ls *.plist 2>/dev/null \
+                  | grep -E 'generic-brief-morning|morning-brief' | sed 's/\.plist$//'); do
+      if launchctl print "gui/$uid/$lbl" >/dev/null 2>&1; then loaded=0; break; fi
+    done
+  fi
+  [[ "$loaded" -eq 0 ]] || { echo "  [gate] main briefing unit not loaded -- submit flip blocked" >&2; return 1; }
+  [[ -e "$main_root/routines/lib/handoff-aggregate" ]] || {
+    echo "  [gate] aggregation library absent -- submit flip blocked" >&2; return 1; }
+  local edition_ok=1 s
+  for s in "$main_root/routines/generic-brief.sh" "$main_root"/routines/bundle/*.sh; do
+    [[ -f "$s" ]] || continue
+    if grep -q "handoff-aggregate" "$s" 2>/dev/null; then edition_ok=0; break; fi
+  done
+  [[ "$edition_ok" -eq 0 ]] || { echo "  [gate] loaded briefing script not aggregation-capable -- submit flip blocked" >&2; return 1; }
+  return 0
+}
+
+# _g3b_display_name <root> -- DOGANY_AGENT_LABEL -> DOGANY_AGENT_NAME -> slug.
+_g3b_display_name() {
+  local root="$1" v
+  v="$(conf_get "$root/.instance.conf" DOGANY_AGENT_LABEL)"
+  [[ -n "$v" ]] || v="$(conf_get "$root/.instance.conf" DOGANY_AGENT_NAME)"
+  [[ -n "$v" ]] || v="$(basename "$root")"
+  printf '%s' "$v"
+}
+
+# g3b_align_domain <domain_root> <main_root> <slug> -- fresh domain-add landing
+# on the same state surface as the install-time G2 main-add flow (spec G3-b):
+#   (a) registry register domain + main; (b) limit ledger cover the count;
+#   (c) routing keys HANDOFF_PEER_MAIN + BRIEF_ROUTING, gated (fail=standalone).
+# NEVER writes MIGRATION_PEER -- fresh mint, briefing axis only (E2-1).
+g3b_align_domain() {
+  local domain_root="$1" main_root="$2" slug="$3"
+  local dogany_dir="$HOME/.dogany"
+  local registry="$dogany_dir/instances"
+  local global_conf="$dogany_dir/config"
+  local dcanon mcanon; dcanon="$(_canon "$domain_root")"; mcanon="$(_canon "$main_root")"
+  mkdir -p "$dogany_dir"; touch "$registry"
+
+  # (a) registry: register the new domain + the main it attaches to (idempotent).
+  local tmp; tmp="$(mktemp)"
+  awk -F'\t' -v d="$dcanon" -v m="$mcanon" '$2 != d && $2 != m' "$registry" > "$tmp" || true
+  printf 'domain\t%s\n' "$dcanon" >> "$tmp"
+  printf 'main\t%s\n' "$mcanon" >> "$tmp"
+  mv "$tmp" "$registry"
+  echo "[g3b] registry: domain + main registered"
+
+  # (b) limit ledger: the v2 path never read the limit before (G2-1 asymmetry).
+  # Persist DOGANY_MAX_AGENTS to cover the registry count (>= current entries).
+  local n; n="$(wc -l < "$registry" | tr -d ' ')"
+  local cur; cur="$(conf_get "$global_conf" DOGANY_MAX_AGENTS)"
+  if [[ -z "$cur" || "$cur" -lt "$n" ]]; then
+    _conf_upsert "$global_conf" DOGANY_MAX_AGENTS "$n"
+    echo "[g3b] limit ledger: DOGANY_MAX_AGENTS=$n"
+  fi
+
+  # (c) peer register on main (display-name capture) + routing flip (gated).
+  local disp; disp="$(_g3b_display_name "$domain_root")"
+  local mconf="$main_root/config/agent.conf"; touch "$mconf"
+  local peers; peers="$(conf_get "$mconf" BRIEF_PEERS)"
+  case ",$peers," in
+    *",$dcanon|"*) : ;;
+    *) if [[ -n "$peers" ]]; then peers="$peers,$dcanon|$disp"; else peers="$dcanon|$disp"; fi
+       _conf_upsert "$mconf" BRIEF_PEERS "$peers" ;;
+  esac
+
+  local dconf="$domain_root/config/agent.conf"; touch "$dconf"
+  if _g3b_submit_gate "$main_root"; then
+    # HANDOFF_PEER_MAIN = briefing-topology key (E2-1); MIGRATION_PEER NEVER set.
+    _conf_upsert "$dconf" HANDOFF_PEER_MAIN "$mcanon"
+    _conf_upsert "$dconf" BRIEF_ROUTING "submit"
+    echo "[g3b] routing: domain -> submit (gate passed; briefing axis only)"
+  else
+    _conf_upsert "$dconf" BRIEF_ROUTING "standalone"
+    echo "[g3b] routing: gate failed -> domain stays standalone (no loss)"
+  fi
 }
 
 # ---- role stamp: SINGLE canonical implementation (DGN-227 A3/P15) ----------
@@ -174,9 +299,11 @@ if count != 1:
     print(f"[{prefix}] ERROR: expected 1 Primary-focus placeholder match, got {count}; aborting", file=sys.stderr)
     sys.exit(1)
 
-# 2. Excise Q6 bullet (the "6. role -- LAST: ..." block).
+# 2. Excise Q6 bullet (the "6. role -- LAST[ + CONDITIONAL]: ..." block).
+# The header may read "LAST:" or "LAST + CONDITIONAL:" (DGN-422 conditional
+# retention wording) -- match through "LAST" and tolerate either tail.
 q6_pattern = re.compile(
-    r'\n  6\. role\s+--\s+LAST:.*?(?=\nKeep each question)',
+    r'\n  6\. role\s+--\s+LAST\b.*?(?=\nKeep each question)',
     re.DOTALL,
 )
 new_text, q6_count = q6_pattern.subn("", new_text)
@@ -224,6 +351,21 @@ if [[ "$MODE" == "stamp-role" ]]; then
     exit 1
   }
   _stamp_role "$ROOT" "$ROLE_PROSE" "stamp-role"
+  exit $?
+fi
+
+# ---- align-peer-main mode: G3-b alignment entry point (DGN-227 / DGN-422) ---
+# Usage: mint_run.sh align-peer-main --root <domain-root> --peer-main <main-root>
+#        [--slug <slug>]
+# Runs the same alignment the pipeline does at step 4 (registry + limit ledger +
+# BRIEFING-axis routing keys), callable on its own for the v2 main-add path when
+# the domain is already minted. NEVER writes MIGRATION_PEER (E2-1).
+if [[ "$MODE" == "align-peer-main" ]]; then
+  [[ -n "$ROOT" ]] || { echo "ERROR: align-peer-main requires --root <domain-root>" >&2; exit 1; }
+  [[ -n "$PEER_MAIN" ]] || { echo "ERROR: align-peer-main requires --peer-main <main-root>" >&2; exit 1; }
+  [[ -d "$ROOT" ]] || { echo "ERROR: domain root not a directory: $ROOT" >&2; exit 1; }
+  [[ -d "$PEER_MAIN" ]] || { echo "ERROR: peer-main root not a directory: $PEER_MAIN" >&2; exit 1; }
+  g3b_align_domain "$ROOT" "$PEER_MAIN" "${SLUG:-$(basename "$ROOT")}"
   exit $?
 fi
 
@@ -420,6 +562,21 @@ if [[ "$MODE" == "pipeline" ]]; then
   [[ "$NO_START" -eq 1 ]] && PACK_RUN_ARGS+=(--no-start)
   [[ "$NO_STATE" -eq 1 ]] && PACK_RUN_ARGS+=(--no-state)
   "$PACK_INSTALL_SH" "${PACK_RUN_ARGS[@]}"
+  echo "[pipeline] mint+pack done -> $ROOT"
+
+  # 4. G3-b alignment (DGN-227 / DGN-422): main install -> later domain-add via
+  # this v2 path must land on the SAME state surface as the install-time G2
+  # main-add flow. When --peer-main names an existing main, align:
+  #   (a) registry: register the new domain + capture its display name on main;
+  #   (b) limit ledger: ensure ~/.dogany/config DOGANY_MAX_AGENTS covers the
+  #       count (the v2 path never read the limit before -- G2-1 invariant now
+  #       applies to BOTH mint paths);
+  #   (c) routing: HANDOFF_PEER_MAIN (briefing axis) + BRIEF_ROUTING, gated by
+  #       the E3 submit-flip gate (fail => standalone). MIGRATION_PEER is NEVER
+  #       written here -- this is a fresh mint, briefing axis only (E2-1).
+  if [[ -n "$PEER_MAIN" ]]; then
+    g3b_align_domain "$ROOT" "$PEER_MAIN" "$SLUG"
+  fi
   echo "[pipeline] DONE -- instance ready at $ROOT"
   exit 0
 fi

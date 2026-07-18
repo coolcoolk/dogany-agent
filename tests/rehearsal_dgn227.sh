@@ -1589,6 +1589,341 @@ assert "15g/MINOR-7: plain DOGANY_LAUNCHD_CAPTURE writes nothing (capture shim g
   bash -c "[ ! -s '$SEAM_CAP' ]"
 
 # ===========================================================================
+# R16: DGN-422 item 1 -- Q6 conditional retention, 3-copy agreement (A3).
+#   The onboarding role question (DGN-148) is CONDITIONAL on the Primary-focus
+#   placeholder being present. Three copies carry the discriminator and must
+#   agree: agents/.template/AGENT.md, skills/dogany-user-onboarding/SKILL.md,
+#   routines/onboarding-check.py. Spec A3 (LOCKED):
+#     "dogany-user-onboarding SKILL.md + onboarding-check.py: Q6를 'Primary-focus
+#      플레이스홀더가 남아 있을 때만' 묻는/세는 조건부로 유지."
+#   Install stamps role at A3 -> placeholder gone -> Q6 excised (verified live).
+# ===========================================================================
+CURRENT=R16
+hr; say "R16: DGN-422 Q6 conditional retention -- 3-copy agreement (A3)"
+TPL_AGENT="$SANDBOX/agents/.template/AGENT.md"
+ONB_SKILL="$SANDBOX/skills/dogany-user-onboarding/SKILL.md"
+ONB_CHECK="$SANDBOX/agents/.template/routines/onboarding-check.py"
+
+# 16a. each of the 3 copies declares Q6 CONDITIONAL on the placeholder.
+assert "16a: AGENT.md marks Q6 CONDITIONAL" \
+  grep -qi "Q6 (role) IS CONDITIONAL" "$TPL_AGENT"
+assert "16a: SKILL.md marks Q6 CONDITIONAL" \
+  grep -qi "Q6 (role) is CONDITIONAL" "$ONB_SKILL"
+assert "16a: onboarding-check.py marks Q6 CONDITIONAL (en+ko)" \
+  bash -c "grep -qi 'Q6 (role) IS CONDITIONAL' '$ONB_CHECK' && grep -q 'Q6(역할)은 조건부입니다' '$ONB_CHECK'"
+
+# 16b. discriminator agreement: all 3 name the Primary-focus placeholder as the
+#      single test AND all 3 name the other 2 copies (must-agree contract).
+assert "16b: AGENT.md names the placeholder discriminator + 3-copy agreement" \
+  bash -c "grep -qi 'Primary focus' '$TPL_AGENT' && grep -qi 'SINGLE discriminator' '$TPL_AGENT'"
+assert "16b: SKILL.md names the placeholder discriminator + 3-copy agreement" \
+  bash -c "grep -qi 'SINGLE discriminator across all 3 copies' '$ONB_SKILL'"
+assert "16b: onboarding-check.py names the placeholder discriminator + 3-copy agreement" \
+  bash -c "grep -qi 'SINGLE discriminator' '$ONB_CHECK' && grep -q '단일 판별자' '$ONB_CHECK'"
+
+# 16c. install-side excise still works (A3): stamping fills the slot AND excises
+#      Q6 from the onboarding block (the AGENT.md copy's conditional in action).
+R16H="$(mktemp -d /tmp/dgn227-r16.XXXXXX)"
+R16_ROOT="$R16H/inst"; mkdir -p "$R16_ROOT"
+cp "$TPL_AGENT" "$R16_ROOT/AGENT.md"
+assert "16c: pristine template has the Q6 block present (placeholder present)" \
+  bash -c "grep -q '6\\. role' '$R16_ROOT/AGENT.md' && grep -qF '(set at onboarding -- one prose line' '$R16_ROOT/AGENT.md'"
+bash "$SANDBOX/scripts/pack/mint_run.sh" stamp-role \
+  --root "$R16_ROOT" --role "health coach -- training and recovery" >/dev/null 2>&1 \
+  || bad "16c stamp-role exited non-zero"
+assert "16c: after stamp -> Q6 block excised (conditional false)" \
+  bash -c "! grep -q '6\\. role' '$R16_ROOT/AGENT.md'"
+assert "16c: after stamp -> Primary-focus placeholder gone (slot filled)" \
+  bash -c "! grep -qF '(set at onboarding -- one prose line' '$R16_ROOT/AGENT.md'"
+assert "16c: after stamp -> do-not-ask-role inserted" \
+  grep -qi "Do NOT ask about your role" "$R16_ROOT/AGENT.md"
+# idempotence: a second stamp on an already-stamped file is a no-op (guard).
+bash "$SANDBOX/scripts/pack/mint_run.sh" stamp-role \
+  --root "$R16_ROOT" --role "other" >/dev/null 2>&1 \
+  && ok "16c: re-stamp idempotent (placeholder absent -> skip)" \
+  || bad "16c: re-stamp should exit 0 (idempotent skip)"
+
+# ===========================================================================
+# R17: DGN-422 item 2 -- fresh / migration / legacy regression battery.
+#   Promote to EXECUTABLE coverage what the grill only desk-checked:
+#     - skills refine path (existing bundle dir -> SKILL.md render)
+#     - STEP 3 migration branch (MIGRATION_PEER written; fresh strips it)
+#     - lib/prompts ledger points (categories recorded in config/packs/<id>.files)
+#   All 3 install paths land green. Self-contained synthetic pack in a temp
+#   catalog so the FULL pack_install chain runs (no live data).
+# ===========================================================================
+CURRENT=R17
+hr; say "R17: DGN-422 fresh/migration/legacy regression battery (refine + STEP3 + lib/prompts ledger)"
+
+# build_reg_pack <packs_dir> -- pack 'rp' with a lib file, a prompts file, an
+# agent.conf.add fragment (carries a migration key to exercise STEP 3), and a
+# refine-target skill (dogany-user-onboarding) whose bundle dir pre-exists.
+build_reg_pack() {
+  local pd="$1"; local pkg="$pd/rp" ref="$pd/rp/refrp"
+  # NB: lib/ lives at the PACKAGE root (PKG_LIB=PACKAGE_DIR/lib), while prompts/
+  # skills/config live under the reference-slug payload (PKG_PAYLOAD).
+  mkdir -p "$pkg/lib" "$ref/routines/prompts" "$ref/config" \
+           "$ref/skills/dogany-user-onboarding"
+  cat > "$pd/catalog.json" <<'JSON'
+{ "version": 1, "packs": [
+  { "id": "rp", "name_ko": "회귀팩", "role_prose_ko": "regression pack",
+    "package_dir": "rp", "status": "official", "pack_version": "1.0.0" } ] }
+JSON
+  cat > "$pkg/pack-manifest.json" <<'JSON'
+{
+  "name": "rp",
+  "reference_slug": "refrp",
+  "reference_root": "/opt/dogany/agents/refrp",
+  "agent_conf_marker": "# REG-PACK-CONF-FRAGMENT appended",
+  "categories": [
+    {"category": "lib",                 "required": true},
+    {"category": "prompts",             "required": true},
+    {"category": "agent_conf_fragment", "required": true},
+    {"category": "skills",              "required": true}
+  ]
+}
+JSON
+  echo "def helper(): return 1" > "$pkg/lib/reg_helper.py"
+  echo "PROMPT: regression prompt body" > "$ref/routines/prompts/reg-prompt.txt"
+  # agent.conf.add carries a migration-family key so STEP 3 can exercise both
+  # the fresh-strip and the migration-write branches from the SAME fragment.
+  cat > "$ref/config/agent.conf.add" <<'CONF'
+HANDOFF_PEER_AG=__PEER_ROOT__
+REG_PACK_KEY=stays
+CONF
+  # refine target: SKILL.md carries a mint token to prove the render pipeline runs
+  cat > "$ref/skills/dogany-user-onboarding/SKILL.md" <<'MD'
+---
+name: dogany-user-onboarding
+description: refined onboarding.
+---
+# refined
+root: __PROJECT_ROOT__
+MD
+  ( cd "$pkg" && find refrp -type f | LC_ALL=C sort | while read -r f; do
+      printf '%s  %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$f"
+    done > checksums.sha )
+}
+
+# reg_root <home> <slug> -- a minted-instance skeleton whose bundle already has
+# the dogany-user-onboarding dir (so STEP 7 takes the REFINE path, not net-new).
+reg_root() {
+  local root="$1" slug="$2"
+  mint_stub "$root" "$slug"
+  mkdir -p "$root/.claude/skills-bundle/dogany-user-onboarding"
+  echo "placeholder" > "$root/.claude/skills-bundle/dogany-user-onboarding/SKILL.md"
+}
+
+RPK="$(mktemp -d /tmp/dgn227-r17-packs.XXXXXX)"
+build_reg_pack "$RPK"
+
+# -- 17-fresh: fresh/standalone install (no --migrate-from) --
+RF_H="$(mktemp -d /tmp/dgn227-r17f.XXXXXX)"; RF_ROOT="$RF_H/inst"
+reg_root "$RF_ROOT" regf
+( export HOME="$RF_H"; export DOGANY_LAUNCHD_CAPTURE="$RF_H/cap"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" regf "$RF_ROOT" \
+    --pack rp --catalog "$RPK/catalog.json" --no-start --no-state
+) >"$RF_H/log" 2>&1 || bad "17-fresh pack_install exited non-zero (see $RF_H/log)"
+RF_LED="$RF_ROOT/config/packs/rp.files"
+assert "17-fresh: lib file installed + ledgered (routines/lib)" \
+  bash -c "[ -f '$RF_ROOT/routines/lib/reg_helper.py' ] && grep -qx 'routines/lib/reg_helper.py' '$RF_LED'"
+assert "17-fresh: prompts file installed + ledgered (routines/prompts)" \
+  bash -c "[ -f '$RF_ROOT/routines/prompts/reg-prompt.txt' ] && grep -qx 'routines/prompts/reg-prompt.txt' '$RF_LED'"
+assert "17-fresh: STEP 3 fresh path STRIPS the migration key (no HANDOFF_PEER_AG)" \
+  bash -c "! grep -q '^HANDOFF_PEER_AG=' '$RF_ROOT/config/agent.conf'"
+assert "17-fresh: STEP 3 fresh path keeps non-migration fragment key" \
+  grep -q '^REG_PACK_KEY=stays' "$RF_ROOT/config/agent.conf"
+assert "17-fresh: fresh path writes NO MIGRATION_PEER (discriminator false)" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$RF_ROOT/config/agent.conf'"
+assert "17-fresh: skills REFINE path rendered the pre-existing bundle SKILL.md" \
+  bash -c "grep -q '# refined' '$RF_ROOT/.claude/skills-bundle/dogany-user-onboarding/SKILL.md'"
+assert "17-fresh: refine G4 -- mint token substituted (no __PROJECT_ROOT__ residue)" \
+  bash -c "! grep -q '__PROJECT_ROOT__' '$RF_ROOT/.claude/skills-bundle/dogany-user-onboarding/SKILL.md'"
+
+# -- 17-migration: --migrate-from <peer> (STEP 3 migration branch) --
+RM_H="$(mktemp -d /tmp/dgn227-r17m.XXXXXX)"; RM_ROOT="$RM_H/inst"
+RM_PEER="$RM_H/peer"; mkdir -p "$RM_PEER/database"
+reg_root "$RM_ROOT" regm
+( export HOME="$RM_H"; export DOGANY_LAUNCHD_CAPTURE="$RM_H/cap"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" regm "$RM_ROOT" \
+    --pack rp --catalog "$RPK/catalog.json" --migrate-from "$RM_PEER" \
+    --no-start --no-state
+) >"$RM_H/log" 2>&1 || bad "17-migration pack_install exited non-zero (see $RM_H/log)"
+assert "17-migration: STEP 3 migration branch WROTE MIGRATION_PEER (discriminator true)" \
+  grep -q "^MIGRATION_PEER=$RM_PEER" "$RM_ROOT/config/agent.conf"
+assert "17-migration: migration branch pointed HANDOFF_PEER_AG at the peer (L1 attach)" \
+  grep -q "^HANDOFF_PEER_AG=$RM_PEER" "$RM_ROOT/config/agent.conf"
+assert "17-migration: fragment wrapped in BEGIN/END pair (D2 upgradeable)" \
+  bash -c "grep -qF '# DOGANY-PACK:rp:BEGIN' '$RM_ROOT/config/agent.conf' && grep -qF '# DOGANY-PACK:rp:END' '$RM_ROOT/config/agent.conf'"
+assert "17-migration: lib + prompts ledgered on migration path too" \
+  bash -c "grep -qx 'routines/lib/reg_helper.py' '$RM_ROOT/config/packs/rp.files' && grep -qx 'routines/prompts/reg-prompt.txt' '$RM_ROOT/config/packs/rp.files'"
+
+# -- 17-legacy: preserve-tag registration (pack-owned .dogany-preserve, D1) --
+#   The pack routine/lib/prompts get pack-owned preserve tags so update.sh
+#   (framework channel) never reverts them -- the "legacy preserve-tag" path.
+RL_PRESERVE="$RF_ROOT/.claude/.dogany-preserve"
+assert "17-legacy: pack lib preserve-registered pack-owned (# pack:rp)" \
+  grep -q "^routines/lib/reg_helper.py  # pack:rp" "$RL_PRESERVE"
+assert "17-legacy: pack prompts preserve-registered pack-owned (# pack:rp)" \
+  grep -q "^routines/prompts/reg-prompt.txt  # pack:rp" "$RL_PRESERVE"
+assert "17-legacy: reconcile kept the tagged entries in the SAME run (ledger-derived)" \
+  bash -c "rc=0; for e in routines/lib/reg_helper.py routines/prompts/reg-prompt.txt; do grep -q \"^\$e  # pack:rp\" '$RL_PRESERVE' || rc=1; done; exit \$rc"
+
+# ===========================================================================
+# R18: DGN-422 item 3 -- G3-b v2 mint-agent path key-axis (E2-1 MAJOR-1).
+#   The v2 mint-agent path (mint_run.sh pipeline --peer-main) aligns a fresh
+#   domain-add onto the main state surface: it records HANDOFF_PEER_MAIN
+#   (BRIEFING axis) + gated BRIEF_ROUTING, and must NEVER write MIGRATION_PEER
+#   (migration axis) -- so the onboarding migration discriminator does not
+#   mis-fire on a fresh domain. Grill R2 MAJOR-1 / spec E2-1 (LOCKED):
+#     "HANDOFF_PEER_MAIN은 이관 키 가족이 아니다: PEER_KEYS_RE에 넣지 않는다 ...
+#      온보딩 이관 판별자 ... 를 MIGRATION_PEER 존재 여부로 교체 ...
+#      HANDOFF_PEER_MAIN은 판별자가 절대 읽지 않는다."
+#   The full pipeline needs a bot token + venv; we drive the g3b_align_domain
+#   alignment step directly against synthetic roots (closest faithful sim of
+#   pipeline step 4 -- stated explicitly). The mint+pack steps are covered by
+#   R3/R17; this isolates the axis-separation contract.
+# ===========================================================================
+CURRENT=R18
+hr; say "R18: DGN-422 G3-b key-axis (HANDOFF_PEER_MAIN set, MIGRATION_PEER never) [pipeline step-4 sim]"
+R18H="$(mktemp -d /tmp/dgn227-r18.XXXXXX)"
+export HOME="$R18H"
+R18_MAIN="$R18H/.dogany/main"; R18_DOM="$R18H/.dogany/agents/vega"
+mint_stub "$R18_MAIN" dogany
+mint_stub "$R18_DOM" vega
+# main is aggregation-capable + gate loaded (override) -> flip should PASS
+cp "$SANDBOX/agents/.template/routines/lib/handoff-aggregate" "$R18_MAIN/routines/lib/handoff-aggregate"
+cp "$SANDBOX/agents/.template/routines/generic-brief.sh" "$R18_MAIN/routines/generic-brief.sh"
+# set the domain's display label (mint_stub seeds a slug label; replace it so
+# the capture proves DOGANY_AGENT_LABEL precedence over the slug).
+grep -v '^DOGANY_AGENT_LABEL=' "$R18_DOM/.instance.conf" > "$R18_DOM/.instance.conf.tmp" \
+  && mv "$R18_DOM/.instance.conf.tmp" "$R18_DOM/.instance.conf"
+echo "DOGANY_AGENT_LABEL=베가" >> "$R18_DOM/.instance.conf"
+# Drive the real align-peer-main subcommand (pipeline step-4 entry point).
+( export HOME="$R18H"; export DOGANY_GATE_LOADED_OVERRIDE=1
+  bash "$SANDBOX/scripts/pack/mint_run.sh" align-peer-main \
+    --root "$R18_DOM" --peer-main "$R18_MAIN" --slug vega
+) >"$R18H/log" 2>&1 || bad "18 align-peer-main exited non-zero (see $R18H/log)"
+
+assert "18a: domain got HANDOFF_PEER_MAIN (briefing axis) recorded" \
+  grep -q "^HANDOFF_PEER_MAIN=" "$R18_DOM/config/agent.conf"
+assert "18a: gate passed => BRIEF_ROUTING=submit" \
+  grep -qx "BRIEF_ROUTING=submit" "$R18_DOM/config/agent.conf"
+assert "18b: KEY-AXIS -- ZERO mis-fire: NO MIGRATION_PEER on the fresh domain" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$R18_DOM/config/agent.conf'"
+assert "18b: KEY-AXIS -- NO legacy HANDOFF_PEER_AG on the fresh domain" \
+  bash -c "! grep -q '^HANDOFF_PEER_AG=' '$R18_DOM/config/agent.conf'"
+assert "18c: main registry has both class rows (domain + main)" \
+  bash -c "grep -q '^domain	' '$R18H/.dogany/instances' && grep -q '^main	' '$R18H/.dogany/instances'"
+assert "18c: limit ledger persisted (>=2)" \
+  bash -c "v=\$(grep '^DOGANY_MAX_AGENTS=' '$R18H/.dogany/config' | cut -d= -f2); [ \"\$v\" -ge 2 ]"
+assert "18c: peer registered on main with captured display name (베가)" \
+  bash -c "grep -q 'BRIEF_PEERS=.*|베가' '$R18_MAIN/config/agent.conf'"
+# 18d: gate FAIL -> domain stays standalone, still no migration key leak
+R18_DOM2="$R18H/.dogany/agents/nova"; mint_stub "$R18_DOM2" nova
+rm -f "$R18_MAIN/routines/lib/handoff-aggregate"   # break the edition gate
+( export HOME="$R18H"; export DOGANY_GATE_LOADED_OVERRIDE=1
+  bash "$SANDBOX/scripts/pack/mint_run.sh" align-peer-main \
+    --root "$R18_DOM2" --peer-main "$R18_MAIN" --slug nova
+) >"$R18H/log2" 2>&1 || bad "18d align-peer-main (gate-fail) exited non-zero (see $R18H/log2)"
+assert "18d: gate FAIL => domain stays standalone" \
+  grep -qx "BRIEF_ROUTING=standalone" "$R18_DOM2/config/agent.conf"
+assert "18d: gate FAIL => no HANDOFF_PEER_MAIN written" \
+  bash -c "! grep -q '^HANDOFF_PEER_MAIN=' '$R18_DOM2/config/agent.conf'"
+assert "18d: gate FAIL => still ZERO migration-key leak" \
+  bash -c "! grep -q '^MIGRATION_PEER=' '$R18_DOM2/config/agent.conf'"
+unset HOME; export HOME="$(cd ~ && pwd)" 2>/dev/null || true
+
+# ===========================================================================
+# R19: DGN-422 item 4 -- briefing-time onboarding step (DGN-420 seam).
+#   set-briefing-times.sh writes BRIEF_TIME_MORNING/RETRO/WEEKLY into
+#   config/agent.conf AND regenerates the generic-brief plist
+#   StartCalendarInterval. Defaults applied on skip; overrides honored.
+#   SAFETY: synthetic root from the shipped template; no launchd load.
+# ===========================================================================
+CURRENT=R19
+hr; say "R19: DGN-422 briefing-time onboarding step (config write + plist regen; defaults/overrides)"
+SBT="$SANDBOX/agents/.template/routines/set-briefing-times.sh"
+
+# build_brief_inst <root> <slug> -- template routines (incl. generic-brief plists)
+build_brief_inst() {
+  local root="$1" slug="$2"
+  mkdir -p "$root/config" "$root/routines"
+  echo "AGENT_LANG=ko" > "$root/config/agent.conf"
+  local p np
+  for p in "$SANDBOX/agents/.template/routines/"*generic-brief*.plist; do
+    [ -e "$p" ] || continue
+    np="$(basename "$p")"; np="${np//telegram-agent/$slug}"
+    cp "$p" "$root/routines/$np"
+  done
+}
+# plist_hm <plist> -- print "HH:MM" from StartCalendarInterval (grep fallback).
+# Exported so it is visible inside the assert `bash -c` subshells.
+plist_hm() {
+  local f="$1" hh mm
+  hh="$(grep -A1 '<key>Hour</key>' "$f" | grep -oE '[0-9]+' | head -1)"
+  mm="$(grep -A1 '<key>Minute</key>' "$f" | grep -oE '[0-9]+' | head -1)"
+  printf '%02d:%02d' "$((10#$hh))" "$((10#$mm))"
+}
+plist_wd() { grep -A1 '<key>Weekday</key>' "$1" | grep -oE '[0-9]+' | head -1; }
+export -f plist_hm plist_wd
+
+# -- 19a. SKIP: no time flags -> defaults written to config + plist regenerated --
+R19H="$(mktemp -d /tmp/dgn227-r19.XXXXXX)"
+R19A="$R19H/skip"; build_brief_inst "$R19A" auroria
+bash "$SBT" --root "$R19A" >/dev/null 2>&1 || bad "19a set-briefing-times (skip) exited non-zero"
+assert "19a: default BRIEF_TIME_MORNING=07:00 written to config" \
+  grep -qx "BRIEF_TIME_MORNING=07:00" "$R19A/config/agent.conf"
+assert "19a: default BRIEF_TIME_RETRO=22:00 written to config" \
+  grep -qx "BRIEF_TIME_RETRO=22:00" "$R19A/config/agent.conf"
+assert "19a: default BRIEF_TIME_WEEKLY='Sun 20:00' written to config" \
+  grep -qx "BRIEF_TIME_WEEKLY=Sun 20:00" "$R19A/config/agent.conf"
+assert "19a: morning plist StartCalendarInterval regenerated to 07:00" \
+  bash -c "[ \"\$(plist_hm \"\$(ls '$R19A'/routines/*generic-brief-morning.plist)\")\" = '07:00' ]"
+assert "19a: retro plist regenerated to 22:00" \
+  bash -c "[ \"\$(plist_hm \"\$(ls '$R19A'/routines/*generic-brief-retro.plist)\")\" = '22:00' ]"
+assert "19a: weekly plist regenerated to Sun(0) 20:00" \
+  bash -c "wp=\"\$(ls '$R19A'/routines/*generic-brief-weekly.plist)\"; [ \"\$(plist_hm \"\$wp\")\" = '20:00' ] && [ \"\$(plist_wd \"\$wp\")\" = '0' ]"
+
+# -- 19b. OVERRIDE: explicit times honored in BOTH config and plist --
+R19B="$R19H/over"; build_brief_inst "$R19B" auroria
+bash "$SBT" --root "$R19B" --morning 06:15 --retro 21:45 --weekly "Wed 18:30" \
+  >/dev/null 2>&1 || bad "19b set-briefing-times (override) exited non-zero"
+assert "19b: override BRIEF_TIME_MORNING=06:15 in config" \
+  grep -qx "BRIEF_TIME_MORNING=06:15" "$R19B/config/agent.conf"
+assert "19b: override BRIEF_TIME_WEEKLY='Wed 18:30' in config" \
+  grep -qx "BRIEF_TIME_WEEKLY=Wed 18:30" "$R19B/config/agent.conf"
+assert "19b: morning plist honored 06:15" \
+  bash -c "[ \"\$(plist_hm \"\$(ls '$R19B'/routines/*generic-brief-morning.plist)\")\" = '06:15' ]"
+assert "19b: retro plist honored 21:45" \
+  bash -c "[ \"\$(plist_hm \"\$(ls '$R19B'/routines/*generic-brief-retro.plist)\")\" = '21:45' ]"
+assert "19b: weekly plist honored Wed(3) 18:30" \
+  bash -c "wp=\"\$(ls '$R19B'/routines/*generic-brief-weekly.plist)\"; [ \"\$(plist_hm \"\$wp\")\" = '18:30' ] && [ \"\$(plist_wd \"\$wp\")\" = '3' ]"
+
+# -- 19c. PARTIAL: only morning set -> others fall to config/default --
+R19C="$R19H/part"; build_brief_inst "$R19C" auroria
+printf 'BRIEF_TIME_RETRO=23:10\n' >> "$R19C/config/agent.conf"   # pre-existing config value
+bash "$SBT" --root "$R19C" --morning 05:30 >/dev/null 2>&1 || bad "19c partial exited non-zero"
+assert "19c: partial -- morning override 05:30 applied" \
+  grep -qx "BRIEF_TIME_MORNING=05:30" "$R19C/config/agent.conf"
+assert "19c: partial -- pre-existing retro config value (23:10) preserved" \
+  grep -qx "BRIEF_TIME_RETRO=23:10" "$R19C/config/agent.conf"
+assert "19c: partial -- weekly default applied when unset" \
+  grep -qx "BRIEF_TIME_WEEKLY=Sun 20:00" "$R19C/config/agent.conf"
+assert "19c: partial -- retro plist regenerated FROM the config value (23:10)" \
+  bash -c "[ \"\$(plist_hm \"\$(ls '$R19C'/routines/*generic-brief-retro.plist)\")\" = '23:10' ]"
+
+# -- 19d. generic-brief.sh consumes the SAME config keys (DGN-420 wording clock) --
+assert "19d: generic-brief.sh reads BRIEF_TIME_MORNING (seam consumer)" \
+  grep -q 'BRIEF_TIME_MORNING' "$SANDBOX/agents/.template/routines/generic-brief.sh"
+
+# -- 19e. bad input rejected (no silent bad write) --
+R19E="$R19H/bad"; build_brief_inst "$R19E" auroria
+bash "$SBT" --root "$R19E" --morning "25:99" >/dev/null 2>&1 \
+  && bad "19e: invalid time should be rejected (non-zero exit)" \
+  || ok "19e: invalid --morning rejected (loud, no bad write)"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 $H15 (inspect flow.log / launchd.capture on failure)"
