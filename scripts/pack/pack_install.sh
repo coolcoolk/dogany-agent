@@ -72,20 +72,25 @@
 # Steps (all idempotent, all logged to <root>/.telegram_bot/logs/pack-install.log):
 #   1. preflight checks (declared categories only)
 #   2. package copy (declared categories: lib/ routines/ prompts/ plists/
-#      db_migrations/ scripts/ triggers); plists + plists.defer are
-#      RENDERED, not copied: launchd labels, plist filenames and reference
-#      paths are derived from <slug>/<root> (DGN-284 #1)
+#      db_migrations/ scripts/ triggers); plists are RENDERED, not copied:
+#      launchd labels, plist filenames and reference paths are derived from
+#      <slug>/<root> (DGN-284 #1). A bundled plists.defer is MERGE-APPENDED
+#      into the instance framework defer (DGN-227 MINOR-5), not clobbered.
 #   3. agent.conf fragment append (idempotent via manifest marker; peer
 #      integration keys only on the migration path -- DGN-284 #3/#6)
 #   4. W01 ledger apply CLI (only when the pack ships lib/ledger.py)
 #   5. ledger-inject hook wiring (only when the pack ships
 #      routines/ledger-inject.py)
 #   6. knowledge snapshot (only when knowledge_snapshot declared; source
-#      path injected from manifest knowledge.source when set -- DGN-402)
-#   7. refined skills install (SKILL.md render pipeline: reference-identity
-#      substitution + mint-token substitution + symlink ensure; consumer
-#      skills are preserve-registered pack-owned and the pack-owned entries
-#      are reconciled against the manifest consumer set -- DGN-402)
+#      resolves to the bundled frozen snapshot at
+#      <package_dir>/<reference_slug>/knowledge/<warehouse>/ when present
+#      (DGN-227 B5 delivery channel), else falls back to manifest
+#      knowledge.source publisher-local path -- DGN-402)
+#   7. skills install, two modes: REFINE (instance bundle dir exists -> render
+#      SKILL.md only, DGN-402) and NET-NEW (bundle dir absent -> install the
+#      whole payload skill directory, text rendered / binaries copied,
+#      DGN-227 B6). Both preserve-register pack-owned and reconcile against
+#      the install ledger (D1)
 #   7b. AGENT.md fragment append (RENDERED via the same slug/root
 #       substitution as plists; idempotent via manifest marker)
 #   7c. knowledge wiring selftest (knowledge_selftest.sh: gates G1-G4 for
@@ -316,6 +321,34 @@ _is_consumer_skill() { # _is_consumer_skill <skill-id> -- 0 when in manifest set
   return 1
 }
 
+# DGN-227 B6: manifest top-level 'net_new_skills' (optional array of skill ids)
+# lets a pack DECLARE a skill as net-new (brand-new domain skill it brings in,
+# no pre-existing instance bundle dir). The preflight rule-3 "instance bundle
+# dir exists" requirement is waived for a skill that is either declared here OR
+# whose payload provides a full directory (files beyond SKILL.md).
+NET_NEW_SKILLS="$(python3 - "$MANIFEST" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for s in d.get("net_new_skills") or []:
+    print(s)
+PYEOF
+)"
+_is_declared_net_new() { # _is_declared_net_new <skill-id> -- 0 when declared
+  local id="$1" s
+  while IFS= read -r s; do
+    [[ -n "$s" && "$s" == "$id" ]] && return 0
+  done <<< "$NET_NEW_SKILLS"
+  return 1
+}
+# _skill_payload_is_full_dir <skill-id> -- 0 when the pack payload skills/<id>/
+# carries files beyond SKILL.md (multi-file skill dir), i.e. eligible for the
+# net-new install mode by shape.
+_skill_payload_is_full_dir() {
+  local id="$1" n
+  n="$(find "$PKG_PAYLOAD/skills/$id" -type f 2>/dev/null | grep -cv '/SKILL\.md$' || true)"
+  [[ "${n:-0}" -gt 0 ]]
+}
+
 [[ -n "$PACK_NAME" ]]     || _fail "manifest missing 'name': $MANIFEST"
 [[ -n "$PKG_REF_SLUG" ]]  || _fail "manifest missing 'reference_slug': $MANIFEST"
 [[ -n "$PKG_REF_ROOT" ]]  || _fail "manifest missing 'reference_root': $MANIFEST"
@@ -354,6 +387,19 @@ _render_to() { # _render_to <src> <dst> -- copy with slug/root/home substitution
 _render_basename() { # _render_basename <basename> -- slug-derived unit filename
   local b="$1"
   printf '%s\n' "${b//.${PKG_REF_SLUG}./.${SLUG}.}"
+}
+
+# _is_text_file <path> -- 0 when the file is text (render-eligible), 1 when
+# binary (copy verbatim). Used by the B6 net-new skill directory install mode
+# to decide render-vs-copy per file (spec B6: "text files -> render pipeline,
+# binaries copied as-is"). NUL-byte probe (grep -Iq): a file with a NUL byte in
+# the first chunk is treated as binary, matching git/POSIX text heuristics.
+_is_text_file() {
+  LC_ALL=C grep -Iq . "$1" 2>/dev/null || {
+    # grep -I returns nonzero on binary OR empty file; an empty file is text.
+    [[ -s "$1" ]] && return 1
+  }
+  return 0
 }
 
 # _subst_mint_tokens <file> -- substitute the mint identity tokens in place.
@@ -572,8 +618,11 @@ if [[ "$KNOWLEDGE_DECL" -eq 1 ]]; then
   fi
   [[ -n "$KNOW_WAREHOUSE" ]] || { _log "PREFLIGHT FAIL: knowledge.warehouse is empty"; fail=1; }
   # Rule 3: consumer_skills nonempty; each skill must exist in the pack
-  #         payload skills/ AND as an instance skills-bundle dir (the current
-  #         STEP 7 WARN-and-skip is promoted to a FAIL for consumer skills).
+  #         payload skills/. The "instance skills-bundle dir exists" requirement
+  #         (DGN-402) is WAIVED (DGN-227 B6) when the skill is net-new -- either
+  #         declared in manifest net_new_skills OR the payload provides a full
+  #         directory (files beyond SKILL.md). STEP 7 net-new mode installs the
+  #         whole directory in that case (no pre-existing bundle dir needed).
   if [[ -z "$KNOW_CONSUMER_LINES" ]]; then
     _log "PREFLIGHT FAIL: knowledge.consumer_skills is empty"
     fail=1
@@ -581,7 +630,14 @@ if [[ "$KNOWLEDGE_DECL" -eq 1 ]]; then
     while IFS=$'\t' read -r _ck _cd; do
       [[ -n "$_ck" ]] || continue
       [[ -f "$PKG_PAYLOAD/skills/$_ck/SKILL.md" ]] || { _log "PREFLIGHT FAIL: consumer skill '$_ck' not in pack payload skills/"; fail=1; }
-      [[ -d "$ROOT/.claude/skills-bundle/$_ck" ]] || { _log "PREFLIGHT FAIL: consumer skill '$_ck' has no instance skills-bundle dir: $ROOT/.claude/skills-bundle/$_ck"; fail=1; }
+      if [[ ! -d "$ROOT/.claude/skills-bundle/$_ck" ]]; then
+        if _is_declared_net_new "$_ck" || _skill_payload_is_full_dir "$_ck"; then
+          _log "preflight: consumer skill '$_ck' net-new (no instance bundle dir) -- STEP 7 will install the full directory (B6)"
+        else
+          _log "PREFLIGHT FAIL: consumer skill '$_ck' has no instance skills-bundle dir and is not net-new (declare in net_new_skills or ship a full payload dir): $ROOT/.claude/skills-bundle/$_ck"
+          fail=1
+        fi
+      fi
     done <<< "$KNOW_CONSUMER_LINES"
   fi
   # Rule 4: turns nonempty; type T1/T2/T3 only; home is an instance-root-
@@ -631,6 +687,64 @@ fi
 # ---------- ensure log dir exists -------------------------------------------
 mkdir -p "$LOG_DIR"
 _log "=== pack-install START pack=$PACK_ID slug=$SLUG root=$ROOT ==="
+
+# ---------- NM3: payload checksum verification GATE -------------------------
+# DGN-227 B4-5 / D2: before applying ANY payload, verify each shipped file
+# against the pack's checksums.sha manifest (sha256). A mismatch or a listed
+# file missing on disk = corrupt/tampered payload -> loud-FAIL the install
+# (never warn-continue). checksums.sha lines are '<sha256hex>  <relpath>' with
+# relpath relative to <package_dir> (the publish pipeline generates it, B4-5).
+# Absent checksums.sha = legacy/dev pack: loud WARN (no silent skip), install
+# continues -- a published pack MUST ship it (publish gate, B4-5); this arms
+# the gate for packs that carry it without breaking pre-NM3 packs.
+CHECKSUMS_FILE="$PACKAGE_DIR/checksums.sha"
+if [[ -f "$CHECKSUMS_FILE" ]]; then
+  _log "NM3: verifying payload against checksums.sha"
+  _nm3_out="$(python3 - "$PACKAGE_DIR" "$CHECKSUMS_FILE" <<'PYEOF'
+import hashlib, os, sys
+pkg_dir, sums = sys.argv[1], sys.argv[2]
+bad = []
+n = 0
+with open(sums) as f:
+    for raw in f:
+        line = raw.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        # '<hex>  <relpath>' -- split on the first run of spaces (relpath may
+        # contain single spaces, so split(None, 1) then re-strip is unsafe;
+        # the publish format uses exactly two spaces as the separator).
+        parts = line.split("  ", 1)
+        if len(parts) != 2:
+            bad.append("MALFORMED: %r" % line)
+            continue
+        want, rel = parts[0].strip(), parts[1].strip()
+        p = os.path.join(pkg_dir, rel)
+        if not os.path.isfile(p):
+            bad.append("MISSING: %s" % rel)
+            continue
+        h = hashlib.sha256()
+        with open(p, "rb") as fp:
+            for chunk in iter(lambda: fp.read(65536), b""):
+                h.update(chunk)
+        got = h.hexdigest()
+        if got != want:
+            bad.append("MISMATCH: %s (want %s got %s)" % (rel, want[:12], got[:12]))
+        n += 1
+if bad:
+    for b in bad:
+        print("NM3FAIL " + b)
+    sys.exit(1)
+print("NM3OK verified %d files" % n)
+PYEOF
+)" || {
+    while IFS= read -r _l; do _log "  ${_l}"; done <<< "$_nm3_out"
+    _fail "NM3: payload checksum verification FAILED -- corrupt/tampered payload, install aborted (B4-5 gate)"
+  }
+  _log "  ${_nm3_out}"
+  _log "NM3: checksum verification passed"
+else
+  _log "NM3: WARN -- no checksums.sha in package ($CHECKSUMS_FILE) -- verification SKIPPED (legacy/dev pack; a published pack MUST ship it per B4-5, loud not silent)"
+fi
 
 # DGN-227 D2 note: the --upgrade stale-removal phase (ledger diff + bootout +
 # NM3 backup + removal + ledger re-record) lives AFTER the apply steps, next
@@ -704,13 +818,50 @@ if has_cat plists; then
     _preserve_register "routines/$dst_base"
     _log "  rendered routines/$dst_base (slug-derived label + instance paths)"
   done
-  # deferral manifest basenames must match the rendered plist filenames,
-  # so it is rendered with the same substitution
+  # DGN-227 MINOR-5: defer-merge policy = merge-append (NOT clobber). A pack
+  # that bundles its own plists.defer must NOT overwrite the instance framework
+  # defer manifest (which stages the generic-brief units). Instead, the pack's
+  # rendered defer ENTRIES are appended to the existing instance defer, both
+  # preserved. Substitution is _render_to (same slug/root rewrite as the plist
+  # filenames), keeping the output format-consistent with DGN-417's
+  # telegram-agent->agent-name substitution (no literal telegram-agent
+  # leftover). Duplicate basenames (already in the instance defer) are skipped.
+  # deferral manifest basenames must match the rendered plist filenames.
   if [[ -f "$PKG_PAYLOAD/routines/plists.defer" ]]; then
-    _render_to "$PKG_PAYLOAD/routines/plists.defer" "$ROOT/routines/plists.defer"
+    _pack_defer="$(mktemp)"
+    _render_to "$PKG_PAYLOAD/routines/plists.defer" "$_pack_defer"
+    _inst_defer="$ROOT/routines/plists.defer"
+    if [[ ! -f "$_inst_defer" ]]; then
+      # No framework defer present -- the pack defer becomes the manifest.
+      cp "$_pack_defer" "$_inst_defer"
+      _log "  installed routines/plists.defer (no prior framework defer -- pack defer adopted)"
+    else
+      _appended=0
+      _pack_marker="# --- pack:$PACK_ID defer entries (DGN-227 MINOR-5 merge-append) ---"
+      while IFS= read -r _de || [[ -n "$_de" ]]; do
+        # skip blank + comment lines from the pack defer body
+        case "$_de" in ''|'#'*) continue ;; esac
+        # dedup: entry already present (any non-comment line) -> skip
+        if grep -qxF "$_de" "$_inst_defer"; then
+          _log "  defer merge: entry already present, skipping: $_de"
+          continue
+        fi
+        if [[ "$_appended" -eq 0 ]]; then
+          # append the section marker once, before the first new entry
+          if ! grep -qxF "$_pack_marker" "$_inst_defer"; then
+            printf '%s\n' "$_pack_marker" >> "$_inst_defer"
+          fi
+          _appended=1
+        fi
+        printf '%s\n' "$_de" >> "$_inst_defer"
+        _log "  defer merge: appended pack entry: $_de"
+      done < "$_pack_defer"
+      [[ "$_appended" -eq 1 ]] || _log "  defer merge: all pack entries already present (idempotent, no change)"
+    fi
+    rm -f "$_pack_defer"
     _ledger_record "routines/plists.defer"
     _preserve_register "routines/plists.defer"
-    _log "  rendered routines/plists.defer"
+    _log "  merged routines/plists.defer (framework entries preserved + pack entries appended)"
   fi
 else
   _log "  category plists not declared -- skipping"
@@ -922,15 +1073,30 @@ else
 fi
 
 # ---------- STEP 6: knowledge snapshot --------------------------------------
+# DGN-227 B5: source resolution priority (frozen-snapshot delivery channel):
+#   (1) a bundled frozen snapshot at <package_dir>/<reference_slug>/knowledge/
+#       (customer-machine path) -- inject it as the snapshot source so a pack
+#       ships its warehouse to other machines; the publisher-local path is not
+#       required to exist. This is the B5 delivery channel (F1 resolution).
+#   (2) absent -> fall back to the manifest knowledge.source publisher-local
+#       path (same-machine pilot / dev scenario, DGN-402 behavior preserved).
+# The snapshot script call convention (idempotent rsync + pin record +
+# instance user-data exclusion) is unchanged -- only the source path differs.
 if has_cat knowledge_snapshot; then
   _log "step 6: knowledge snapshot"
 
   SNAPSHOT_SH="$ROOT/scripts/knowledge-snapshot.sh"
+  PKG_KNOWLEDGE="$PKG_PAYLOAD/knowledge"
+  SNAP_SOURCE=""
+  if [[ -n "$KNOW_WAREHOUSE" && -d "$PKG_KNOWLEDGE/$KNOW_WAREHOUSE" ]]; then
+    SNAP_SOURCE="$PKG_KNOWLEDGE/$KNOW_WAREHOUSE"
+    _log "  snapshot source (bundled frozen channel, B5): $SNAP_SOURCE"
+  elif [[ -n "$KNOW_SOURCE" ]]; then
+    SNAP_SOURCE="$KNOW_SOURCE"
+    _log "  snapshot source (manifest knowledge.source, publisher-local fallback): $SNAP_SOURCE"
+  fi
   if [[ -x "$SNAPSHOT_SH" ]]; then
-    # DGN-402: inject the publisher source path from manifest knowledge.source
-    # ('~' expanded at parse time; empty ok -> script default).
-    [[ -n "$KNOW_SOURCE" ]] && _log "  snapshot source (manifest knowledge.source): $KNOW_SOURCE"
-    bash "$SNAPSHOT_SH" "$ROOT" ${KNOW_SOURCE:+"$KNOW_SOURCE"} 2>&1 | while IFS= read -r line; do _log "  snapshot: $line"; done
+    bash "$SNAPSHOT_SH" "$ROOT" ${SNAP_SOURCE:+"$SNAP_SOURCE"} 2>&1 | while IFS= read -r line; do _log "  snapshot: $line"; done
     # DGN-227 B3: the warehouse root DIRECTORY is the ledger unit for
     # knowledge (per-file churn is snapshot-internal).
     [[ -n "$KNOW_WAREHOUSE" ]] && _ledger_record "knowledge/$KNOW_WAREHOUSE/"
@@ -957,24 +1123,54 @@ if has_cat skills && [[ -d "$PKG_PAYLOAD/skills" ]]; then
       continue
     fi
 
-    if [[ ! -d "$bundle_dir" ]]; then
-      _log "  WARN: skills-bundle/$skill_id not found in instance (not installed by framework?) -- skipping"
-      continue
+    if [[ -d "$bundle_dir" ]]; then
+      # ---- refine mode (DGN-402): instance bundle dir exists -> render the
+      #      SKILL.md only (single-file refine of an existing framework skill).
+      # DGN-402: plain cp replaced by the render pipeline -- reference-identity
+      # substitution (slug/root/home) + mint-token substitution. Unrendered
+      # token residue is a hard FAIL at the STEP 7c gate (G4).
+      _render_to "$src_skill_md" "$bundle_dir/SKILL.md"
+      _subst_mint_tokens "$bundle_dir/SKILL.md"
+      _log "  installed .claude/skills-bundle/$skill_id/SKILL.md (rendered, refine mode)"
+      _ledger_record ".claude/skills-bundle/$skill_id/SKILL.md"
+
+      # DGN-227 D1/P18 (widens DGN-402 layer 3): EVERY pack file landing in an
+      # update.sh allowlist-managed zone (.claude/skills-bundle here) is
+      # preserve-registered pack-owned -- not only consumer skills. Pack
+      # reinstall still overwrites (preserve binds update.sh only).
+      _preserve_register ".claude/skills-bundle/$skill_id/SKILL.md"
+    else
+      # ---- net-new mode (DGN-227 B6): a brand-new multi-file domain skill the
+      #      pack brings in. Install the WHOLE payload skill directory into
+      #      .claude/skills-bundle/<id>/. Text files go through the render
+      #      pipeline (reference-identity + mint-token subst); binaries are
+      #      copied verbatim. Each installed file is ledger-recorded and
+      #      preserve-registered pack-owned (D1) so it survives framework
+      #      refresh AND is reconciled on upgrade. G4 (STEP 7c) applies the
+      #      unrendered-token gate to every net-new file.
+      _log "  net-new skill directory: $skill_id (bundle dir absent -> full install)"
+      mkdir -p "$bundle_dir"
+      while IFS= read -r _sf; do
+        _rel="${_sf#"$skill_dir"}"           # path relative to the skill dir root
+        _rel="${_rel#/}"
+        _dst="$bundle_dir/$_rel"
+        mkdir -p "$(dirname "$_dst")"
+        if _is_text_file "$_sf"; then
+          _render_to "$_sf" "$_dst"
+          _subst_mint_tokens "$_dst"
+          # preserve the source executable bit through the render (render writes
+          # a fresh file via sed, dropping mode)
+          [[ -x "$_sf" ]] && chmod +x "$_dst"
+          _log "    rendered .claude/skills-bundle/$skill_id/$_rel"
+        else
+          cp -f "$_sf" "$_dst"
+          _log "    copied (binary) .claude/skills-bundle/$skill_id/$_rel"
+        fi
+        _ledger_record ".claude/skills-bundle/$skill_id/$_rel"
+        _preserve_register ".claude/skills-bundle/$skill_id/$_rel"
+      done < <(find "$skill_dir" -type f)
+      _log "  installed net-new skill .claude/skills-bundle/$skill_id/ (full directory)"
     fi
-
-    # DGN-402: plain cp replaced by the render pipeline -- reference-identity
-    # substitution (slug/root/home) + mint-token substitution. Unrendered
-    # token residue is a hard FAIL at the STEP 7c gate (G4).
-    _render_to "$src_skill_md" "$bundle_dir/SKILL.md"
-    _subst_mint_tokens "$bundle_dir/SKILL.md"
-    _log "  installed .claude/skills-bundle/$skill_id/SKILL.md (rendered)"
-    _ledger_record ".claude/skills-bundle/$skill_id/SKILL.md"
-
-    # DGN-227 D1/P18 (widens DGN-402 layer 3): EVERY pack file landing in an
-    # update.sh allowlist-managed zone (.claude/skills-bundle here) is
-    # preserve-registered pack-owned -- not only consumer skills. Pack
-    # reinstall still overwrites (preserve binds update.sh only).
-    _preserve_register ".claude/skills-bundle/$skill_id/SKILL.md"
 
     # ensure symlink (template wiring: skills/ -> skills-bundle/)
     mkdir -p "$ROOT/.claude/skills"

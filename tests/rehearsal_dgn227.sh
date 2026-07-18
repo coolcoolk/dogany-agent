@@ -530,6 +530,254 @@ assert "MAJOR-5: update-side substitution renames the generic-brief basename" \
   grep -q "^com.telegram-skill-bot.probe7.generic-brief-retro.plist$" "$DEFER_SIM"
 
 # ===========================================================================
+# R8: DGN-418 pack lifecycle completion
+#     B5 (bundled frozen knowledge snapshot) + B6 (net-new skill dir install)
+#     + NM3 (checksum gate pass) + MINOR-5 (defer merge-append).
+#     A self-contained knowledge pack is synthesized in a temp catalog so the
+#     FULL pack_install chain (incl. STEP 7c gates G1-G4) runs end-to-end.
+# ===========================================================================
+CURRENT=R8
+hr; say "R8: DGN-418 (B5 snapshot / B6 net-new skill / NM3 checksum / MINOR-5 defer merge)"
+
+# --- fixture builders -------------------------------------------------------
+# build_know_pack <packs_dir> -- write a warehouse pack 'kp' with a net-new
+# consumer skill 'place-find', a bundled frozen snapshot warehouse 'testwh',
+# a bundled plists.defer, and a checksums.sha over the payload.
+build_know_pack() {
+  local pd="$1"
+  local pkg="$pd/kp" ref="$pd/kp/refkp"
+  mkdir -p "$ref/skills/place-find" "$ref/scripts" "$ref/routines" \
+           "$ref/knowledge/testwh/tools"
+  # -- catalog --
+  cat > "$pd/catalog.json" <<'JSON'
+{ "version": 1, "packs": [
+  { "id": "kp", "name_ko": "지식팩", "role_prose_ko": "knowledge pack",
+    "package_dir": "kp", "status": "official", "pack_version": "1.0.0" } ] }
+JSON
+  # -- manifest: skills + knowledge_snapshot + scripts + plists + routines --
+  cat > "$pkg/pack-manifest.json" <<'JSON'
+{
+  "name": "kp",
+  "reference_slug": "refkp",
+  "reference_root": "/opt/dogany/agents/refkp",
+  "net_new_skills": ["place-find"],
+  "categories": [
+    {"category": "skills",            "required": true},
+    {"category": "scripts",           "required": true},
+    {"category": "knowledge_snapshot","required": true},
+    {"category": "routines",          "required": false},
+    {"category": "plists",            "required": false}
+  ],
+  "knowledge": {
+    "warehouse": "testwh",
+    "consumer_skills": { "place-find": ["places"] },
+    "turns": [ {"type": "T1", "home": ".claude/skills-bundle/place-find/SKILL.md"} ],
+    "smoke_item": "places/dummy",
+    "smoke_args": ""
+  }
+}
+JSON
+  # -- net-new consumer skill: SKILL.md (with consumption block + a mint token
+  #    to exercise the render pipeline) + a second file (multi-file dir) --
+  cat > "$ref/skills/place-find/SKILL.md" <<'MD'
+---
+name: place-find
+description: find places.
+---
+# place-find
+root token: __PROJECT_ROOT__
+
+## knowledge warehouse consumption
+when finding a place, consult the warehouse FIRST:
+warehouse root: `knowledge/testwh`.
+relevant domains: places (via registry.yaml).
+procedure: refract deterministically, speak refracted result only.
+MD
+  cat > "$ref/skills/place-find/helper.py" <<'PY'
+#!/usr/bin/env python3
+# net-new skill helper (multi-file dir) -- root token __PROJECT_ROOT__
+print("place-find helper")
+PY
+  # -- bundled frozen snapshot warehouse (B5) --
+  cat > "$ref/knowledge/testwh/.snapshot-pin" <<'PIN'
+warehouse: testwh
+release: 1.0.0
+snapshot_date: 2026-07-18
+source: bundled-frozen
+PIN
+  echo "# testwh registry" > "$ref/knowledge/testwh/registry.yaml"
+  echo "# testwh readme" > "$ref/knowledge/testwh/README.md"
+  cat > "$ref/knowledge/testwh/tools/refract_cli.py" <<'PY'
+#!/usr/bin/env python3
+import sys
+# deterministic zero-model stub -- exit 0 for the smoke gate
+print("refracted:", sys.argv[1] if len(sys.argv) > 1 else "")
+PY
+  # -- knowledge-snapshot.sh: idempotent rsync of the injected SOURCE into
+  #    <root>/knowledge/, mirroring the publisher script contract (B5) --
+  cat > "$ref/scripts/knowledge-snapshot.sh" <<'SNAP'
+#!/bin/bash
+set -euo pipefail
+ROOT="$1"; SRC="${2:-}"
+[ -n "$SRC" ] || { echo "no source"; exit 1; }
+WH="$(basename "$SRC")"
+mkdir -p "$ROOT/knowledge/$WH"
+rsync -a --delete \
+  --exclude 'instance/' --exclude 'GAPS-instance.md' \
+  "$SRC/" "$ROOT/knowledge/$WH/"
+echo "snapshot: delivered $WH from $SRC"
+SNAP
+  chmod +x "$ref/scripts/knowledge-snapshot.sh"
+  # -- bundled plists.defer (MINOR-5): a pack-owned deferred unit --
+  cat > "$ref/routines/plists.defer" <<'DEFER'
+# pack-owned deferred units
+com.telegram-skill-bot.refkp.kp-coach-brief.plist
+DEFER
+  cat > "$ref/routines/com.telegram-skill-bot.refkp.kp-coach-brief.plist" <<'PL'
+<?xml version="1.0"?><plist><dict><key>Label</key>
+<string>com.telegram-skill-bot.refkp.kp-coach-brief</string></dict></plist>
+PL
+  # -- checksums.sha over EVERY payload file (NM3, B4-5). sha256, format
+  #    '<hex>  <relpath>' relative to package_dir --
+  ( cd "$pkg" && find . -type f ! -name checksums.sha | sed 's|^\./||' | LC_ALL=C sort \
+    | while IFS= read -r rel; do
+        printf '%s  %s\n' \
+          "$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$rel")" \
+          "$rel"
+      done ) > "$pkg/checksums.sha"
+}
+
+# make_know_root <root> <slug> -- mint_stub + the pieces a knowledge pack needs
+# but the stub omits: the framework dogany-memory-search skill (G3 canonical
+# line) and a KNOWLEDGE-WIRING-POINTER block appended to AGENT.md by the pack
+# is NOT here -- the pack has no AGENT.md.add, so we inject the G2 pointer +
+# G3 conf key the way the pack fragments would (this fixture pack omits the
+# fragment categories to keep the payload minimal; G2/G3 wiring is seeded here
+# to isolate the B5/B6/NM3/MINOR-5 code paths under test).
+make_know_root() {
+  local root="$1" slug="$2"
+  mint_stub "$root" "$slug"
+  mkdir -p "$root/.claude/skills/dogany-memory-search"
+  cp "$SANDBOX/skills/dogany-memory-search/SKILL.md" \
+     "$root/.claude/skills/dogany-memory-search/SKILL.md"
+  # G2 pointer marker + names the warehouse
+  {
+    echo ""
+    echo "<!-- KNOWLEDGE-WIRING-POINTER -->"
+    echo "Domain knowledge lives at \`knowledge/testwh\`."
+  } >> "$root/AGENT.md"
+  # G3 conf key
+  echo "KNOWLEDGE_WAREHOUSE=testwh" >> "$root/config/agent.conf"
+}
+
+H8="$(mktemp -d /tmp/dgn227-r8.XXXXXX)"
+PD8="$(mktemp -d /tmp/dgn227-r8-packs.XXXXXX)"
+build_know_pack "$PD8"
+R8_ROOT="$H8/.dogany/agents/kp"
+make_know_root "$R8_ROOT" kp
+# seed a framework defer so MINOR-5 merge (not clobber) is observable
+cat > "$R8_ROOT/routines/plists.defer" <<'FWDEFER'
+# plists.defer -- framework generic-brief units (DGN-227 E1-1)
+com.telegram-skill-bot.kp.generic-brief-morning.plist
+com.telegram-skill-bot.kp.generic-brief-retro.plist
+com.telegram-skill-bot.kp.generic-brief-weekly.plist
+FWDEFER
+
+R8_LOG="$H8/install.log"
+( export HOME="$H8"
+  export DOGANY_LAUNCHD_CAPTURE="$H8/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" kp "$R8_ROOT" \
+    --pack kp --catalog "$PD8/catalog.json" --no-start --no-state
+) >"$R8_LOG" 2>&1 || bad "R8 install exited non-zero (see $R8_LOG)"
+
+R8_LEDGER="$R8_ROOT/config/packs/kp.files"
+R8_PRESERVE="$R8_ROOT/.claude/.dogany-preserve"
+R8_DEFER="$R8_ROOT/routines/plists.defer"
+
+# -- B5: bundled frozen warehouse landed in the instance --
+assert "B5: warehouse knowledge/testwh/ delivered to instance" \
+  test -d "$R8_ROOT/knowledge/testwh"
+assert "B5: .snapshot-pin present with release pin" \
+  grep -q '^release: 1.0.0' "$R8_ROOT/knowledge/testwh/.snapshot-pin"
+assert "B5: pin source records bundled-frozen channel" \
+  grep -q '^source: bundled-frozen' "$R8_ROOT/knowledge/testwh/.snapshot-pin"
+assert "B5: install log names the bundled frozen channel source" \
+  grep -q 'bundled frozen channel, B5' "$R8_LOG"
+assert "B5: warehouse dir recorded in ledger" \
+  grep -qx "knowledge/testwh/" "$R8_LEDGER"
+
+# -- B6: net-new skill directory installed (multi-file) + D1 tag --
+assert "B6: net-new skill dir present on disk (SKILL.md)" \
+  test -f "$R8_ROOT/.claude/skills-bundle/place-find/SKILL.md"
+assert "B6: net-new skill second file present (multi-file dir)" \
+  test -f "$R8_ROOT/.claude/skills-bundle/place-find/helper.py"
+assert "B6: render pipeline substituted mint token (no residue) in SKILL.md" \
+  bash -c "grep -q \"$R8_ROOT\" '$R8_ROOT/.claude/skills-bundle/place-find/SKILL.md' && ! grep -q '__PROJECT_ROOT__' '$R8_ROOT/.claude/skills-bundle/place-find/SKILL.md'"
+assert "B6: render pipeline substituted token in the second file too" \
+  bash -c "! grep -q '__PROJECT_ROOT__' '$R8_ROOT/.claude/skills-bundle/place-find/helper.py'"
+assert "B6: net-new skill symlinked into .claude/skills/" \
+  bash -c "[ -L '$R8_ROOT/.claude/skills/place-find' ]"
+assert "D1: net-new SKILL.md preserve-registered pack-owned (# pack:kp)" \
+  grep -q "^.claude/skills-bundle/place-find/SKILL.md  # pack:kp" "$R8_PRESERVE"
+assert "D1: net-new second file preserve-registered pack-owned" \
+  grep -q "^.claude/skills-bundle/place-find/helper.py  # pack:kp" "$R8_PRESERVE"
+assert "D1: net-new files recorded in the install ledger" \
+  bash -c "grep -qx '.claude/skills-bundle/place-find/SKILL.md' '$R8_LEDGER' && grep -qx '.claude/skills-bundle/place-find/helper.py' '$R8_LEDGER'"
+
+# -- NM3: checksum gate passed (loud PASS in log) --
+assert "NM3: checksum verification passed (log)" \
+  grep -q 'NM3: checksum verification passed' "$R8_LOG"
+assert "NM3: verified all payload files (NM3OK)" \
+  grep -q 'NM3OK verified' "$R8_LOG"
+
+# -- MINOR-5: defer merge-append (framework entries preserved + pack merged) --
+assert "MINOR-5: framework generic-brief entries preserved in merged defer" \
+  bash -c "grep -qx 'com.telegram-skill-bot.kp.generic-brief-morning.plist' '$R8_DEFER' && grep -qx 'com.telegram-skill-bot.kp.generic-brief-weekly.plist' '$R8_DEFER'"
+assert "MINOR-5: pack defer entry merged in (slug-substituted)" \
+  grep -qx "com.telegram-skill-bot.kp.kp-coach-brief.plist" "$R8_DEFER"
+assert "MINOR-5: no literal telegram-agent / reference slug leftover in merged defer" \
+  bash -c "! grep -q 'telegram-agent' '$R8_DEFER' && ! grep -q 'refkp' '$R8_DEFER'"
+assert "MINOR-5: no duplicate entries in merged defer" \
+  bash -c "[ \"\$(grep -v '^#' '$R8_DEFER' | grep -v '^\$' | sort | uniq -d | wc -l | tr -d ' ')\" = 0 ]"
+
+# -- MINOR-5 idempotency: a second install must not re-append pack entries --
+( export HOME="$H8"; export DOGANY_LAUNCHD_CAPTURE="$H8/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" kp "$R8_ROOT" \
+    --pack kp --catalog "$PD8/catalog.json" --no-start --no-state
+) >"$H8/install2.log" 2>&1 || bad "R8 re-install exited non-zero (see $H8/install2.log)"
+assert "MINOR-5: re-install does not duplicate the pack defer entry (idempotent)" \
+  bash -c "[ \"\$(grep -cx 'com.telegram-skill-bot.kp.kp-coach-brief.plist' '$R8_DEFER')\" = 1 ]"
+
+# ===========================================================================
+# R9: NM3 checksum-mismatch payload -> install LOUD-FAILs (no warn-continue).
+# ===========================================================================
+CURRENT=R9
+hr; say "R9: NM3 checksum-mismatch payload => install loud-FAILs"
+H9="$(mktemp -d /tmp/dgn227-r9.XXXXXX)"
+PD9="$(mktemp -d /tmp/dgn227-r9-packs.XXXXXX)"
+build_know_pack "$PD9"
+# tamper a payload file AFTER checksums.sha was generated -> mismatch
+echo "TAMPERED" >> "$PD9/kp/refkp/skills/place-find/helper.py"
+R9_ROOT="$H9/.dogany/agents/kp"
+make_know_root "$R9_ROOT" kp
+
+R9_LOG="$H9/install.log"
+if ( export HOME="$H9"; export DOGANY_LAUNCHD_CAPTURE="$H9/launchd.capture"
+     bash "$SANDBOX/scripts/pack/pack_install.sh" kp "$R9_ROOT" \
+       --pack kp --catalog "$PD9/catalog.json" --no-start --no-state
+   ) >"$R9_LOG" 2>&1; then
+  bad "NM3: mismatch payload install DID NOT fail (gate is warn-continue?)"
+else
+  ok "NM3: mismatch payload install exits non-zero (loud-FAIL)"
+fi
+assert "NM3: FATAL checksum-verification line in log" \
+  grep -q 'NM3: payload checksum verification FAILED' "$R9_LOG"
+assert "NM3: the tampered file is named as a MISMATCH" \
+  grep -q 'NM3FAIL MISMATCH: refkp/skills/place-find/helper.py' "$R9_LOG"
+assert "NM3: gate aborted BEFORE STEP 2 copy (payload never applied)" \
+  bash -c "! test -f '$R9_ROOT/.claude/skills-bundle/place-find/SKILL.md'"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"

@@ -29,9 +29,16 @@ structurally compatible, deliberately not designed here (zero real demand).
   rsync copy + pin record; instance user data (instance/touched-set.yaml,
   instance/registry.yaml, instance/e/, instance/proposals/,
   GAPS-instance.md) is excluded so a re-delivery never erases live accretion.
-- The snapshot source path is injected from manifest `knowledge.source`
-  (`~` expanded; empty = script default). Same-machine publisher is the
-  pilot scope; frozen-snapshot shipping for other machines is out of scope.
+- The snapshot source path resolves in two channels (DGN-227 B5):
+  (1) a BUNDLED FROZEN SNAPSHOT at `<package_dir>/<reference_slug>/knowledge/
+  <warehouse>/` -- pack_install STEP 6 injects this path when present, so a
+  pack ships its warehouse to OTHER machines (customer-machine path; this is
+  the frozen-snapshot delivery channel);
+  (2) absent -> fall back to the manifest `knowledge.source` publisher-local
+  path (`~` expanded; empty = script default) -- the same-machine publisher
+  pilot/dev scenario.
+  Frozen-snapshot shipping for other machines is IN SCOPE via channel (1);
+  same-machine source injection remains as the channel (2) fallback.
 
 ### Layer 2 -- discovery (the runtime knows the warehouse exists)
 
