@@ -572,15 +572,17 @@ verify_section_before_publish() {
 }
 
 # adjust_domain_slot_time <routines_dir> <slot> <hh> <mm> -- rewrite the domain
-# generic-brief plist's StartCalendarInterval Hour/Minute in place. plutil-first
-# with a sed fallback. Returns non-zero if no matching plist exists.
+# generic-brief plist's StartCalendarInterval Hour/Minute in place, AND sync the
+# matching BRIEF_TIME_<slot> key in config/agent.conf so the wording clock
+# (generic-brief.sh) and the fire clock (launchd) never drift (DGN-421/CS-1).
+# plutil-first with a sed fallback. Returns non-zero if no matching plist exists.
 adjust_domain_slot_time() {
   local dir="$1" slot="$2" hh="$3" mm="$4"
-  local label f
+  local label conf_key f
   case "$slot" in
-    morning) label=generic-brief-morning ;;
-    retro)   label=generic-brief-retro ;;
-    weekly)  label=generic-brief-weekly ;;
+    morning) label=generic-brief-morning; conf_key=BRIEF_TIME_MORNING ;;
+    retro)   label=generic-brief-retro;   conf_key=BRIEF_TIME_RETRO ;;
+    weekly)  label=generic-brief-weekly;  conf_key=BRIEF_TIME_WEEKLY ;;
     *) return 1 ;;
   esac
   for f in "$dir"/*"$label".plist; do
@@ -588,11 +590,30 @@ adjust_domain_slot_time() {
     if command -v plutil >/dev/null 2>&1 \
        && plutil -replace StartCalendarInterval.Hour -integer "$hh" "$f" 2>/dev/null \
        && plutil -replace StartCalendarInterval.Minute -integer "$mm" "$f" 2>/dev/null; then
-      return 0
+      : # plist updated via plutil
+    else
+      # sed fallback: rewrite the integer line right after each <key>
+      perl -0pi -e "s#(<key>Hour</key>\s*<integer>)\d+#\${1}$hh#; s#(<key>Minute</key>\s*<integer>)\d+#\${1}$mm#" "$f" 2>/dev/null || return 1
     fi
-    # sed fallback: rewrite the integer line right after each <key>
-    perl -0pi -e "s#(<key>Hour</key>\s*<integer>)\d+#\${1}$hh#; s#(<key>Minute</key>\s*<integer>)\d+#\${1}$mm#" "$f" 2>/dev/null && return 0
-    return 1
+    # sync the wording clock: update BRIEF_TIME_<slot> in config/agent.conf.
+    # For weekly the format is "<Day> HH:MM" -- preserve the existing day prefix.
+    local agent_conf time_val
+    agent_conf="$(dirname "$dir")/config/agent.conf"
+    if [ "$slot" = "weekly" ]; then
+      local existing_weekly day_prefix
+      existing_weekly="$(grep -E "^BRIEF_TIME_WEEKLY=" "$agent_conf" 2>/dev/null | head -1 | cut -d= -f2-)"
+      day_prefix="${existing_weekly%% *}"
+      # if no day prefix found (key absent or no space), default to Sun
+      case "$day_prefix" in
+        Sun|Mon|Tue|Wed|Thu|Fri|Sat) ;;
+        *) day_prefix=Sun ;;
+      esac
+      time_val="$day_prefix $(printf '%02d:%02d' "$hh" "$mm")"
+    else
+      time_val="$(printf '%02d:%02d' "$hh" "$mm")"
+    fi
+    conf_upsert "$agent_conf" "$conf_key" "$time_val"
+    return 0
   done
   return 1
 }

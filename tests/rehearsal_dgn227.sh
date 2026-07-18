@@ -1514,6 +1514,21 @@ DOM_KEEP_MIN="$(perl -0ne 'if(/<key>Hour<\/key>\s*<integer>(\d+)/){$h=$1} if(/<k
 assert "15e/G2-5: already-preceding domain slot is left UNCHANGED (no needless reschedule)" \
   bash -c "[ '$DOM_KEEP_MIN' = 360 ]"
 
+# --- 15e2. CS-1/N-1 config-sync: adjust_domain_slot_time must ALSO update
+# BRIEF_TIME_<slot> in config/agent.conf so the wording clock (generic-brief.sh)
+# and the fire clock (plist StartCalendarInterval) never drift (DGN-421 grill).
+# Re-drive the inverted case (domain 08:00 vs main 07:00) -- rewind plist first,
+# then assert BOTH plist and agent.conf reflect the adjusted time (06:15).
+set_plist_time "$DOM_MP" 8 0   # rewind domain plist back to 08:00 (inverted)
+run_flow "$H15" '
+  verify_section_before_publish "$(cd "'"$R15_DOM"'" && pwd -P)" "$(cd "'"$R15_MAIN"'" && pwd -P)"
+' || bad "R15e2 timing verify flow non-zero (see $H15/flow.log)"
+DOM_SYNC_PLIST="$(perl -0ne 'if(/<key>Hour<\/key>\s*<integer>(\d+)/){$h=$1} if(/<key>Minute<\/key>\s*<integer>(\d+)/){$m=$1} END{printf "%02d:%02d",$h,$m}' "$DOM_MP")"
+assert "15e2/CS-1: plist StartCalendarInterval reflects adjusted time (06:15)" \
+  bash -c "[ '$DOM_SYNC_PLIST' = '06:15' ]"
+assert "15e2/CS-1: BRIEF_TIME_MORNING in config/agent.conf synced to adjusted plist time (wording clock == fire clock)" \
+  grep -qx "BRIEF_TIME_MORNING=06:15" "$R15_DOM/config/agent.conf"
+
 # --- 15f. C2/P22 lifekit post-mint opt-in slot swap ---------------------------
 # The fresh domain shipped WITHOUT lifekit (LIFEKIT=off). Opt in after mint:
 # turning on a slot-owning lifekit routine must UNSCHEDULE the same-slot
