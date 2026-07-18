@@ -5,6 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-07-18
+
+### Fixed
+- `update.sh` distributes `database/relmod.py` to instances
+  (was missing from the database copy list; DGN-410 delivery gap found at
+  release preflight).
+- `update.sh` guard(ii) now recognizes the `Vendor-rev:` marker in
+  `bridge/UPSTREAM.md` as evidence of a canonical bridge change, in addition
+  to the existing `Pinned commit:` bump check (DGN-413). Previously, a
+  bridge commit that added a `Vendor-rev:` annotation without changing the
+  pin (the correct discipline for bridge-content-only vendor revisions) was
+  misread as "pins equal, no bridge change" and the bridge rsync was
+  silently skipped. Every instance that consumed a release containing such a
+  commit (beginning with v1.11.0 / DGN-399) missed the bridge update on
+  `update.sh` and required manual recovery. This fix makes `Vendor-rev:`
+  enforcement live at the guard level, matching its documented intent.
+- `database/relmod.py` alert-pick removes the global weekly hard cap
+  (`CAP_REACHED`) that silenced all relationship-module alerts after any
+  single alert was shown within the past 7 days (DGN-410). Instead,
+  candidates are sorted by unexposed-first rotation (last-shown oldest
+  first, with ratio as tiebreak): people who have never been shown surface
+  before any previously-shown person, and previously-shown people re-surface
+  in rotation order once the unexposed pool is exhausted. The 3-pick limit
+  per run and all per-person gates (let-fade, snooze, dismissed-cycle guard,
+  upcoming-appointment exclusion, RESURFACE pass) are unchanged. Selftest
+  29/29 green.
+
 ## [1.11.0] - 2026-07-18
 
 ### Added
