@@ -778,6 +778,412 @@ assert "NM3: gate aborted BEFORE STEP 2 copy (payload never applied)" \
   bash -c "! test -f '$R9_ROOT/.claude/skills-bundle/place-find/SKILL.md'"
 
 # ===========================================================================
+# DGN-419 Part A: B4 PUBLISH PIPELINE + 3 refinement gates + catalog en/status.
+# Every scenario builds a SYNTHETIC fixture live-agent root under /tmp with
+# FAKE personal data / fake conversation memory / fake persona fields. No live
+# agent data is EVER touched. Data-boundary: fixtures live at /tmp/dgn227-r1[0-3]*.
+# ===========================================================================
+
+# build_publish_source <src_root> -- a synthetic "validated live agent" with:
+#  - AGENT.md carrying a persona/Identity section (FAKE name/emoji/tone) that
+#    the persona-blank gate must NOT extract, plus Role/Workflows domain sections
+#  - fake personal data: memories/, USER.md, .telegram_bot/.env, a real *.db,
+#    a conversation transcripts/ dir  (all must stay OUT of the payload)
+#  - a clean net-new skill 'place-find' (structural token only, no persona token)
+#  - a knowledge warehouse with a RELEASE-pinned .snapshot-pin + instance/ accum
+build_publish_source() {
+  local src="$1"
+  mkdir -p "$src/.claude/skills-bundle/place-find" \
+           "$src/knowledge/kimfake/tools" "$src/knowledge/kimfake/instance" \
+           "$src/routines" "$src/scripts" "$src/memories" "$src/.telegram_bot" \
+           "$src/transcripts" "$src/database"
+  cat > "$src/AGENT.md" <<'MD'
+# AGENT
+
+## Identity
+- Name: Fakey McTrainer
+- Emoji: 🦾
+- Tone: harsh
+- Form of address: 형님
+
+## Role
+- Health trainer -- workout/diet/nutrition coach (long-term health).
+
+## Workflows
+### Coaching
+- Push hard, track macros, respect the safety cap.
+MD
+  # -- FAKE personal data / conversation memory (must be excluded) --
+  echo "FAKE_MEMORY former weight 82kg, injury history private" > "$src/memories/mem-2026-07.md"
+  echo "USER private profile: real name, phone, address" > "$src/USER.md"
+  echo "BOT_TOKEN=fake-secret-abcd" > "$src/.telegram_bot/.env"
+  echo "FAKE conversation transcript line" > "$src/transcripts/2026-07-18.txt"
+  printf 'SQLITEFAKE' > "$src/database/lifekit.db"
+  # -- clean net-new skill (structural token OK, no persona token) --
+  cat > "$src/.claude/skills-bundle/place-find/SKILL.md" <<'SK'
+---
+name: place-find
+description: find places.
+---
+# place-find
+root token: __PROJECT_ROOT__ (structural -- allowed)
+
+## knowledge warehouse consumption
+warehouse root: `knowledge/kimfake`.
+SK
+  cat > "$src/.claude/skills-bundle/place-find/helper.py" <<'PY'
+#!/usr/bin/env python3
+# net-new helper, structural token __PROJECT_ROOT__ only
+print("place-find helper")
+PY
+  # -- routine (domain) --
+  cat > "$src/routines/coach-brief.sh" <<'RT'
+#!/bin/bash
+echo "coach brief section"
+RT
+  # -- knowledge-snapshot.sh (STEP 6 install runs this; B5 publisher contract) --
+  cat > "$src/scripts/knowledge-snapshot.sh" <<'SNAP'
+#!/bin/bash
+set -euo pipefail
+ROOT="$1"; SRC="${2:-}"
+[ -n "$SRC" ] || { echo "no source"; exit 1; }
+WH="$(basename "$SRC")"
+mkdir -p "$ROOT/knowledge/$WH"
+rsync -a --delete \
+  --exclude 'instance/' --exclude 'GAPS-instance.md' \
+  "$SRC/" "$ROOT/knowledge/$WH/"
+echo "snapshot: delivered $WH from $SRC"
+SNAP
+  chmod +x "$src/scripts/knowledge-snapshot.sh"
+  # -- knowledge warehouse: release-pinned + instance accumulation --
+  cat > "$src/knowledge/kimfake/.snapshot-pin" <<'PIN'
+warehouse: kimfake
+release: 2.3.0
+snapshot_date: 2026-07-01
+PIN
+  echo "# kimfake registry" > "$src/knowledge/kimfake/registry.yaml"
+  echo "# kimfake readme" > "$src/knowledge/kimfake/README.md"
+  cat > "$src/knowledge/kimfake/tools/refract_cli.py" <<'PY'
+#!/usr/bin/env python3
+import sys
+print("refracted:", sys.argv[1] if len(sys.argv) > 1 else "")
+PY
+  # instance accumulation (must NOT ship in the frozen snapshot)
+  echo "FAKE instance-private touched set" > "$src/knowledge/kimfake/instance/touched-set.yaml"
+  echo "FAKE instance gaps" > "$src/knowledge/kimfake/GAPS-instance.md"
+}
+
+# write_publish_manifest_and_fields <manifest_out> <fields_out> -- an
+# install-compatible manifest (R8 shape) + catalog en/ko fields fragment.
+write_publish_manifest_and_fields() {
+  local man="$1" fields="$2"
+  cat > "$man" <<'JSON'
+{
+  "name": "hp",
+  "reference_slug": "refhp",
+  "reference_root": "/opt/dogany/agents/refhp",
+  "net_new_skills": ["place-find"],
+  "categories": [
+    {"category": "skills",            "required": true},
+    {"category": "scripts",           "required": true},
+    {"category": "knowledge_snapshot","required": true},
+    {"category": "routines",          "required": false}
+  ],
+  "knowledge": {
+    "warehouse": "kimfake",
+    "consumer_skills": { "place-find": ["places"] },
+    "turns": [ {"type": "T1", "home": ".claude/skills-bundle/place-find/SKILL.md"} ],
+    "smoke_item": "places/dummy",
+    "smoke_args": ""
+  }
+}
+JSON
+  cat > "$fields" <<'JSON'
+{
+  "name_ko": "가짜 헬스팩",
+  "name_en": "Fake Health Pack",
+  "tagline_ko": "운동/식단 코칭",
+  "tagline_en": "Workout and diet coaching",
+  "role_prose_ko": "헬스트레이너 -- 운동/식단 코칭",
+  "role_prose_en": "Health trainer -- workout and diet coaching"
+}
+JSON
+}
+
+# ===========================================================================
+# R10: publish pipeline (clean synthetic source) => gates PASS, payload has
+#      ZERO injected personal-data markers, persona blanked, knowledge pinned,
+#      checksums.sha ROUND-TRIPS through DGN-418 install NM3 gate (green install)
+# ===========================================================================
+CURRENT=R10
+hr; say "R10: publish clean synthetic source => gates pass + install round-trip"
+H10="$(mktemp -d /tmp/dgn227-r10.XXXXXX)"
+SRC10="$H10/src"; PD10="$H10/packs"
+mkdir -p "$PD10"
+build_publish_source "$SRC10"
+MAN10="$H10/manifest.json"; FLD10="$H10/fields.json"
+write_publish_manifest_and_fields "$MAN10" "$FLD10"
+echo '{"version":1,"packs":[]}' > "$PD10/catalog.json"
+
+PUB10_LOG="$H10/publish.log"
+bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+  --source-root "$SRC10" --pack-id hp --pack-version 0.1.0 \
+  --reference-slug refhp --packs-dir "$PD10" \
+  --manifest-in "$MAN10" --catalog-fields-in "$FLD10" \
+  --knowledge-warehouse kimfake \
+  --section "## Role" --section "## Workflows" \
+  --skill place-find --routine coach-brief.sh \
+  --script knowledge-snapshot.sh \
+  --changelog-note "first publish (synthetic)" \
+  >"$PUB10_LOG" 2>&1 || bad "R10 publish exited non-zero (see $PUB10_LOG)"
+
+PKG10="$PD10/hp"; REF10="$PKG10/refhp"
+
+# -- gates all reported PASS --
+assert "R10: gate (a) personal-data removal PASS logged" \
+  grep -q 'GATE (a) personal-data/conversation-memory removal: PASS' "$PUB10_LOG"
+assert "R10: gate (b) persona-token residue PASS logged" \
+  grep -q 'GATE (b) persona-token residue: PASS' "$PUB10_LOG"
+assert "R10: gate (c) knowledge release-pin PASS logged" \
+  grep -q 'GATE (c) knowledge release-pin: PASS' "$PUB10_LOG"
+
+# -- ZERO injected personal-data markers survive in the payload --
+assert "R10: no FAKE_MEMORY marker anywhere in payload" \
+  bash -c "! grep -rq 'FAKE_MEMORY' '$PKG10'"
+assert "R10: no BOT_TOKEN / .env in payload" \
+  bash -c "! grep -rq 'BOT_TOKEN' '$PKG10' && ! find '$PKG10' -name '.env' | grep -q ."
+assert "R10: no memories/ or USER.md in payload" \
+  bash -c "! find '$PKG10' -name 'mem-*' | grep -q . && ! find '$PKG10' -name 'USER.md' | grep -q ."
+assert "R10: no transcripts/ or *.db in payload" \
+  bash -c "! find '$PKG10' -type d -name transcripts | grep -q . && ! find '$PKG10' -name '*.db' | grep -q ."
+assert "R10: knowledge instance-accumulation excluded from frozen snapshot" \
+  bash -c "! find '$PKG10' -path '*instance*' | grep -q . && ! find '$PKG10' -name 'GAPS-instance.md' | grep -q ."
+
+# -- persona fields BLANKED: AGENT.md.add carries Role/Workflows, NOT Identity --
+assert "R10: AGENT.md.add has the Role domain section" \
+  grep -q 'Health trainer' "$REF10/AGENT.md.add"
+assert "R10: AGENT.md.add does NOT carry persona Identity (name blanked)" \
+  bash -c "! grep -q 'Fakey McTrainer' '$REF10/AGENT.md.add' && ! grep -q 'Emoji:' '$REF10/AGENT.md.add'"
+assert "R10: no persona render token in any payload file" \
+  bash -c "! grep -rqE '__AGENT_LABEL__|__USER_LABEL__' '$PKG10'"
+
+# -- knowledge pin present + release-pinned (concrete release, not floating) --
+assert "R10: frozen snapshot .snapshot-pin present with concrete release" \
+  grep -q '^release: 2.3.0' "$REF10/knowledge/kimfake/.snapshot-pin"
+
+# -- .source-sync provenance + pack CHANGELOG present --
+assert "R10: .source-sync provenance baseline written" \
+  bash -c "test -f '$PKG10/.source-sync' && grep -q 'pack_version: 0.1.0' '$PKG10/.source-sync'"
+assert "R10: pack CHANGELOG.md written with version entry" \
+  bash -c "test -f '$PKG10/CHANGELOG.md' && grep -q '## 0.1.0' '$PKG10/CHANGELOG.md'"
+
+# -- checksums.sha format: '<64hex>  <relpath>' two-space sep (DGN-418 NM3) --
+assert "R10: checksums.sha lines match '<sha256hex>  <relpath>' (two-space)" \
+  bash -c "grep -Eq '^[0-9a-f]{64}  [^ ].*' '$PKG10/checksums.sha'"
+assert "R10: checksums.sha does NOT list itself" \
+  bash -c "! grep -q 'checksums.sha' '$PKG10/checksums.sha'"
+assert "R10: checksums.sha does NOT list .source-sync (publish provenance, not payload)" \
+  bash -c "! grep -q '.source-sync' '$PKG10/checksums.sha'"
+
+# -- ROUND-TRIP: feed the published pack straight into DGN-418's install NM3
+#    gate. Green install proves the publish-side checksums.sha is verified by
+#    the exact install-side gate (closes DGN-418 OQ3). --
+R10_ROOT="$H10/.dogany/agents/hp"
+make_know_root "$R10_ROOT" hp
+# make_know_root wires warehouse 'testwh'; this pack uses 'kimfake' -> re-wire
+sed -i.bak 's/testwh/kimfake/g' "$R10_ROOT/config/agent.conf" "$R10_ROOT/AGENT.md"
+rm -f "$R10_ROOT/config/agent.conf.bak" "$R10_ROOT/AGENT.md.bak"
+
+INST10_LOG="$H10/install.log"
+( export HOME="$H10"; export DOGANY_LAUNCHD_CAPTURE="$H10/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" hp "$R10_ROOT" \
+    --pack hp --catalog "$PD10/catalog.json" --no-start --no-state
+) >"$INST10_LOG" 2>&1 || bad "R10 install of published pack exited non-zero (see $INST10_LOG)"
+
+assert "R10 round-trip: published checksums.sha verified by DGN-418 NM3 gate" \
+  grep -q 'NM3: checksum verification passed' "$INST10_LOG"
+assert "R10 round-trip: NM3OK counted all payload files" \
+  grep -q 'NM3OK verified' "$INST10_LOG"
+assert "R10 round-trip: net-new skill installed from published payload" \
+  test -f "$R10_ROOT/.claude/skills-bundle/place-find/SKILL.md"
+assert "R10 round-trip: frozen warehouse delivered from published payload" \
+  test -d "$R10_ROOT/knowledge/kimfake"
+
+# ===========================================================================
+# R11: tamper a PUBLISHED payload file after checksums.sha -> install NM3 FAILs
+# ===========================================================================
+CURRENT=R11
+hr; say "R11: tampered published payload => DGN-418 install NM3 loud-FAILs"
+H11="$(mktemp -d /tmp/dgn227-r11.XXXXXX)"
+SRC11="$H11/src"; PD11="$H11/packs"; mkdir -p "$PD11"
+build_publish_source "$SRC11"
+MAN11="$H11/manifest.json"; FLD11="$H11/fields.json"
+write_publish_manifest_and_fields "$MAN11" "$FLD11"
+echo '{"version":1,"packs":[]}' > "$PD11/catalog.json"
+bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+  --source-root "$SRC11" --pack-id hp --pack-version 0.1.0 \
+  --reference-slug refhp --packs-dir "$PD11" \
+  --manifest-in "$MAN11" --catalog-fields-in "$FLD11" \
+  --knowledge-warehouse kimfake --skill place-find \
+  --script knowledge-snapshot.sh \
+  >"$H11/publish.log" 2>&1 || bad "R11 publish exited non-zero"
+# tamper AFTER publish (checksums.sha already generated)
+echo "TAMPERED" >> "$PD11/hp/refhp/skills/place-find/helper.py"
+R11_ROOT="$H11/.dogany/agents/hp"
+make_know_root "$R11_ROOT" hp
+sed -i.bak 's/testwh/kimfake/g' "$R11_ROOT/config/agent.conf" "$R11_ROOT/AGENT.md"
+rm -f "$R11_ROOT/config/agent.conf.bak" "$R11_ROOT/AGENT.md.bak"
+R11_LOG="$H11/install.log"
+if ( export HOME="$H11"; export DOGANY_LAUNCHD_CAPTURE="$H11/launchd.capture"
+     bash "$SANDBOX/scripts/pack/pack_install.sh" hp "$R11_ROOT" \
+       --pack hp --catalog "$PD11/catalog.json" --no-start --no-state
+   ) >"$R11_LOG" 2>&1; then
+  bad "R11: tampered published payload install DID NOT fail"
+else
+  ok "R11: tampered published payload install loud-FAILs (NM3 gate)"
+fi
+assert "R11: NM3 names the tampered published file as a MISMATCH" \
+  grep -q 'NM3FAIL MISMATCH: refhp/skills/place-find/helper.py' "$R11_LOG"
+
+# ===========================================================================
+# R12: publish GATE failure modes (each loud-FAIL, publish aborts, no catalog)
+# ===========================================================================
+CURRENT=R12
+hr; say "R12: publish gate failure modes (personal-data / persona / floating pin)"
+H12="$(mktemp -d /tmp/dgn227-r12.XXXXXX)"
+
+# (a) source skill carries personal data (USER.md) -> gate (a) FAIL
+SRC12A="$H12/srcA"; PD12A="$H12/packsA"; mkdir -p "$PD12A"
+build_publish_source "$SRC12A"
+echo "FAKE personal profile leaked into skill" > "$SRC12A/.claude/skills-bundle/place-find/USER.md"
+echo '{"version":1,"packs":[]}' > "$PD12A/catalog.json"
+if bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+     --source-root "$SRC12A" --pack-id hp --pack-version 0.1.0 \
+     --reference-slug refhp --packs-dir "$PD12A" --skill place-find \
+     >"$H12/pubA.log" 2>&1; then
+  bad "R12(a): publish with personal data in skill DID NOT fail"
+else
+  ok "R12(a): personal-data gate loud-FAILs the publish"
+fi
+assert "R12(a): gate (a) FATAL line present" \
+  grep -q 'GATE (a): payload carries personal data' "$H12/pubA.log"
+assert "R12(a): catalog NOT upserted on gate failure" \
+  bash -c "[ \"\$(python3 -c \"import json;print(len(json.load(open('$PD12A/catalog.json'))['packs']))\")\" = 0 ]"
+
+# (b) source skill carries a persona render token -> gate (b) FAIL
+SRC12B="$H12/srcB"; PD12B="$H12/packsB"; mkdir -p "$PD12B"
+build_publish_source "$SRC12B"
+echo "greeting for __AGENT_LABEL__" >> "$SRC12B/.claude/skills-bundle/place-find/SKILL.md"
+echo '{"version":1,"packs":[]}' > "$PD12B/catalog.json"
+if bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+     --source-root "$SRC12B" --pack-id hp --pack-version 0.1.0 \
+     --reference-slug refhp --packs-dir "$PD12B" --skill place-find \
+     >"$H12/pubB.log" 2>&1; then
+  bad "R12(b): publish with persona token DID NOT fail"
+else
+  ok "R12(b): persona-token gate loud-FAILs the publish"
+fi
+assert "R12(b): gate (b) FATAL line present" \
+  grep -q 'GATE (b): persona render token' "$H12/pubB.log"
+
+# (c) source warehouse pin is FLOATING (HEAD) -> gate (c) FAIL
+SRC12C="$H12/srcC"; PD12C="$H12/packsC"; mkdir -p "$PD12C"
+build_publish_source "$SRC12C"
+cat > "$SRC12C/knowledge/kimfake/.snapshot-pin" <<'PIN'
+warehouse: kimfake
+release: HEAD
+PIN
+echo '{"version":1,"packs":[]}' > "$PD12C/catalog.json"
+if bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+     --source-root "$SRC12C" --pack-id hp --pack-version 0.1.0 \
+     --reference-slug refhp --packs-dir "$PD12C" --knowledge-warehouse kimfake \
+     >"$H12/pubC.log" 2>&1; then
+  bad "R12(c): publish with floating pin DID NOT fail"
+else
+  ok "R12(c): floating-pin gate loud-FAILs the publish"
+fi
+assert "R12(c): gate (c) FLOATING ref FATAL line present" \
+  grep -q "GATE (c): knowledge snapshot pinned to a FLOATING ref" "$H12/pubC.log"
+
+# (d) publish attempt to extract a PERSONA section is refused (blanking gate)
+SRC12D="$H12/srcD"; PD12D="$H12/packsD"; mkdir -p "$PD12D"
+build_publish_source "$SRC12D"
+echo '{"version":1,"packs":[]}' > "$PD12D/catalog.json"
+if bash "$SANDBOX/scripts/pack/pack_publish.sh" \
+     --source-root "$SRC12D" --pack-id hp --pack-version 0.1.0 \
+     --reference-slug refhp --packs-dir "$PD12D" \
+     --section "## Identity" \
+     >"$H12/pubD.log" 2>&1; then
+  bad "R12(d): extracting a persona section DID NOT fail"
+else
+  ok "R12(d): persona-section extraction refused (persona-blank gate)"
+fi
+
+# ===========================================================================
+# R13: catalog en fields (MINOR-1) + status!=official filter (MINOR-2)
+# ===========================================================================
+CURRENT=R13
+hr; say "R13: catalog en locale stamps English + status!=official excluded"
+H13="$(mktemp -d /tmp/dgn227-r13.XXXXXX)"
+CAT13="$H13/catalog.json"
+mkdir -p "$H13/enpk" "$H13/retiredpk"
+printf '{}' > "$H13/enpk/pack-manifest.json"
+printf '{}' > "$H13/retiredpk/pack-manifest.json"
+cat > "$CAT13" <<'JSON'
+{ "version": 1, "packs": [
+  { "id": "enpk", "package_dir": "enpk", "status": "official", "pack_version": "1.0.0",
+    "name_ko": "영문팩KO", "name_en": "EnglishPackEN",
+    "tagline_ko": "한국어태그", "tagline_en": "english-tag",
+    "role_prose_ko": "역할한국어", "role_prose_en": "role-english" },
+  { "id": "retiredpk", "package_dir": "retiredpk", "status": "retired", "pack_version": "0.9.0",
+    "name_ko": "폐기팩", "name_en": "RetiredPack" } ] }
+JSON
+
+# drive install.sh catalog readers directly against the fixture catalog.
+# install.sh is sourced as a library (DOGANY_INSTALL_LIB=1 stops main()).
+# stdout is written to a file inside the subshell (mirrors run_flow) so the
+# `source` step's stderr noise never contaminates the captured value.
+run_catalog() { # run_catalog <outfile> <lang> <fn-call...>
+  local out="$1" lang="$2"; shift 2
+  local call="$*"          # capture the fn-call BEFORE clearing positionals
+  ( export HOME="$H13"; export DOGANY_INSTALL_LIB=1; export DOGANY_INSTALL_PINNED=1
+    export DOGANY_LAUNCHD_CAPTURE="$H13/launchd.capture"
+    cd "$SANDBOX"
+    set +u    # install.sh top-level touches BASH_SOURCE[0] which set -u rejects
+    set --    # clear positional params before sourcing (install.sh parses "$@")
+    # shellcheck disable=SC1091
+    source "$SANDBOX/install.sh"
+    set +eu +o pipefail   # install.sh line 35 re-enables strict mode on source
+    CATALOG_FILE="$CAT13"
+    DOGANY_LANG="$lang"
+    eval "$call" > "$out" 2>/dev/null )
+}
+
+# output files live OUTSIDE the fake HOME (install.sh sourcing operates on HOME)
+OUT13="$(mktemp -d /tmp/dgn227-r13-out.XXXXXX)"
+
+# MINOR-1: en locale -> English name in listing
+EN_LIST="$OUT13/en_list.txt"; run_catalog "$EN_LIST" en catalog_entries
+assert "MINOR-1: en locale stamps English name (EnglishPackEN)" \
+  grep -q 'EnglishPackEN' "$EN_LIST"
+assert "MINOR-1: en locale does NOT stamp the Korean name" \
+  bash -c "! grep -q '영문팩KO' '$EN_LIST'"
+EN_ROLE="$OUT13/en_role.txt"; run_catalog "$EN_ROLE" en catalog_role_prose enpk
+assert "MINOR-1: en locale stamps English role prose" \
+  grep -q 'role-english' "$EN_ROLE"
+
+# ko locale still stamps Korean
+KO_LIST="$OUT13/ko_list.txt"; run_catalog "$KO_LIST" ko catalog_entries
+assert "MINOR-1: ko locale still stamps the Korean name" \
+  grep -q '영문팩KO' "$KO_LIST"
+
+# MINOR-2: retired pack excluded from BOTH locale listings
+assert "MINOR-2: status!=official pack excluded from en listing" \
+  bash -c "! grep -q 'retiredpk' '$EN_LIST'"
+assert "MINOR-2: status!=official pack excluded from ko listing" \
+  bash -c "! grep -q '폐기팩' '$KO_LIST'"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"

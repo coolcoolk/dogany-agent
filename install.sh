@@ -1550,9 +1550,20 @@ with open(path) as f:
     cat = json.load(f)
 base = os.path.dirname(os.path.abspath(path))
 for p in cat.get("packs", []):
+    # MINOR-2: only 'official' packs list in the public installer menu.
+    # Retired / non-official (status != official) are excluded.
+    if p.get("status") != "official":
+        continue
     pid = p.get("id", "")
-    name = p.get("name_ko" if lang == "ko" else "name") or p.get("name_ko") or pid
-    tag = p.get("tagline_ko" if lang == "ko" else "tagline") or p.get("tagline_ko") or ""
+    # MINOR-1 (i18n DGN-210): en install prefers *_en / bare fields; falls back
+    # to *_ko only when the en field is absent (so a missing en field degrades
+    # gracefully rather than crashing, but a present en field wins).
+    if lang == "en":
+        name = p.get("name_en") or p.get("name") or p.get("name_ko") or pid
+        tag = p.get("tagline_en") or p.get("tagline") or p.get("tagline_ko") or ""
+    else:
+        name = p.get("name_ko") or pid
+        tag = p.get("tagline_ko") or ""
     pkg = p.get("package_dir") or ""
     if pkg and not os.path.isabs(pkg):
         pkg = os.path.join(base, pkg)
@@ -1570,8 +1581,12 @@ with open(path) as f:
     cat = json.load(f)
 for p in cat.get("packs", []):
     if p.get("id") == pid:
-        print(p.get("role_prose_ko" if lang == "ko" else "role_prose")
-              or p.get("role_prose_ko") or "")
+        # MINOR-1: en install stamps the English role prose; ko fallback only
+        # when role_prose_en is absent (i18n DGN-210).
+        if lang == "en":
+            print(p.get("role_prose_en") or p.get("role_prose") or p.get("role_prose_ko") or "")
+        else:
+            print(p.get("role_prose_ko") or "")
         break
 PYEOF
 }
