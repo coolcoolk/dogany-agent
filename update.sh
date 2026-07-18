@@ -746,43 +746,81 @@ if [ -d "$TEMPLATE/bridge" ]; then
           | sed 's/.*Pinned commit:[[:space:]]*//' | tr -d '[:space:]' || true)"
       _tmpl_pin="$(grep -m1 'Pinned commit:' "$_tmpl_upstream" 2>/dev/null \
           | sed 's/.*Pinned commit:[[:space:]]*//' | tr -d '[:space:]' || true)"
+      # Extract Vendor-rev values (full remainder after "Vendor-rev:", trimmed).
+      # Absent line -> empty string.  Compared like the pin line, but UPSTREAM.md
+      # stays excluded from the rsync delta count (prose/doc changes must never
+      # read as "locally ahead").
+      _inst_vrev="$(grep -m1 'Vendor-rev:' "$_inst_upstream" 2>/dev/null \
+          | sed 's/.*Vendor-rev:[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)"
+      _tmpl_vrev="$(grep -m1 'Vendor-rev:' "$_tmpl_upstream" 2>/dev/null \
+          | sed 's/.*Vendor-rev:[[:space:]]*//' | sed 's/[[:space:]]*$//' || true)"
       if [ -n "$_inst_pin" ] && [ -n "$_tmpl_pin" ] && [ "$_inst_pin" = "$_tmpl_pin" ]; then
-        # Pins are EQUAL: check if there are pending rsync changes.
-        # Compare all bridge files EXCEPT known placeholder-substitution
-        # artifacts: self_restart.sh and watchdog_setup.sh contain
-        # __PROJECT_ROOT__/__AGENT_NAME__/etc. tokens that section 4
-        # substitutes at install time, so on a stock instance they will always
-        # differ from the template placeholders -- excluding them prevents
-        # false-positive guard fires.  *.plist files are similarly substituted
-        # AND renamed by section 4, so they are excluded too.
-        # (Keep this exclusion list in sync with section-4 substitution targets
-        # that live under bridge/: self_restart.sh, watchdog_setup.sh, *.plist)
-        # UPSTREAM.md is also excluded: it is the pin METADATA file -- its pin
-        # line is compared above, but its prose (docs sections) may change
-        # canonically without a pin bump and must never read as "locally ahead".
-        _bridge_delta=0
-        _bridge_delta="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
-            ${PEX[@]+"${PEX[@]}"} \
-            --exclude '/self_restart.sh' \
-            --exclude '/watchdog_setup.sh' \
-            --exclude '/UPSTREAM.md' \
-            --exclude '*.plist' \
-            "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
-            | grep -c '^[>c]f' || true)"
-        if [ "$_bridge_delta" -gt 0 ]; then
-          # Pins equal but rsync shows changes -> instance is locally ahead.
-          _bridge_skip=1
-          printf '%s\n' "============================================================" >&2
-          msg "[update][경고] bridge/ 로컬 선행 감지 (핀 동일, 변경 ${_bridge_delta}개) -- rsync 건너뜀" \
-              "[update][WARN] bridge/ locally ahead (pins equal, ${_bridge_delta} changed file(s)) -- skipping rsync" >&2
-          msg "  인스턴스 브릿지가 벤더보다 앞선 로컬 패치를 포함하고 있습니다." \
-              "  Instance bridge contains local patches ahead of the vendor." >&2
-          msg "  조치: .claude/.dogany-preserve에 파일을 등록하거나 canonical에 패치를 upstream하세요." \
-              "  Action: register files in .claude/.dogany-preserve or upstream the patch." >&2
-          printf '%s\n' "============================================================" >&2
-          UPDATED+=("bridge/ (skipped -- locally ahead of vendor)")
+        # Pins are EQUAL: check Vendor-rev before inspecting the rsync delta.
+        #
+        # Decision table (pins equal):
+        #   A) template Vendor-rev != instance Vendor-rev (includes template
+        #      non-empty vs instance empty): canonical added/changed a vendor
+        #      marker -> vendor-side change, do NOT skip; fall through to rsync.
+        #   B) template Vendor-rev == instance Vendor-rev (both empty, or both
+        #      the same value): no vendor-side change signal; inspect rsync delta
+        #      to detect genuine local drift -> skip if delta > 0.
+        #   C) instance has Vendor-rev but template's is empty (marker removed
+        #      upstream, e.g. folded into a later pin bump): pins are equal and
+        #      the template no longer carries the marker -- treat as case B (no
+        #      vendor-side change).  This branch is reached when _tmpl_vrev="" and
+        #      _inst_vrev != "", which falls into != above -- BUT that would
+        #      trigger case A and proceed with rsync.  To avoid treating a marker
+        #      REMOVAL as a vendor-side push, we handle it here: if template vrev
+        #      is empty, ignore vrev difference and fall into B.
+        #      Rationale: a vendor-side change always ADDS/CHANGES a marker;
+        #      removal means the upstream later cut a real pin bump and cleared it.
+        if [ -z "$_tmpl_vrev" ] || [ "$_inst_vrev" = "$_tmpl_vrev" ]; then
+          # Case B (or C): no vendor-rev signal -> inspect rsync delta.
+          #
+          # Compare all bridge files EXCEPT known placeholder-substitution
+          # artifacts: self_restart.sh and watchdog_setup.sh contain
+          # __PROJECT_ROOT__/__AGENT_NAME__/etc. tokens that section 4
+          # substitutes at install time, so on a stock instance they will always
+          # differ from the template placeholders -- excluding them prevents
+          # false-positive guard fires.  *.plist files are similarly substituted
+          # AND renamed by section 4, so they are excluded too.
+          # (Keep this exclusion list in sync with section-4 substitution targets
+          # that live under bridge/: self_restart.sh, watchdog_setup.sh, *.plist)
+          # UPSTREAM.md is excluded from the delta count: its pin and Vendor-rev
+          # lines are compared above (see extraction above), but prose/doc
+          # sections may change canonically without a pin/vrev bump and must
+          # never read as "locally ahead".
+          _bridge_delta=0
+          _bridge_delta="$(rsync -rcn --itemize-changes "${COMMON_EXCLUDES[@]}" \
+              ${PEX[@]+"${PEX[@]}"} \
+              --exclude '/self_restart.sh' \
+              --exclude '/watchdog_setup.sh' \
+              --exclude '/UPSTREAM.md' \
+              --exclude '*.plist' \
+              "$TEMPLATE/bridge/" "$INSTANCE/bridge/" 2>/dev/null \
+              | grep -c '^[>c]f' || true)"
+          if [ "$_bridge_delta" -gt 0 ]; then
+            # Pins equal, vrev equal, but rsync shows changes -> instance is
+            # locally ahead.
+            _bridge_skip=1
+            printf '%s\n' "============================================================" >&2
+            msg "[update][경고] bridge/ 로컬 선행 감지 (핀 동일, 변경 ${_bridge_delta}개) -- rsync 건너뜀" \
+                "[update][WARN] bridge/ locally ahead (pins equal, ${_bridge_delta} changed file(s)) -- skipping rsync" >&2
+            msg "  인스턴스 브릿지가 벤더보다 앞선 로컬 패치를 포함하고 있습니다." \
+                "  Instance bridge contains local patches ahead of the vendor." >&2
+            msg "  조치: .claude/.dogany-preserve에 파일을 등록하거나 canonical에 패치를 upstream하세요." \
+                "  Action: register files in .claude/.dogany-preserve or upstream the patch." >&2
+            printf '%s\n' "============================================================" >&2
+            UPDATED+=("bridge/ (skipped -- locally ahead of vendor)")
+          fi
+          # Pins equal + vrev equal + no delta: normal run (no action needed).
+        else
+          # Case A: pins equal but Vendor-rev differs -> vendor-side change was
+          # shipped via a Vendor-rev marker instead of a pin bump (DGN-385 policy).
+          # Do NOT skip; fall through to normal rsync below.
+          msg "[update][정보] bridge/ Vendor-rev 변경 감지 (핀 동일, 마커: '${_tmpl_vrev}') -- rsync 진행" \
+              "[update][INFO] bridge/ Vendor-rev change detected (pins equal, marker: '${_tmpl_vrev}') -- proceeding with rsync" >&2
         fi
-        # Pins equal + no delta: normal run (no action needed).
       fi
       # Pins differ: vendor updated -> fall through to normal rsync below.
     fi
