@@ -501,6 +501,9 @@ fi
 # 7) sanity: no placeholder survivors.
 #    (a) __X__ framework tokens across code + markdown (any survivor = a real
 #        substitution miss).
+#    CROSS-REF: token list also at update.sh subst_one (~L1053-1066),
+#    pack_install.sh _subst_mint_tokens, and knowledge_selftest.sh G4 --
+#    keep all four sites in sync when adding a token.
 LEFT="$(grep -rlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME|AGENT_LANG)__' \
           --include='*.py' --include='*.sh' --include='*.json' --include='*.plist' --include='*.md' \
           "$PROJECT_ROOT" 2>/dev/null || true)"

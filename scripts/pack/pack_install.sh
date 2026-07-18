@@ -59,7 +59,11 @@
 #     "agent_conf_marker": "<idempotency marker line for agent.conf.add>",
 #     "domain_seed": true|false (optional; step 8 runs only when truthy),
 #     "categories": [ {"category": "<name>", "required": true|false,
-#                      "files": [...]  (optional, 'lib' only)} ... ]
+#                      "files": [...]  (optional, 'lib' only)} ... ],
+#     "knowledge": { ... }  (optional; REQUIRED together with the
+#                      knowledge_snapshot category -- half declaration is a
+#                      preflight FAIL. DGN-402 knowledge wiring standard;
+#                      schema + authoring rules: docs/KNOWLEDGE-WIRING.md)
 #   }
 #   Category names: lib, routines, plists, prompts, agent_conf_fragment,
 #   triggers, db_migrations, skills, agent_md_fragment, scripts,
@@ -76,10 +80,17 @@
 #   4. W01 ledger apply CLI (only when the pack ships lib/ledger.py)
 #   5. ledger-inject hook wiring (only when the pack ships
 #      routines/ledger-inject.py)
-#   6. knowledge snapshot (only when knowledge_snapshot declared)
-#   7. refined skills install (SKILL.md overwrites + symlink ensure)
+#   6. knowledge snapshot (only when knowledge_snapshot declared; source
+#      path injected from manifest knowledge.source when set -- DGN-402)
+#   7. refined skills install (SKILL.md render pipeline: reference-identity
+#      substitution + mint-token substitution + symlink ensure; consumer
+#      skills are preserve-registered pack-owned and the pack-owned entries
+#      are reconciled against the manifest consumer set -- DGN-402)
 #   7b. AGENT.md fragment append (RENDERED via the same slug/root
 #       substitution as plists; idempotent via manifest marker)
+#   7c. knowledge wiring selftest (knowledge_selftest.sh: gates G1-G4 for
+#       warehouse packs, inverse check for warehouse-less packs; zero-model,
+#       exit != 0 = install FAIL -- DGN-402)
 #   8. domain seed (only when manifest declares domain_seed; migration
 #      path = pending_data, fresh = ready; DGN-284 #2, decision 11)
 #   9. model config verify (settings.json model == requested model)
@@ -251,6 +262,55 @@ cat_required() { # cat_required <name> -- 0 when declared required:true
   printf '%s\n' "$CATEGORY_LINES" | awk -F'\t' -v c="$1" '$1==c && $2==1{f=1} END{exit f?0:1}'
 }
 
+# ---------- knowledge object (DGN-402 knowledge wiring standard) --------------
+# Single source of truth for warehouse wiring = the pack manifest 'knowledge'
+# object. It must appear together with the knowledge_snapshot category (half
+# declaration = preflight FAIL below). The install path NEVER reads the
+# catalog.json knowledge prose (display-only).
+KNOWLEDGE_DECL="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(1 if isinstance(d.get('knowledge'), dict) else 0)" "$MANIFEST")"
+
+KNOW_WAREHOUSE="" KNOW_SOURCE="" KNOW_SMOKE_ITEM="" KNOW_SMOKE_ARGS=""
+KNOW_CONSUMER_LINES="" KNOW_TURN_LINES="" KNOW_CONSUMER_IDS=""
+if [[ "$KNOWLEDGE_DECL" -eq 1 ]]; then
+  _know_str() { # _know_str <key> -- knowledge.<key> string field ('' when absent)
+    python3 -c "import json,sys; k=json.load(open(sys.argv[1])).get('knowledge') or {}; v=k.get(sys.argv[2]); print(v if isinstance(v,str) else '')" "$MANIFEST" "$1"
+  }
+  KNOW_WAREHOUSE="$(_know_str warehouse)"
+  KNOW_SOURCE="$(_know_str source)"
+  KNOW_SMOKE_ITEM="$(_know_str smoke_item)"
+  KNOW_SMOKE_ARGS="$(_know_str smoke_args)"
+  # '~' expansion for the publisher source path (spec S1 layer 1)
+  KNOW_SOURCE="${KNOW_SOURCE/#\~/$HOME}"
+  # consumer_skills as "skill<TAB>domain domain ..." lines
+  KNOW_CONSUMER_LINES="$(python3 - "$MANIFEST" <<'PYEOF'
+import json, sys
+k = json.load(open(sys.argv[1])).get("knowledge") or {}
+for skill, domains in (k.get("consumer_skills") or {}).items():
+    if not isinstance(domains, list):
+        domains = []
+    print("%s\t%s" % (skill, " ".join(str(d) for d in domains)))
+PYEOF
+)"
+  # turns as "type<TAB>home" lines
+  KNOW_TURN_LINES="$(python3 - "$MANIFEST" <<'PYEOF'
+import json, sys
+k = json.load(open(sys.argv[1])).get("knowledge") or {}
+for t in k.get("turns") or []:
+    if isinstance(t, dict):
+        print("%s\t%s" % (t.get("type", ""), t.get("home", "")))
+PYEOF
+)"
+  KNOW_CONSUMER_IDS="$(printf '%s\n' "$KNOW_CONSUMER_LINES" | awk -F'\t' 'NF{printf "%s ", $1}')"
+fi
+
+_is_consumer_skill() { # _is_consumer_skill <skill-id> -- 0 when in manifest set
+  local id="$1" c
+  for c in $KNOW_CONSUMER_IDS; do
+    [[ "$c" == "$id" ]] && return 0
+  done
+  return 1
+}
+
 [[ -n "$PACK_NAME" ]]     || _fail "manifest missing 'name': $MANIFEST"
 [[ -n "$PKG_REF_SLUG" ]]  || _fail "manifest missing 'reference_slug': $MANIFEST"
 [[ -n "$PKG_REF_ROOT" ]]  || _fail "manifest missing 'reference_root': $MANIFEST"
@@ -289,6 +349,116 @@ _render_to() { # _render_to <src> <dst> -- copy with slug/root/home substitution
 _render_basename() { # _render_basename <basename> -- slug-derived unit filename
   local b="$1"
   printf '%s\n' "${b//.${PKG_REF_SLUG}./.${SLUG}.}"
+}
+
+# _subst_mint_tokens <file> -- substitute the mint identity tokens in place.
+# Substitutes exactly:
+#   __(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME|AGENT_LANG)__
+# Values sourced from <root>/.instance.conf (DOGANY_* fields) plus
+# config/agent.conf AGENT_LANG. Mirrors update.sh subst_one (~L1053-1066):
+# minimal sed, no other tokens; identity tokens are substituted only when the
+# instance identity is complete (never write empty labels -- residue is caught
+# by the G4 unrendered-token gate instead).
+# CROSS-REF: the token list appears in four places that must stay in sync:
+#   (1) mint.sh sanity check (~L504 alternation)
+#   (2) update.sh subst_one (~L1053-1066)
+#   (3) pack_install.sh _subst_mint_tokens (this function)
+#   (4) G4 unrendered-token check (scripts/pack/knowledge_selftest.sh)
+# When adding a token, update all four sites and their cross-ref comments.
+_subst_mint_tokens() {
+  local f="$1" tmp
+  local agent_name="" agent_label="" user_label="" agent_prefix="" agent_lang=""
+  if [[ -f "$ROOT/.instance.conf" ]]; then
+    # shellcheck disable=SC1090,SC1091
+    source "$ROOT/.instance.conf"
+    agent_name="${DOGANY_AGENT_NAME:-}"
+    agent_label="${DOGANY_AGENT_LABEL:-}"
+    user_label="${DOGANY_USER_LABEL:-}"
+    # optional field (absent on pre-DGN-213 instances) -- same fallback as update.sh
+    agent_prefix="${DOGANY_AGENT_PREFIX:-[agent]}"
+  fi
+  agent_lang="$(grep -E '^AGENT_LANG=' "$ROOT/config/agent.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+  agent_lang="${agent_lang:-en}"
+
+  local sed_args=(-e "s#__PROJECT_ROOT__#${ROOT}#g" -e "s#__HOME__#${HOME}#g")
+  if [[ -n "$agent_name" && -n "$agent_label" && -n "$user_label" ]]; then
+    sed_args+=(-e "s#__AGENT_NAME__#${agent_name}#g" \
+               -e "s#__AGENT_LABEL__#${agent_label}#g" \
+               -e "s#__USER_LABEL__#${user_label}#g" \
+               -e "s#__AGENT_PREFIX__#${agent_prefix}#g" \
+               -e "s#__AGENT_LANG__#${agent_lang}#g")
+  else
+    _log "  WARN: instance identity incomplete (.instance.conf) -- identity token substitution skipped (any residue FAILs the knowledge selftest)"
+  fi
+  tmp="$(mktemp)"
+  sed "${sed_args[@]}" "$f" > "$tmp"
+  mv "$tmp" "$f"
+}
+
+# _preserve_register <relpath> -- idempotently add an instance-root-relative
+# path to <root>/.claude/.dogany-preserve, tagged pack-owned, so update.sh
+# section 3j does not clobber the pack-installed SKILL.md on framework
+# refresh (DGN-402 layer 3 ownership; update.sh build_preserve_excludes
+# already honors file-level entries). A pre-existing entry for the same path
+# (pack-owned or hand-written) is left untouched.
+_preserve_register() {
+  local rel="$1"
+  local pf="$ROOT/.claude/.dogany-preserve"
+  if [[ ! -f "$pf" ]]; then
+    {
+      echo "# .dogany-preserve -- instance-local files update.sh must NOT refresh."
+      echo "# One instance-root-relative path per line (trailing '/' = directory)."
+      echo "# Lines tagged '# pack-owned: <pack-id>' are managed by pack_install.sh."
+    } > "$pf"
+    _log "  created .claude/.dogany-preserve"
+  fi
+  if awk -v p="$rel" '{ line=$0; sub(/#.*/, "", line);
+                        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line);
+                        if (line == p) found=1 }
+                      END { exit found ? 0 : 1 }' "$pf"; then
+    _log "  preserve entry already present: $rel (idempotent)"
+  else
+    printf '%s  # pack-owned: %s (auto, pack_install STEP 7)\n' "$rel" "$PACK_ID" >> "$pf"
+    _log "  preserve-registered: $rel (pack-owned: $PACK_ID)"
+  fi
+}
+
+# _preserve_reconcile -- drop stale pack-owned skills-bundle SKILL.md entries
+# for THIS pack: only lines tagged '# pack-owned: <this-pack-id>' are
+# candidates; any such entry whose skill is no longer in the manifest
+# knowledge.consumer_skills set is removed (a skill dropped from the pack must
+# not stay silently frozen against framework refresh). Hand-written entries
+# (no pack-owned tag) are never touched. (DGN-402 grill r2 MAJOR-2.)
+_preserve_reconcile() {
+  local pf="$ROOT/.claude/.dogany-preserve"
+  [[ -f "$pf" ]] || return 0
+  local tmp removed=0 line path skill
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      *"# pack-owned: ${PACK_ID} "*|*"# pack-owned: ${PACK_ID}")
+        path="${line%%#*}"
+        path="$(printf '%s' "$path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        case "$path" in
+          .claude/skills-bundle/*/SKILL.md)
+            skill="${path#.claude/skills-bundle/}"
+            skill="${skill%/SKILL.md}"
+            if ! _is_consumer_skill "$skill"; then
+              _log "  preserve reconcile: removed stale pack-owned entry: $path"
+              removed=1
+              continue
+            fi
+            ;;
+        esac
+        ;;
+    esac
+    printf '%s\n' "$line" >> "$tmp"
+  done < "$pf"
+  if [[ "$removed" -eq 1 ]]; then
+    mv "$tmp" "$pf"
+  else
+    rm -f "$tmp"
+  fi
 }
 
 # ---------- preflight (declared categories only) ------------------------------
@@ -340,6 +510,59 @@ _preflight_cat skills              dir  "$PKG_PAYLOAD/skills"
 _preflight_cat agent_md_fragment   file "$PKG_PAYLOAD/AGENT.md.add"
 _preflight_cat scripts             dir  "$PKG_SCRIPTS"
 _preflight_cat knowledge_snapshot  exec "$KNOWLEDGE_SNAP"
+
+# ---- knowledge wiring preflight (DGN-402 spec v2.1 S1/S2) -------------------
+# Rule 1: manifest 'knowledge' object and knowledge_snapshot category must
+#         appear together (half declaration = manifest error).
+if has_cat knowledge_snapshot && [[ "$KNOWLEDGE_DECL" -eq 0 ]]; then
+  _log "PREFLIGHT FAIL: category knowledge_snapshot declared without a manifest 'knowledge' object (half declaration)"
+  fail=1
+fi
+if [[ "$KNOWLEDGE_DECL" -eq 1 ]]; then
+  if ! has_cat knowledge_snapshot; then
+    _log "PREFLIGHT FAIL: manifest 'knowledge' object declared without the knowledge_snapshot category (half declaration)"
+    fail=1
+  fi
+  # Rule 2: knowledge_snapshot is valid only together with the scripts
+  #         category -- STEP 6 runs the snapshot script STEP 2f installs.
+  if ! has_cat scripts; then
+    _log "PREFLIGHT FAIL: knowledge declared but 'scripts' category missing (STEP 6 runs the script STEP 2f copies to <root>/scripts/)"
+    fail=1
+  fi
+  [[ -n "$KNOW_WAREHOUSE" ]] || { _log "PREFLIGHT FAIL: knowledge.warehouse is empty"; fail=1; }
+  # Rule 3: consumer_skills nonempty; each skill must exist in the pack
+  #         payload skills/ AND as an instance skills-bundle dir (the current
+  #         STEP 7 WARN-and-skip is promoted to a FAIL for consumer skills).
+  if [[ -z "$KNOW_CONSUMER_LINES" ]]; then
+    _log "PREFLIGHT FAIL: knowledge.consumer_skills is empty"
+    fail=1
+  else
+    while IFS=$'\t' read -r _ck _cd; do
+      [[ -n "$_ck" ]] || continue
+      [[ -f "$PKG_PAYLOAD/skills/$_ck/SKILL.md" ]] || { _log "PREFLIGHT FAIL: consumer skill '$_ck' not in pack payload skills/"; fail=1; }
+      [[ -d "$ROOT/.claude/skills-bundle/$_ck" ]] || { _log "PREFLIGHT FAIL: consumer skill '$_ck' has no instance skills-bundle dir: $ROOT/.claude/skills-bundle/$_ck"; fail=1; }
+    done <<< "$KNOW_CONSUMER_LINES"
+  fi
+  # Rule 4: turns nonempty; type T1/T2/T3 only; home is an instance-root-
+  #         relative pack artifact path (existence is enforced post-install
+  #         by the STEP 7c gate G4 on <root>/<home>).
+  if [[ -z "$KNOW_TURN_LINES" ]]; then
+    _log "PREFLIGHT FAIL: knowledge.turns is empty"
+    fail=1
+  else
+    while IFS=$'\t' read -r _tt _th; do
+      [[ -n "$_tt$_th" ]] || continue
+      case "$_tt" in
+        T1|T2|T3) : ;;
+        *) _log "PREFLIGHT FAIL: knowledge.turns type must be T1/T2/T3 (got '$_tt')"; fail=1 ;;
+      esac
+      [[ -n "$_th" ]] || { _log "PREFLIGHT FAIL: knowledge.turns entry has empty home"; fail=1; }
+      case "$_th" in
+        /*|*..*) _log "PREFLIGHT FAIL: knowledge.turns home must be an instance-root-relative pack artifact path (got '$_th')"; fail=1 ;;
+      esac
+    done <<< "$KNOW_TURN_LINES"
+  fi
+fi
 
 [[ "$fail" -eq 0 ]] || exit 1
 
@@ -605,7 +828,10 @@ if has_cat knowledge_snapshot; then
 
   SNAPSHOT_SH="$ROOT/scripts/knowledge-snapshot.sh"
   if [[ -x "$SNAPSHOT_SH" ]]; then
-    bash "$SNAPSHOT_SH" "$ROOT" 2>&1 | while IFS= read -r line; do _log "  snapshot: $line"; done
+    # DGN-402: inject the publisher source path from manifest knowledge.source
+    # ('~' expanded at parse time; empty ok -> script default).
+    [[ -n "$KNOW_SOURCE" ]] && _log "  snapshot source (manifest knowledge.source): $KNOW_SOURCE"
+    bash "$SNAPSHOT_SH" "$ROOT" ${KNOW_SOURCE:+"$KNOW_SOURCE"} 2>&1 | while IFS= read -r line; do _log "  snapshot: $line"; done
     _log "step 6: knowledge snapshot done"
   else
     _log "  WARN: knowledge-snapshot.sh not found at $ROOT/scripts/ -- skipping (pack may not require it)"
@@ -634,8 +860,19 @@ if has_cat skills && [[ -d "$PKG_PAYLOAD/skills" ]]; then
       continue
     fi
 
-    cp -f "$src_skill_md" "$bundle_dir/SKILL.md"
-    _log "  overwrote .claude/skills-bundle/$skill_id/SKILL.md"
+    # DGN-402: plain cp replaced by the render pipeline -- reference-identity
+    # substitution (slug/root/home) + mint-token substitution. Unrendered
+    # token residue is a hard FAIL at the STEP 7c gate (G4).
+    _render_to "$src_skill_md" "$bundle_dir/SKILL.md"
+    _subst_mint_tokens "$bundle_dir/SKILL.md"
+    _log "  installed .claude/skills-bundle/$skill_id/SKILL.md (rendered)"
+
+    # DGN-402 layer 3 ownership: consumer skills are frozen against the
+    # framework skills-bundle refresh (update.sh 3j) via the preserve list;
+    # pack reinstall still overwrites (preserve binds update.sh only).
+    if _is_consumer_skill "$skill_id"; then
+      _preserve_register ".claude/skills-bundle/$skill_id/SKILL.md"
+    fi
 
     # ensure symlink (template wiring: skills/ -> skills-bundle/)
     mkdir -p "$ROOT/.claude/skills"
@@ -658,6 +895,12 @@ if has_cat skills && [[ -d "$PKG_PAYLOAD/skills" ]]; then
 else
   _log "step 7: skills install SKIPPED (category skills not declared)"
 fi
+
+# DGN-402 (grill r2 MAJOR-2): reconcile pack-owned preserve entries for this
+# pack against the current manifest consumer set on every install/reinstall
+# (runs even when the consumer set is empty so demoted packs shed their
+# stale entries; hand-written entries are never touched).
+_preserve_reconcile
 
 # ---------- STEP 7b: AGENT.md fragment append (rendered, idempotent) --------
 if has_cat agent_md_fragment; then
@@ -692,6 +935,26 @@ if has_cat agent_md_fragment; then
 else
   _log "step 7b: AGENT.md fragment SKIPPED (category agent_md_fragment not declared)"
 fi
+
+# ---------- STEP 7c: knowledge wiring selftest (DGN-402, zero-model) ---------
+# Warehouse packs: gates G1-G4 (delivery / discovery / refraction predicates).
+# Warehouse-less packs: inverse check (zero warehouse artifacts). Same script
+# is re-run by the agent-crafting phase 2 checklist (single logic home).
+# G5 (live probes) stays manual -- the script only prints a reminder.
+SELFTEST_SH="$SCRIPT_DIR/knowledge_selftest.sh"
+_log "step 7c: knowledge wiring selftest"
+[[ -x "$SELFTEST_SH" ]] || _fail "step 7c: knowledge_selftest.sh not found/executable: $SELFTEST_SH"
+SELFTEST_OUT="$(mktemp)"
+set +e
+"$SELFTEST_SH" "$ROOT" --manifest "$MANIFEST" > "$SELFTEST_OUT" 2>&1
+SELFTEST_RC=$?
+set -e
+while IFS= read -r line; do _log "  selftest: $line"; done < "$SELFTEST_OUT"
+rm -f "$SELFTEST_OUT"
+if [[ "$SELFTEST_RC" -ne 0 ]]; then
+  _fail "step 7c: knowledge wiring selftest FAILED (exit $SELFTEST_RC) -- the wiring gates must pass at install time"
+fi
+_log "step 7c: knowledge wiring selftest done"
 
 # ---------- STEP 8: domain seed (declaration-driven, DGN-284 #2) -------------
 # Only when the manifest declares domain_seed. Decision 11: migration path =

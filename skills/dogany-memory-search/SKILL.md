@@ -1,7 +1,7 @@
 ---
 name: dogany-memory-search
 display_name: 기억 검색
-description: Use to recall past facts, records, preferences, or context about the user. Fires on "what did I say before", "what did I tell you about X", recall of the user's workout/diet/investment/budget records, personal details, schedule, relationships, or past decisions - any long-term memory lookup. Search with this BEFORE answering such a question. Semantic cross-lingual search finds by meaning even when keywords do not overlap (also catches non-English utterances), and the search itself costs zero tokens. MUST also search before claiming any user data/preference/record/guide is absent or unknown -- fires whenever the agent is about to say "기록에 없다", "안 정해져 있다", "저장돼 있지 않다", "모른다 -- 알려주세요", "다시 알려주시면", "not recorded", "no saved value", "I don't have that", or any equivalent absence claim about user data. Only after a 0-hit search may the agent state the fact is absent.
+description: Use to recall past facts, records, preferences, or context about the user. Fires on "what did I say before", "what did I tell you about X", recall of the user's workout/diet/investment/budget records, personal details, schedule, relationships, or past decisions - any long-term memory lookup. Search with this BEFORE answering such a question. Semantic cross-lingual search finds by meaning even when keywords do not overlap (also catches non-English utterances), and the search itself costs zero tokens. MUST also search before claiming any user data/preference/record/guide is absent or unknown -- fires whenever the agent is about to say "기록에 없다", "안 정해져 있다", "저장돼 있지 않다", "모른다 -- 알려주세요", "다시 알려주시면", "not recorded", "no saved value", "I don't have that", or any equivalent absence claim about user data. Only after a 0-hit search may the agent state the fact is absent. The same gate covers DOMAIN-KNOWLEDGE absence claims -- fires before saying "그 지식은 없다", "창고에 없다", "자료가 없다", "no domain knowledge on that", or any claim that the agent lacks knowledge in its own domain: when config/agent.conf sets KNOWLEDGE_WAREHOUSE, also check the knowledge/<name>/ warehouse before any such claim.
 ---
 
 # dogany-memory-search — long-term memory recall
@@ -20,6 +20,12 @@ before saying user data is missing, unknown, or not recorded -> run this search 
 only after 0-hit search may you say "not in memory (searched)".
 never ask user to re-provide a fact without running the search.
 applies to cron/proactive outputs (briefings, daily summaries) too -- recall hook does not cover those paths; the skill call is the only gate.
+domain-knowledge claims: if config/agent.conf sets KNOWLEDGE_WAREHOUSE=<name>
+AND knowledge/<name>/ exists, a 0-hit memory search alone is NOT enough --
+also check knowledge/<name>/ (registry.yaml -> items/ -> e/) before stating
+the knowledge is absent. Key set but directory missing -> say the warehouse
+is unavailable (do not retry-loop). No KNOWLEDGE_WAREHOUSE key -> memory
+search alone gates.
 
 ## usage
 ```bash

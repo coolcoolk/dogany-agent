@@ -19,11 +19,7 @@
         "군더더기 없는 전문가형"
       ],
       "migration_tooling": "database/migrations/health_to_warg.py",
-      "knowledge": {
-        "warehouse": "kimwog",
-        "consumption": "snapshot@release-pin",
-        "install": "package <reference_slug>/scripts/knowledge-snapshot.sh -> <root>/knowledge/kimwog (+ .snapshot-pin)"
-      },
+      "knowledge_ko": "지식창고 kimwog 스냅샷 동봉 (릴리스 핀)",
       "package_dir": "health-trainer",
       "domains": ["health", "헬스", "운동", "식단", "다이어트", "트레이닝"],
       "status": "official"

@@ -1050,6 +1050,9 @@ fi
 # the next update and back it up spuriously. For settings.json it matters because
 # a harness hook firing between copy and a later substitution would read a raw
 # __PROJECT_ROOT__ placeholder -- so we substitute atomically at install (3g).
+# CROSS-REF: token list also at mint.sh sanity check (~L504 alternation),
+# pack_install.sh _subst_mint_tokens, and knowledge_selftest.sh G4 -- keep
+# all four sites in sync when adding a token.
 subst_one() {
   local f="$1"
   sed_inplace "$f" \
