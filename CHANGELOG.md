@@ -5,6 +5,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-18
+
+### Added
+- Post-restart resume without an owner message: the bridge now bootstraps
+  the owner stream at startup, so restart-verify and session-inbox
+  injections run before the owner speaks (DGN-399, template sync).
+- Morning brief greeting: exactly one greeting sentence in the agent's own
+  voice as the second line of the brief -- context-aware, fact-bound
+  (DGN-401).
+- Domain-agent knowledge wiring standard: 3-layer wiring convention
+  (delivery / discovery / refraction) is now enforced by machinery at pack
+  install time, preventing a recurrence of the DGN-398 incident where a
+  correctly delivered snapshot had zero runtime consumption paths (DGN-402).
+  - `scripts/pack/pack_install.sh`: knowledge preflight (half-declaration
+    and scripts-category pairing FAIL; consumer skill and turn-type
+    existence checked); STEP 6 now injects the `knowledge.source` path from
+    the pack manifest into `knowledge-snapshot.sh`; STEP 7 per-skill render
+    pipeline (`_render_to` + `_subst_mint_tokens`) replaces the former plain
+    `cp`; preserve-list auto-register (pack-owned comment) and reconcile at
+    install time; STEP 7c selftest gate.
+  - `scripts/pack/knowledge_selftest.sh` (new): mechanical G1-G4 gates
+    (snapshot existence + pin parse; AGENT.md pointer marker; agent.conf key
+    + canonical skill gate line; consumer skill blocks + refract smoke) plus
+    scoped inverse check for warehouse-less packs (zero knowledge/ references
+    in AGENT.md + agent.conf). Zero-model; deterministic.
+  - `docs/KNOWLEDGE-WIRING.md` (new): 3-layer wiring convention reference
+    for pack authors. Covers delivery / discovery / refraction layers,
+    warehouse-presence branching, template block wording, design-turn
+    consumption types (T1 post-log comment, T2 program-design, T3 periodic
+    review), and minting gate checklist G1-G5.
+  - `skills/dogany-memory-search/SKILL.md`: conditional warehouse
+    absence-gate line added to the `## absence claim gate` section --
+    if `config/agent.conf` sets `KNOWLEDGE_WAREHOUSE=<name>`, a 0-hit
+    memory search alone does not gate a "knowledge absent" claim; the
+    warehouse directory must also be checked. `KNOWLEDGE_WAREHOUSE` key
+    absent -> memory-search gate unchanged (self-disabling; no dangling
+    reference for warehouse-less instances).
+  - `packs/catalog.json`: health-trainer knowledge object demoted from a
+    structured 3-key object to a single prose display line (manifest is the
+    sole install-decision source; catalog is display-only).
+  - `scripts/mint.sh` / `scripts/update.sh`: CROSS-REF comments added at
+    the 4 canonical token-list sites for mint/update cross-traceability.
+- Skill authoring routing gate: `skills/dogany-skill-creator/SKILL.md`
+  gains a `## authoring routing gate (read FIRST)` section at the top of
+  the document (DGN-408). Before authoring any skill, agents classify the
+  target as framework / common / personal and route accordingly: framework
+  skills route via the integration agent (Metal) or are overlaid -- never
+  destroyed by direct edit; common skills are authored by the main agent;
+  non-framework skills never enter the product canonical. Two routing trees
+  are given verbatim: one for estates with a framework-integration agent,
+  one for product users without one.
+
 ## [1.10.0] - 2026-07-18
 
 ### Added
