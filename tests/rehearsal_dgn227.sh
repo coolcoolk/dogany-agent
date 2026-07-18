@@ -1184,6 +1184,183 @@ assert "MINOR-2: status!=official pack excluded from ko listing" \
   bash -c "! grep -q '폐기팩' '$KO_LIST'"
 
 # ===========================================================================
+# R14: DGN-420 briefing runtime -- generic-brief real composition + submit-mode
+#      section write + P20 loud-fail fallback + MINOR-6 per-peer discrimination
+#      + i18n (ko/en) + config-driven times.
+#      SAFETY: every scenario drives generic-brief.sh with DOGANY_BRIEF_SINK set
+#      to a temp capture file -- NO push.sh, NO live channel, NO live agent data.
+#      Roots are synthetic dirs under /tmp built from the shipped template.
+# ===========================================================================
+CURRENT=R14
+hr; say "R14: DGN-420 (composition / submit write / P20 / MINOR-6 / i18n / config times)"
+
+GB="$SANDBOX/agents/.template/routines/generic-brief.sh"
+AGG_SRC="$SANDBOX/agents/.template/routines/lib/handoff-aggregate"
+
+# build_brief_root <root> <slug> <lang> -- minimal domain skeleton for the brief
+build_brief_root() {
+  local root="$1" slug="$2" lang="$3"
+  mkdir -p "$root/routines/lib" "$root/config/i18n" "$root/files/handoff" \
+           "$root/.telegram_bot/logs"
+  cp "$GB" "$root/routines/generic-brief.sh"
+  cp "$AGG_SRC" "$root/routines/lib/handoff-aggregate"
+  cp "$SANDBOX/agents/.template/config/i18n/${lang}.json" "$root/config/i18n/${lang}.json"
+  echo "AGENT_LANG=${lang}" > "$root/config/agent.conf"
+}
+# run a brief slot with the transport captured to a sink file
+run_brief() { # run_brief <root> <slot> <sink>
+  local root="$1" slot="$2" sink="$3"
+  ( DOGANY_BRIEF_SINK="$sink" bash "$root/routines/generic-brief.sh" "$slot" ) >/dev/null 2>&1
+}
+
+RBASE="$(mktemp -d /tmp/dgn227-r14.XXXXXX)"
+
+# --- 14a. standalone domain (ko): composes + utters all 3 slots w/ role prose ---
+DOM_KO="$RBASE/dom_ko"
+build_brief_root "$DOM_KO" auroria ko
+KO_ROLE='당신의 일상을 곁에서 챙기는 생활비서'
+for slot in morning retro weekly; do
+  SINK="$RBASE/ko_${slot}.sink"
+  run_brief "$DOM_KO" "$slot" "$SINK" || bad "R14a ko $slot exited non-zero"
+  assert "14a: ko standalone $slot -> UTTER (not submit)" \
+    grep -q "UTTER slot=$slot routing=standalone" "$SINK"
+  assert "14a: ko standalone $slot carries generic role prose" \
+    grep -qF "$KO_ROLE" "$SINK"
+  assert "14a: ko standalone $slot did NOT write any submit file" \
+    bash -c "! grep -q '^SUBMIT ' '$SINK'"
+done
+
+# --- 14b. standalone domain (en): role prose localizes ----------------------
+DOM_EN="$RBASE/dom_en"
+build_brief_root "$DOM_EN" enclave en
+EN_ROLE="I'm your life assistant, looking after your day alongside you"
+SINK="$RBASE/en_morning.sink"
+run_brief "$DOM_EN" morning "$SINK" || bad "R14b en morning exited non-zero"
+assert "14b: en standalone morning carries the EN role prose" \
+  grep -qF "$EN_ROLE" "$SINK"
+assert "14b: en briefing does NOT leak the KO role prose" \
+  bash -c "! grep -qF '$KO_ROLE' '$SINK'"
+
+# --- 14c. instance ROLE_PROSE overrides the generic default -----------------
+DOM_OV="$RBASE/dom_override"
+build_brief_root "$DOM_OV" taxbot ko
+printf 'ROLE_PROSE=세금 신고와 공제 전략을 챙기는 세무 도우미\n' >> "$DOM_OV/config/agent.conf"
+SINK="$RBASE/ov_morning.sink"
+run_brief "$DOM_OV" morning "$SINK" || bad "R14c override exited non-zero"
+assert "14c: instance ROLE_PROSE wins over generic default" \
+  grep -qF '세무 도우미' "$SINK"
+assert "14c: generic default suppressed when instance role present" \
+  bash -c "! grep -qF '$KO_ROLE' '$SINK'"
+
+# --- 14d. submit mode: domain writes its section to the main inbox (not utter) ---
+MAIN_ROOT="$RBASE/main"
+mkdir -p "$MAIN_ROOT/files/handoff"
+DOM_SUB="$RBASE/dom_submit"
+build_brief_root "$DOM_SUB" auroria ko
+{
+  echo "BRIEF_ROUTING=submit"
+  echo "HANDOFF_PEER_MAIN=$MAIN_ROOT"
+  echo "DOGANY_AGENT_LABEL=오로리아"
+} >> "$DOM_SUB/config/agent.conf"
+SINK="$RBASE/sub_retro.sink"
+run_brief "$DOM_SUB" retro "$SINK" || bad "R14d submit exited non-zero"
+assert "14d: submit mode -> SUBMIT action captured (no UTTER)" \
+  bash -c "grep -q '^SUBMIT slot=retro routing=submit' '$SINK' && ! grep -q '^UTTER ' '$SINK'"
+assert "14d: section file landed in the MAIN peer handoff inbox" \
+  bash -c "ls '$MAIN_ROOT/files/handoff/'*'report.section.retro-'*'.md' >/dev/null 2>&1"
+SUB_FILE="$(ls "$MAIN_ROOT/files/handoff/"*report.section.retro-*.md 2>/dev/null | head -1)"
+DOM_SUB_BN="$(basename "$DOM_SUB")"
+assert "14d: section frontmatter carries from: sender (root basename) + type" \
+  bash -c "grep -q '^from: $DOM_SUB_BN' '$SUB_FILE' && grep -q '^type: report.section.retro' '$SUB_FILE'"
+
+# --- 14e. main aggregates the domain's submitted section (submission-box loop) ---
+# main root now sees the section; drive main-side aggregation via the lib.
+cp "$AGG_SRC" "$MAIN_ROOT/handoff-aggregate.lib"
+AGG_OUT="$RBASE/agg_single.txt"
+( source "$MAIN_ROOT/handoff-aggregate.lib"
+  handoff_aggregate "$MAIN_ROOT" retro "$DOM_SUB|오로리아" ) > "$AGG_OUT" 2>/dev/null
+assert "14e: main aggregation attributes the section to the submitting peer" \
+  grep -q '^(오로리아)' "$AGG_OUT"
+
+# --- 14f. MINOR-6: N>=2 peers -> each peer's section attributed correctly ----
+# Two peers submit distinct sections; assert NO cross-attribution.
+MAIN2="$RBASE/main2"
+mkdir -p "$MAIN2/files/handoff"
+PEER_A="$RBASE/peerA"; PEER_B="$RBASE/peerB"
+build_brief_root "$PEER_A" alpha ko
+build_brief_root "$PEER_B" beta ko
+for p in "$PEER_A|alpha" "$PEER_B|beta"; do
+  proot="${p%%|*}"; pslug="${p##*|}"
+  {
+    echo "BRIEF_ROUTING=submit"
+    echo "HANDOFF_PEER_MAIN=$MAIN2"
+    echo "DOGANY_AGENT_LABEL=$pslug"
+  } >> "$proot/config/agent.conf"
+  # give each peer a distinct own-section so bodies differ
+  cat > "$proot/routines/domain-section.sh" <<SEC
+#!/bin/bash
+echo "SECRET-$pslug body line"
+SEC
+  chmod +x "$proot/routines/domain-section.sh"
+  run_brief "$proot" morning "$RBASE/${pslug}_sub.sink" || bad "R14f $pslug submit non-zero"
+done
+AGG2="$RBASE/agg_two.txt"
+( source "$AGG_SRC"
+  handoff_aggregate "$MAIN2" morning "$PEER_A|alpha,$PEER_B|beta" ) > "$AGG2" 2>/dev/null
+assert "14f/MINOR-6: peer alpha's body attributed under (alpha)" \
+  bash -c "awk '/^\(alpha\)/{f=1;next} /^\(/{f=0} f&&/SECRET-alpha/{print}' '$AGG2' | grep -q SECRET-alpha"
+assert "14f/MINOR-6: peer beta's body attributed under (beta)" \
+  bash -c "awk '/^\(beta\)/{f=1;next} /^\(/{f=0} f&&/SECRET-beta/{print}' '$AGG2' | grep -q SECRET-beta"
+assert "14f/MINOR-6: no cross-attribution (alpha body NOT under beta)" \
+  bash -c "! awk '/^\(beta\)/{f=1;next} /^\(/{f=0} f&&/SECRET-alpha/{print}' '$AGG2' | grep -q SECRET-alpha"
+assert "14f/MINOR-6: no cross-attribution (beta body NOT under alpha)" \
+  bash -c "! awk '/^\(alpha\)/{f=1;next} /^\(/{f=0} f&&/SECRET-beta/{print}' '$AGG2' | grep -q SECRET-beta"
+
+# --- 14g. P20 loud-fail: submit target invalid -> warn + standalone fallback --
+DOM_P20="$RBASE/dom_p20"
+build_brief_root "$DOM_P20" auroria ko
+{
+  echo "BRIEF_ROUTING=submit"
+  echo "HANDOFF_PEER_MAIN=$RBASE/nonexistent-main-root"   # invalid peer root
+} >> "$DOM_P20/config/agent.conf"
+SINK="$RBASE/p20.sink"
+run_brief "$DOM_P20" morning "$SINK" || bad "R14g P20 exited non-zero"
+assert "14g/P20: invalid peer -> loud warning captured (not silent)" \
+  grep -q '^P20-WARN slot=morning' "$SINK"
+assert "14g/P20: falls back to a standalone UTTER this run (briefing not lost)" \
+  grep -q '^UTTER slot=morning routing=standalone' "$SINK"
+assert "14g/P20: no SUBMIT written to the dead inbox" \
+  bash -c "! grep -q '^SUBMIT ' '$SINK'"
+
+# --- 14h. config-driven times: defaults when unset; honors an override -------
+SINK="$RBASE/time_default.sink"
+run_brief "$DOM_KO" morning "$SINK" || bad "R14h default time non-zero"
+assert "14h: morning default time 07:00 when BRIEF_TIME_MORNING unset" \
+  grep -q 'time=07:00' "$SINK"
+SINK="$RBASE/time_retro.sink"
+run_brief "$DOM_KO" retro "$SINK" || bad "R14h retro default non-zero"
+assert "14h: retro default time 22:00 when unset" \
+  grep -q 'time=22:00' "$SINK"
+SINK="$RBASE/time_weekly.sink"
+run_brief "$DOM_KO" weekly "$SINK" || bad "R14h weekly default non-zero"
+assert "14h: weekly default Sun 20:00 when unset" \
+  grep -q 'time=Sun 20:00' "$SINK"
+# override
+DOM_T="$RBASE/dom_time"
+build_brief_root "$DOM_T" chronos ko
+printf 'BRIEF_TIME_MORNING=06:15\n' >> "$DOM_T/config/agent.conf"
+SINK="$RBASE/time_override.sink"
+run_brief "$DOM_T" morning "$SINK" || bad "R14h override non-zero"
+assert "14h: overridden BRIEF_TIME_MORNING=06:15 honored" \
+  grep -q 'time=06:15' "$SINK"
+
+# --- 14i. E1 Warg-hardcoding generalization: bundle daily-retro is peer-generic ---
+assert "14i: daily-retro.sh no longer hardcodes the '워그 건강 리포트 미도착' literal" \
+  bash -c "! grep -q '워그 건강 리포트 미도착' '$SANDBOX/agents/.template/routines/bundle/daily-retro.sh'"
+assert "14i: daily-retro.sh parameterizes the health-peer name (config-driven)" \
+  grep -q 'RETRO_HEALTH_PEER_NAME' "$SANDBOX/agents/.template/routines/bundle/daily-retro.sh"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 (inspect flow.log / launchd.capture on failure)"
