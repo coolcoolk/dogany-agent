@@ -3,6 +3,9 @@
 Pack versioning history (B3). Newest first. Version axis is the pack's own
 semver, independent of the framework release and the knowledge snapshot pin.
 
+## 1.1.0 -- 2026-07-20
+- work-item ticket discipline + managed-target registry (DGN-449)
+
 ## 1.0.0 -- 2026-07-19
 - GA: fold generic deferred-execution ticket rule from upstream doctrine; provenance re-synced; first general-availability release
 

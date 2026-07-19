@@ -23,6 +23,8 @@ outside the pack; read-if-present contract). -->
 - States: open > wip > blocked > done. `parked` = idea/design on hold
   behind an unmet gate (not actionable now, not dead).
 - Deferred-execution work: open a ticket AT SCHEDULING TIME -- any work item leaving the live conversation for a future return path (one-shot reminder, scheduled/one-shot cron, queue placement, wakeup/wait gate). The ticket records the return path (schedule time / reminder / queue + expected pickup); the scheduled artifact references the ticket id. No ticketless deferred work -- a reservation alone is not a ledger.
+- Every work item -- incoming task, handoff, triage output, parked idea, backlog entry, pending decision -- gets a worklog ticket (status + priority + lifecycle). Never write work-tracking to the memory store; memory is for durable fact recall only.
+- backlog status = accepted but unscheduled (gate unmet or deprioritized). Pending decisions are tracked as tickets, not as prose notes.
 
 ### Design grill (adversarial design review)
 - Complex or irreversible designs (architecture / data model / deploy /
@@ -90,3 +92,11 @@ outside the pack; read-if-present contract). -->
   infrastructure. Life-management domains (diet, workout, appointments,
   relationships and the like) stay with their own tools and agents -- do
   not absorb them here.
+
+### Managed-target registry
+- Keep a single-file canonical map of managed targets: slug <-> display-name
+  <-> path/endpoint. Resolve any reference (handoff source, user shorthand)
+  to a slug via this map -- no guessing.
+- Single-source separation: identity (registry) != version/skew !=
+  topology/index. Each concern owns one file; slug is the cross-reference
+  key. Update the registry on mint, rename, or migration.
