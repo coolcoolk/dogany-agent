@@ -173,6 +173,18 @@ CURRENT=R3
 hr; say "R3: domain-from-catalog (dev pack: ledger / preserve tags / reconcile)"
 H3="$(mktemp -d /tmp/dgn227-r3.XXXXXX)"
 R3_ROOT="$H3/.dogany/agents/dev"
+# Derive expected dev-pack version from the canonical catalog so this test
+# stays correct across version bumps without requiring a manual edit here.
+EXPECTED_DEV_VER="$(python3 -c "
+import json, sys
+with open('$SANDBOX/packs/catalog.json') as f:
+    cat = json.load(f)
+for p in cat['packs']:
+    if p.get('id') == 'dev':
+        print(p.get('pack_version', ''))
+        sys.exit(0)
+sys.exit(1)
+")" || { bad "R3 setup: could not read dev pack_version from catalog.json"; EXPECTED_DEV_VER="UNKNOWN"; }
 run_flow "$H3" '
   DOGANY_AGENT_CLASS=domain
   DOGANY_PACK_ID=dev
@@ -194,15 +206,15 @@ assert "ledger records rendered plist (slug-derived name)" \
 assert "ledger records pack script" \
   grep -qx "scripts/secret-sweep.sh" "$LEDGER"
 assert "ledger header carries pack_version" \
-  grep -q "^# pack_version: 0.1.0" "$LEDGER"
+  grep -q "^# pack_version: $EXPECTED_DEV_VER" "$LEDGER"
 assert "preserve entry tagged '# pack:dev' (routines zone)" \
   grep -q "^routines/dev-digest.sh  # pack:dev" "$PRESERVE"
 assert "reconcile kept net-new entries in the SAME run" \
   grep -q "routines/com.telegram-skill-bot.dev.dev-digest.plist  # pack:dev" "$PRESERVE"
 assert "AGENT.md fragment wrapped in BEGIN/END pair" \
   bash -c "grep -qF '<!-- DOGANY-PACK:dev:BEGIN -->' '$R3_ROOT/AGENT.md' && grep -qF '<!-- DOGANY-PACK:dev:END -->' '$R3_ROOT/AGENT.md'"
-assert "DOGANY_PACKS list-form upsert (dev@0.1.0)" \
-  grep -q "^DOGANY_PACKS=dev@0.1.0" "$R3_ROOT/.instance.conf"
+assert "DOGANY_PACKS list-form upsert (dev@$EXPECTED_DEV_VER)" \
+  grep -q "^DOGANY_PACKS=dev@$EXPECTED_DEV_VER" "$R3_ROOT/.instance.conf"
 assert "ledger-vs-disk consistency (every entry exists, H1-9)" \
   bash -c "rc=0; while read -r e; do [ -e \"$R3_ROOT/\$e\" ] || rc=1; done < <(grep -v '^#' '$LEDGER' | grep -v '^$'); exit \$rc"
 
@@ -278,6 +290,39 @@ cp -R "$SANDBOX/packs/." "$PK/"
 mv "$PK/dev/refdev/routines/dev-digest.sh" "$PK/dev/refdev/routines/dev-digest2.sh"
 mv "$PK/dev/refdev/routines/com.telegram-skill-bot.refdev.dev-digest.plist" \
    "$PK/dev/refdev/routines/com.telegram-skill-bot.refdev.dev-digest2.plist"
+# Reflect the rename in checksums.sha so NM3 sees a consistent manifest.
+# The fixture simulates a GA pack whose file listing changed; a real published
+# pack would always ship checksums.sha in sync with its payload.
+python3 - "$PK/dev/checksums.sha" "$PK/dev" <<'PYEOF'
+import hashlib, sys, pathlib, re
+
+sums_path = pathlib.Path(sys.argv[1])
+pkg_dir   = pathlib.Path(sys.argv[2])
+lines = sums_path.read_text().splitlines()
+new_lines = []
+for line in lines:
+    # Skip blank/comment lines unchanged
+    if not line.strip() or line.lstrip().startswith("#"):
+        new_lines.append(line)
+        continue
+    parts = line.split("  ", 1)
+    if len(parts) != 2:
+        new_lines.append(line)
+        continue
+    _sha, rel = parts
+    p = pkg_dir / rel
+    if not p.exists():
+        # File was renamed away -- replace with renamed counterpart
+        new_rel = re.sub(r'dev-digest\.', 'dev-digest2.', rel)
+        new_p = pkg_dir / new_rel
+        if new_p.exists():
+            h = hashlib.sha256(new_p.read_bytes()).hexdigest()
+            new_lines.append("%s  %s" % (h, new_rel))
+        # else: drop the entry (file genuinely gone, nothing to add)
+    else:
+        new_lines.append(line)
+sums_path.write_text("\n".join(new_lines) + "\n")
+PYEOF
 
 R5_LOG="$H3/upgrade.log"
 (
