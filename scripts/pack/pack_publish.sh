@@ -466,7 +466,7 @@ if os.path.isfile(path):
     if not replaced:
         kept.insert(0, new_entry.rstrip("\n"))
     out = header + "\n" + "\n\n".join(kept) + "\n"
-    prior = len(kept) - 1 if not replaced else len(kept) - 1
+    prior = len(kept) - 1
     print("changelog: %s@%s %s (%d prior entr%s preserved)"
           % (pid, pver, "replaced" if replaced else "prepended",
              prior, "y" if prior == 1 else "ies"))
