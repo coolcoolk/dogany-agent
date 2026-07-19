@@ -1984,6 +1984,295 @@ bash "$SBT" --root "$R19E" --morning "25:99" >/dev/null 2>&1 \
   || ok "19e: invalid --morning rejected (loud, no bad write)"
 
 # ===========================================================================
+# R20: DGN-441 finalize mode round-trip -- seal a hand-refined payload IN PLACE.
+#   A synthetic hand-refined payload (generic AGENT.md.add w/ ZERO persona
+#   tokens, a .source-sync w/ 2 sections [1 MATCH / 1 intentional DRIFT vs the
+#   synthetic source], a 0.1.0 CHANGELOG, a draft@0.1.0 catalog row) is sealed
+#   at 0.2.0. Asserts: payload BYTE-immutable (refslug + AGENT.md.add sha
+#   unchanged), drift report WARN-only (1 MATCH/1 DRIFT, exit 0, .source-sync
+#   unchanged), gates PASS with ZERO payload mutation, CHANGELOG 0.2.0 on top +
+#   0.1.0 preserved, checksums exclude checksums.sha AND .source-sync, catalog
+#   status stays draft. Failure modes: G-F1 (absent pack), G-F2 (materialize
+#   flag). Round-trip: the sealed checksums pass the DGN-418 install NM3 gate.
+#   SAFETY: synthetic payload + source under /tmp; no live agent data.
+# ===========================================================================
+CURRENT=R20
+hr; say "R20: DGN-441 finalize round-trip (payload immutable / drift WARN / prepend / status preserved / NM3)"
+PUB="$SANDBOX/scripts/pack/pack_publish.sh"
+H20="$(mktemp -d /tmp/dgn227-r20.XXXXXX)"
+PD20="$H20/packs"; SRC20="$H20/src"
+PKG20="$PD20/hp"; REF20="$PKG20/refhp"
+mkdir -p "$REF20/skills/place-find" "$SRC20"
+
+# -- hand-refined payload: generic AGENT.md.add (NO persona tokens) --
+cat > "$REF20/AGENT.md.add" <<'MD'
+<!-- DOGANY-PACK:hp:BEGIN -->
+
+## Role
+- General dev discipline (refined, generic -- estate phrasing removed).
+
+## Workflows
+### Coaching
+- Refined generic coaching flow (hand-edited, diverged from source).
+
+<!-- DOGANY-PACK:hp:END -->
+MD
+cat > "$REF20/skills/place-find/SKILL.md" <<'MD'
+---
+name: place-find
+description: find places.
+---
+# place-find
+generic body -- no persona render token here.
+MD
+# install-compatible manifest (net_new skill so pack_install has work to do)
+cat > "$PKG20/pack-manifest.json" <<'JSON'
+{
+  "name": "hp",
+  "reference_slug": "refhp",
+  "reference_root": "/opt/dogany/agents/refhp",
+  "net_new_skills": ["place-find"],
+  "categories": [ {"category": "skills", "required": true} ]
+}
+JSON
+# synthetic source AGENT.md: Role MATCHES baseline; Workflows DIVERGES (DRIFT)
+cat > "$SRC20/AGENT.md" <<'MD'
+# AGENT
+
+## Role
+- General dev discipline (refined, generic -- estate phrasing removed).
+
+## Workflows
+### Coaching
+- SOURCE-SIDE changed coaching flow (diverged from the hand-refined payload).
+MD
+# .source-sync baseline: hash the CURRENT payload Role text (=> MATCH) and a
+# STALE Workflows text (=> DRIFT vs the changed source). Built with the shipped
+# extractor helper so the baseline uses the exact same normalization.
+python3 - "$SANDBOX/scripts/pack/lib/extract_section.py" "$PKG20/.source-sync" <<'PY'
+import sys, importlib.util
+helper, out = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("es", helper)
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+# Role text identical to the current source Role -> MATCH
+role = ("## Role\n"
+        "- General dev discipline (refined, generic -- estate phrasing removed).")
+# stale Workflows text (different from the changed source) -> DRIFT
+wf_stale = ("## Workflows\n### Coaching\n"
+            "- ORIGINAL coaching flow before the source diverged.")
+rows = [(m.section_sha(role, "## Role")[0], "## Role"),
+        (m.section_sha(wf_stale, "## Workflows")[0], "## Workflows")]
+with open(out, "w", encoding="utf-8") as fh:
+    fh.write("# hp pack source conformance baseline\n#\n")
+    for h, heading in rows:
+        fh.write("%s\t%s\t2026-07-01\n" % (h, heading))
+PY
+# existing CHANGELOG (0.1.0) + draft catalog row (0.1.0) w/ extra fields
+cat > "$PKG20/CHANGELOG.md" <<'CL'
+# hp pack -- CHANGELOG
+
+Pack versioning history (B3). Newest first. Version axis is the pack's own
+semver, independent of the framework release and the knowledge snapshot pin.
+
+## 0.1.0 -- 2026-07-01
+- first hand-refined publish
+CL
+cat > "$PD20/catalog.json" <<'JSON'
+{ "version": 1, "packs": [
+  { "id": "hp", "package_dir": "hp", "status": "draft", "pack_version": "0.1.0",
+    "name_ko": "개발팩", "role_prose_ko": "개발 규율" } ] }
+JSON
+
+# capture pre-state for immutability asserts
+ADD20_SHA_BEFORE="$(shasum -a 256 "$REF20/AGENT.md.add" | awk '{print $1}')"
+SS20_SHA_BEFORE="$(shasum -a 256 "$PKG20/.source-sync" | awk '{print $1}')"
+REF20_TREE_BEFORE="$(cd "$REF20" && find . -type f | LC_ALL=C sort | while read -r f; do
+  printf '%s %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$f"; done)"
+
+PUB20_LOG="$H20/publish.log"
+bash "$PUB" --mode finalize --source-root "$SRC20" --pack-id hp \
+  --pack-version 0.2.0 --packs-dir "$PD20" \
+  >"$PUB20_LOG" 2>&1 || bad "R20 finalize exited non-zero (see $PUB20_LOG)"
+
+# -- payload BYTE-immutable (I1: refslug tree + AGENT.md.add unchanged) --
+ADD20_SHA_AFTER="$(shasum -a 256 "$REF20/AGENT.md.add" | awk '{print $1}')"
+REF20_TREE_AFTER="$(cd "$REF20" && find . -type f | LC_ALL=C sort | while read -r f; do
+  printf '%s %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$f"; done)"
+assert "R20: AGENT.md.add sha unchanged after finalize (payload immutable, no re-copy)" \
+  bash -c "[ '$ADD20_SHA_BEFORE' = '$ADD20_SHA_AFTER' ]"
+assert "R20: entire <refslug>/ payload tree byte-identical after finalize (I1)" \
+  test "$REF20_TREE_BEFORE" = "$REF20_TREE_AFTER"
+
+# -- drift report: WARN-only, 1 MATCH / 1 DRIFT, exit 0, .source-sync UNCHANGED --
+assert "R20: drift summary reports 1 MATCH, 1 DRIFT (source divergence exposed)" \
+  grep -q 'DRIFT summary: 1 MATCH, 1 DRIFT, 0 MISSING' "$PUB20_LOG"
+assert "R20: drift is WARN-only -- finalize exited 0 despite DRIFT" \
+  grep -q 'WARN only, not blocking' "$PUB20_LOG"
+SS20_SHA_AFTER="$(shasum -a 256 "$PKG20/.source-sync" | awk '{print $1}')"
+assert "R20: .source-sync NOT rewritten by finalize (drift baseline preserved, F3)" \
+  bash -c "[ '$SS20_SHA_BEFORE' = '$SS20_SHA_AFTER' ]"
+assert "R20: finalize log states baseline preserved (STEP 6 skip)" \
+  grep -q '.source-sync preserved (finalize does not rewrite' "$PUB20_LOG"
+
+# -- 3 B4 gates PASS with ZERO payload mutation (F3 detect-only, I2) --
+assert "R20: gate (a) personal-data removal PASS in finalize" \
+  grep -q 'GATE (a) personal-data/conversation-memory removal: PASS' "$PUB20_LOG"
+assert "R20: gate (b) persona-token residue PASS in finalize" \
+  grep -q 'GATE (b) persona-token residue: PASS' "$PUB20_LOG"
+assert "R20: gate (c) knowledge release-pin PASS in finalize (no knowledge dir => vacuous PASS)" \
+  grep -q 'GATE (c) knowledge release-pin: PASS' "$PUB20_LOG"
+
+# -- CHANGELOG prepend: 0.2.0 on top, 0.1.0 preserved (F4/F5) --
+assert "R20: CHANGELOG 0.2.0 entry present (prepended)" \
+  grep -q '## 0.2.0 --' "$PKG20/CHANGELOG.md"
+assert "R20: CHANGELOG 0.1.0 history preserved (not overwritten)" \
+  grep -q '## 0.1.0 -- 2026-07-01' "$PKG20/CHANGELOG.md"
+assert "R20: CHANGELOG newest-first -- 0.2.0 appears BEFORE 0.1.0" \
+  bash -c "awk '/## 0.2.0/{a=NR} /## 0.1.0/{b=NR} END{exit !(a>0 && b>0 && a<b)}' '$PKG20/CHANGELOG.md'"
+assert "R20: finalize default changelog note is the re-seal phrasing (OQ-A)" \
+  grep -q 'finalize re-seal (payload unchanged)' "$PKG20/CHANGELOG.md"
+
+# -- checksums: self-excluded AND .source-sync excluded (I3) --
+assert "R20: checksums.sha does NOT list itself" \
+  bash -c "! grep -q 'checksums.sha' '$PKG20/checksums.sha'"
+assert "R20: checksums.sha does NOT list .source-sync (I3 explicit filter)" \
+  bash -c "! grep -q '.source-sync' '$PKG20/checksums.sha'"
+assert "R20: checksums.sha covers the immutable payload (AGENT.md.add listed)" \
+  grep -q 'refhp/AGENT.md.add' "$PKG20/checksums.sha"
+
+# -- catalog: status draft PRESERVED, version bumped, other fields kept (OQ4) --
+assert "R20: catalog status stays draft (no silent official promotion)" \
+  bash -c "[ \"\$(python3 -c \"import json;print([p for p in json.load(open('$PD20/catalog.json'))['packs'] if p['id']=='hp'][0]['status'])\")\" = draft ]"
+assert "R20: catalog pack_version bumped to 0.2.0" \
+  bash -c "[ \"\$(python3 -c \"import json;print([p for p in json.load(open('$PD20/catalog.json'))['packs'] if p['id']=='hp'][0]['pack_version'])\")\" = 0.2.0 ]"
+assert "R20: catalog preserved the pre-existing name_ko field (merge not clobber)" \
+  bash -c "[ \"\$(python3 -c \"import json;print([p for p in json.load(open('$PD20/catalog.json'))['packs'] if p['id']=='hp'][0].get('name_ko',''))\")\" = 개발팩 ]"
+
+# -- failure mode: absent pack-id => G-F1 FAIL --
+if bash "$PUB" --mode finalize --source-root "$SRC20" --pack-id ghost \
+     --pack-version 0.2.0 --packs-dir "$PD20" >"$H20/gf1.log" 2>&1; then
+  bad "R20: G-F1 -- finalize of an absent pack DID NOT fail"
+else
+  ok "R20: G-F1 -- finalize of an absent pack loud-FAILs"
+fi
+assert "R20: G-F1 FATAL line names the missing payload" \
+  grep -q 'G-F1: payload absent' "$H20/gf1.log"
+
+# -- failure mode: materialize flag + finalize => G-F2 FAIL --
+if bash "$PUB" --mode finalize --source-root "$SRC20" --pack-id hp \
+     --pack-version 0.3.0 --packs-dir "$PD20" --section "## Role" \
+     >"$H20/gf2.log" 2>&1; then
+  bad "R20: G-F2 -- finalize with a materialize flag DID NOT fail"
+else
+  ok "R20: G-F2 -- finalize with --section loud-FAILs (does not materialize)"
+fi
+assert "R20: G-F2 FATAL line instructs removing the materialize flag" \
+  grep -q 'G-F2: finalize does not materialize; remove --section' "$H20/gf2.log"
+
+# -- ROUND-TRIP: the sealed checksums pass the DGN-418 install NM3 gate (NM3OK) --
+R20_ROOT="$H20/.dogany/agents/hp"
+mint_stub "$R20_ROOT" hp
+INST20_LOG="$H20/install.log"
+( export HOME="$H20"; export DOGANY_LAUNCHD_CAPTURE="$H20/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" hp "$R20_ROOT" \
+    --pack hp --catalog "$PD20/catalog.json" --no-start --no-state
+) >"$INST20_LOG" 2>&1 || bad "R20 install of finalized pack exited non-zero (see $INST20_LOG)"
+assert "R20 round-trip: finalized checksums.sha verified by DGN-418 NM3 gate" \
+  grep -q 'NM3: checksum verification passed' "$INST20_LOG"
+assert "R20 round-trip: NM3OK counted the payload files" \
+  grep -q 'NM3OK verified' "$INST20_LOG"
+assert "R20 round-trip: net-new skill installed from the finalized payload" \
+  test -f "$R20_ROOT/.claude/skills-bundle/place-find/SKILL.md"
+
+# ===========================================================================
+# R21: DGN-441 F4 CHANGELOG prepend refactor re-green (snapshot path).
+#   Re-publishing a pack that ALREADY has a CHANGELOG must PRESERVE prior
+#   version history (the old cat-overwrite erased it). Drive snapshot mode
+#   twice (0.1.0 then 0.2.0) against a synthetic source and assert both entries
+#   survive newest-first. R10-equivalent gate/checksum asserts are re-run here
+#   (per W-D: the checksums self-exclusion + .source-sync exclusion filter must
+#   stay green through the F4 refactor). Reuses build_publish_source (R10).
+# ===========================================================================
+CURRENT=R21
+hr; say "R21: DGN-441 F4 CHANGELOG prepend re-green (snapshot re-snapshot preserves history + R10 filters)"
+H21="$(mktemp -d /tmp/dgn227-r21.XXXXXX)"
+SRC21="$H21/src"; PD21="$H21/packs"; mkdir -p "$PD21"
+build_publish_source "$SRC21"
+MAN21="$H21/manifest.json"; FLD21="$H21/fields.json"
+write_publish_manifest_and_fields "$MAN21" "$FLD21"
+echo '{"version":1,"packs":[]}' > "$PD21/catalog.json"
+
+# first snapshot 0.1.0
+bash "$PUB" \
+  --source-root "$SRC21" --pack-id hp --pack-version 0.1.0 \
+  --reference-slug refhp --packs-dir "$PD21" \
+  --manifest-in "$MAN21" --catalog-fields-in "$FLD21" \
+  --knowledge-warehouse kimfake \
+  --section "## Role" --section "## Workflows" \
+  --skill place-find --script knowledge-snapshot.sh \
+  --changelog-note "first snapshot" \
+  >"$H21/pub1.log" 2>&1 || bad "R21 first snapshot exited non-zero (see $H21/pub1.log)"
+PKG21="$PD21/hp"
+assert "R21: after 0.1.0 -- CHANGELOG has the 0.1.0 entry" \
+  grep -q '## 0.1.0 --' "$PKG21/CHANGELOG.md"
+
+# re-snapshot 0.2.0 -- must PREPEND, not overwrite
+bash "$PUB" \
+  --source-root "$SRC21" --pack-id hp --pack-version 0.2.0 \
+  --reference-slug refhp --packs-dir "$PD21" \
+  --manifest-in "$MAN21" --catalog-fields-in "$FLD21" \
+  --knowledge-warehouse kimfake \
+  --section "## Role" --section "## Workflows" \
+  --skill place-find --script knowledge-snapshot.sh \
+  --changelog-note "second snapshot" \
+  >"$H21/pub2.log" 2>&1 || bad "R21 re-snapshot exited non-zero (see $H21/pub2.log)"
+
+assert "R21/F4: re-snapshot PRESERVED the prior 0.1.0 entry (history not erased)" \
+  grep -q '## 0.1.0 --' "$PKG21/CHANGELOG.md"
+assert "R21/F4: re-snapshot added the 0.2.0 entry" \
+  grep -q '## 0.2.0 --' "$PKG21/CHANGELOG.md"
+assert "R21/F4: newest-first ordering -- 0.2.0 appears before 0.1.0" \
+  bash -c "awk '/## 0.2.0/{a=NR} /## 0.1.0/{b=NR} END{exit !(a>0 && b>0 && a<b)}' '$PKG21/CHANGELOG.md'"
+assert "R21/F4: exactly one 0.1.0 entry (no duplication across re-publish)" \
+  bash -c "[ \"\$(grep -c '## 0.1.0 --' '$PKG21/CHANGELOG.md')\" = 1 ]"
+
+# same-version re-publish REPLACES in place (dedupe), history still intact
+bash "$PUB" \
+  --source-root "$SRC21" --pack-id hp --pack-version 0.2.0 \
+  --reference-slug refhp --packs-dir "$PD21" \
+  --manifest-in "$MAN21" --catalog-fields-in "$FLD21" \
+  --knowledge-warehouse kimfake \
+  --section "## Role" --section "## Workflows" \
+  --skill place-find --script knowledge-snapshot.sh \
+  --changelog-note "second snapshot redo" \
+  >"$H21/pub3.log" 2>&1 || bad "R21 same-version re-publish exited non-zero (see $H21/pub3.log)"
+assert "R21/F4: same-version re-publish REPLACES the 0.2.0 entry (no duplicate)" \
+  bash -c "[ \"\$(grep -c '## 0.2.0 --' '$PKG21/CHANGELOG.md')\" = 1 ]"
+assert "R21/F4: same-version re-publish kept 0.1.0 history" \
+  bash -c "[ \"\$(grep -c '## 0.1.0 --' '$PKG21/CHANGELOG.md')\" = 1 ]"
+
+# -- R10-equivalent filter re-green (W-D): checksums self+.source-sync exclusion --
+assert "R21/W-D: checksums.sha does NOT list itself (filter intact post-refactor)" \
+  bash -c "! grep -q 'checksums.sha' '$PKG21/checksums.sha'"
+assert "R21/W-D: checksums.sha does NOT list .source-sync (I3 filter intact)" \
+  bash -c "! grep -q '.source-sync' '$PKG21/checksums.sha'"
+assert "R21: snapshot re-run gates still PASS (no regression from F4/W-A refactor)" \
+  bash -c "grep -q 'STEP 3: all 3 gates PASS' '$H21/pub2.log'"
+
+# -- round-trip the re-snapshotted pack through the install NM3 gate --
+R21_ROOT="$H21/.dogany/agents/hp"
+make_know_root "$R21_ROOT" hp
+sed -i.bak 's/testwh/kimfake/g' "$R21_ROOT/config/agent.conf" "$R21_ROOT/AGENT.md"
+rm -f "$R21_ROOT/config/agent.conf.bak" "$R21_ROOT/AGENT.md.bak"
+INST21_LOG="$H21/install.log"
+( export HOME="$H21"; export DOGANY_LAUNCHD_CAPTURE="$H21/launchd.capture"
+  bash "$SANDBOX/scripts/pack/pack_install.sh" hp "$R21_ROOT" \
+    --pack hp --catalog "$PD21/catalog.json" --no-start --no-state
+) >"$INST21_LOG" 2>&1 || bad "R21 install of re-snapshotted pack exited non-zero (see $INST21_LOG)"
+assert "R21 round-trip: re-snapshotted checksums verified by NM3 gate (R10 re-green)" \
+  grep -q 'NM3: checksum verification passed' "$INST21_LOG"
+
+# ===========================================================================
 hr
 say "RESULT: pass=$PASS fail=$FAIL"
 say "fake homes: $H1 $H2 $H3 $H15 (inspect flow.log / launchd.capture on failure)"

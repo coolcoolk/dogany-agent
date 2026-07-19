@@ -258,8 +258,19 @@ fi
 # ===========================================================================
 # SNAPSHOT ONLY (DGN-441): finalize skips materialization entirely (I1).
 if [[ "$MODE" == "snapshot" ]]; then
+# F4: the CHANGELOG is VERSION HISTORY, not a source snapshot -- it must survive
+# the payload wipe so a re-snapshot PREPENDS onto prior history (STEP 4 below).
+_CL_STASH=""
+if [[ -f "$PACKAGE_DIR/CHANGELOG.md" ]]; then
+  _CL_STASH="$(mktemp)"
+  cp "$PACKAGE_DIR/CHANGELOG.md" "$_CL_STASH"
+fi
 rm -rf "$PACKAGE_DIR"
 mkdir -p "$REF_DIR"
+if [[ -n "$_CL_STASH" ]]; then
+  cp "$_CL_STASH" "$PACKAGE_DIR/CHANGELOG.md"
+  rm -f "$_CL_STASH"
+fi
 
 # -- 2a. AGENT.md domain sections -> AGENT.md.add (persona fields EXCLUDED) --
 # Persona-field blanking gate (B2): the extracted fragment must carry the
