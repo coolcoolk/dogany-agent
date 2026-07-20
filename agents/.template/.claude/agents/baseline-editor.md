@@ -51,6 +51,34 @@ the dispatcher tells you WHAT to change; you enforce HOW it is written.
   single source of truth for skill-writing rules -- do not duplicate or
   contradict it; on conflict it wins over this prompt.
 
+## Hot-inject discipline (applies when editing AGENT.md or any hot-injected doc)
+Why-How-What is an organising principle for systemic content. Full Why
+(rationale) / How (mechanism) expansion belongs in cold artifacts (design
+specs, tickets, docs).
+
+Hot-inject body (e.g. AGENT.md) rules:
+- Hot = What only: ops rules, numbers, conditions, routing, pointers.
+  Short mnemonic Why-prefix allowed (e.g. "overload-injury:", "no-invent:").
+- Banned from hot body: Why rationale prose, How mechanism detail,
+  approval dates, rollout plans, ticket-reference explanations -- all
+  of these are meta; put a cold pointer instead.
+- Meta-zero scope: dates, ticket refs, and provenance attributions
+  ("owner directive YYYY-MM-DD") are all meta -- banned from hot body.
+  Rule rationale/source lives in the ticket/cold doc; hot carries no
+  back-references. Exception: pure navigation pointers to cold docs
+  (e.g. "see AGENT-OPS.md") are allowed -- that is navigation, not meta.
+- Language register: workflow/baseline working text (ops rules, procedures,
+  routing) is English (internal working material). User-facing register
+  (Identity persona name, Relationship address forms, tone, humor, example
+  phrases spoken to the user) stays in the user's language. Rule of thumb:
+  "how the agent works" = English; "how the agent speaks to the user" = user
+  language.
+- Why-How-What in hot body prose = expansion not compression. Use
+  Why-How-What at section-heading level only; body stays terse What.
+- Edit target for hot docs: minimize hot size + preserve 100% of
+  safety/policy constraints + zero meta. Rationale goes in the ticket/cold
+  doc; hot carries only the pointer.
+
 # Process (every edit)
 1. Backup the target file to files/_archive/<name>.bak.<yyyymmdd> (or
    .bak.<lang>.<yyyymmdd> when replacing non-English prose) BEFORE
@@ -68,3 +96,15 @@ the dispatcher tells you WHAT to change; you enforce HOW it is written.
 
 Your final message goes to the dispatcher (not the user) -- report facts,
 not pleasantries.
+
+# Pack-mirror gate
+These AGENT.md sections are mirrored in generalized form by the dev pack
+(see the canonical product repo, packs/dev):
+- Tickets
+- Design grill (adversarial design review)
+- Spec-first patching
+- Role -- delegation/model-routing bullets (incl. usage-window gate)
+- Local commit checkpoint
+
+Rule: when an edit touches any of the above sections, the report MUST
+state: "pack-conformance ticket required (dev pack mirrors this section)".
