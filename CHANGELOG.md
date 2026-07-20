@@ -5,6 +5,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-07-20
+
+### Fixed
+- Bridge vendor picks up DGN-460: the SDK transport `max_buffer_size` is now
+  configurable via `CLAUDE_MAX_BUFFER_SIZE` (default 16MB; was a hard 1MB SDK
+  default). Fixes a reader-loop crash when a single CLI->SDK JSON message
+  exceeds 1MB (e.g. a base64 image inline in a tool result). Vendored
+  upstream-first from the OSS bridge repo (OSS commit 01764ee). (DGN-460)
+
 ## [1.13.1] - 2026-07-20
 
 ### Changed
