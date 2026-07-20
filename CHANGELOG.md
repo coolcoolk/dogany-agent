@@ -5,6 +5,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-20
+
+### Added
+- `pack_publish.sh` finalize mode (`--mode finalize`): re-seals an
+  existing hand-curated pack payload without overwriting it. Finalize
+  skips the materialize step (no rm-rf / upstream section copy), runs
+  the three B4 gates in detect-only, reports source-sync drift without
+  modifying the baseline, prepends the CHANGELOG entry, regenerates
+  checksums (excluding `checksums.sha` and `.source-sync`), and upserts
+  the catalog while preserving the existing status field. Complements
+  the existing snapshot mode (new pack from live agent); snapshot mode
+  behavior is unchanged. (DGN-441, dec-069 GO)
+
+### Changed
+- `pack_publish.sh` CHANGELOG write refactored from overwrite to
+  newest-first prepend: existing entries are preserved and the new
+  entry is inserted at the top. Applies to both snapshot and finalize
+  modes. Fixes a silent history-destruction bug where every re-seal
+  replaced the entire CHANGELOG with a single entry. (DGN-441)
+- Dev pack bumped to 1.1.0 (separate version axis -- not a framework
+  version). Fragment additions: work-item ticket discipline
+  (all incoming work / backlog / pending decisions tracked as worklog
+  tickets; no work-tracking to memory store) and managed-target registry
+  principle (one slug-keyed identity map per steward, always current).
+  Consumed via `pack_install --upgrade` on instances with the dev pack
+  installed; fresh install for instances without it. (DGN-449, dec-073)
+
+### Fixed
+- Harness R3 and R5 restored to green on `origin/main`. R3 was asserting
+  a stale dev pack version literal (0.1.0) after the GA 1.0.0 promotion;
+  fixed by reading the version dynamically from `catalog.json`. R5 was
+  failing because a fixture `checksums.sha` was not regenerated after
+  a file rename inside the dev pack; regenerated to match the actual pack
+  state. Neither was a product defect -- both were test-fixture staleness.
+  Combined harness: 280/280 green. (DGN-445)
+
 ## [1.12.0] - 2026-07-18
 
 ### Added
