@@ -222,6 +222,14 @@ AUTO_RESUME = os.getenv("CLAUDE_AUTO_RESUME", "0").strip().lower() not in (
     "",
 )
 AUTO_RESUME_MAX = max(0, int(os.getenv("CLAUDE_AUTO_RESUME_MAX", "2") or "2"))
+# DGN-460: SDK subprocess-transport JSON read buffer. The claude-agent-sdk
+# defaults to 1MB (_DEFAULT_MAX_BUFFER_SIZE); a single CLI->SDK message over
+# that (e.g. a base64 image in a tool result) crashes the reader loop with
+# "JSON message exceeded maximum buffer size". Raise the ceiling; override via
+# env if a deployment needs a different bound.
+CLAUDE_MAX_BUFFER_SIZE = int(
+    os.getenv("CLAUDE_MAX_BUFFER_SIZE", str(16 * 1024 * 1024)) or str(16 * 1024 * 1024)
+)
 # DGN-285: scaffold-leak guard gate for outgoing user-facing text (see
 # sdk_bridge._scaffold_guard). Default ON when unset; set
 # BRIDGE_SCAFFOLD_GUARD=0 on channels that legitimately quote the guarded

@@ -33,6 +33,7 @@ from bridge import messages
 from bridge.config import (
     BRIDGE_SCAFFOLD_GUARD,
     CLAUDE_CLI_PATH,
+    CLAUDE_MAX_BUFFER_SIZE,
     PROCESS_TIMEOUT,
     config,
 )
@@ -300,6 +301,9 @@ class SdkBridge:
             "system_prompt": messages.SYSTEM_PROMPT,
             "can_use_tool": can_use_tool,
             "permission_mode": "default",
+            # DGN-460: default SDK transport buffer (1MB) is too small for
+            # tool results carrying inline base64 media; raise it (env-tunable).
+            "max_buffer_size": CLAUDE_MAX_BUFFER_SIZE,
         }
         if model:
             opts["model"] = model

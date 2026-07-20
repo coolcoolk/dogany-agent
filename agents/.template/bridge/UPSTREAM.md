@@ -6,7 +6,10 @@ This `bridge/` directory is a VENDORED (in-tree) copy of the standalone Telegram
 
 - Upstream: https://github.com/coolcoolk/claude-code-telegram
 - Pinned commit: feca63efc507f820774be6be036aa1695113c950
-- Vendor-rev: DGN-399 (ensure_owner_stream bootstrap; OSS push pending)
+- Vendor-rev: DGN-399 (ensure_owner_stream bootstrap; pushed OSS),
+  DGN-460 (max_buffer_size env-configurable, CLAUDE_MAX_BUFFER_SIZE default
+  16MB, fixes 1MB SDK transport buffer crash on large tool results; pushed
+  OSS 01764ee). Base pin held (pre-existing STREAM_INTERIM drift vs OSS HEAD).
 
 ## Why vendored instead of a git submodule
 
