@@ -90,6 +90,40 @@ the product canonical repo. framework canonical carries framework skills only.
   GUARANTEED, wires the hook. example: card-followup PostToolUse hook forces the
   card render after a log -> that is the guarantee, desc is only the nudge.
 
+## driver-mode hook pattern (skills that drive a CLI subagent)
+
+When a skill shells out to a CLI subagent (e.g. `claude --agent X`) AND the
+human may also drive that same subagent directly outside the skill: do NOT let
+the skill own the session registry. Manual run = second writer -> registry
+drifts. One-writer-invariant violation.
+
+Fix: move registry ownership to Claude Code hooks wired into the target
+agent's project `.claude/settings.json`. Hooks fire on EVERY invocation of
+that agent (skill-driven or manual) as long as cwd is the project dir -> hook
+is the single writer regardless of who drives.
+
+Wiring:
+- SessionStart hook: write/refresh registry entry (session_id + source;
+  source = "startup" for new, "resume" for --resume).
+- Stop hook (fires per turn): increment turn count; crossing threshold flags
+  rotation for next SessionStart.
+- Filter by agent_type in payload: plain `claude` session in same dir must not
+  touch registry.
+- Concurrency guard: hook writes per-project liveness marker (pid + timestamp);
+  second session starting on same project while one is live -> warning;
+  sequential use stays silent.
+- Skill only READS registry (resume vs new decision); hook owns all writes.
+
+CAVEATS:
+- Hook payload field names (session_id, cwd, agent_type, source,
+  hook_event_name, prompt_id, last_assistant_message) are a Claude Code
+  implementation detail, NOT a stable public contract. Probe in-repo before
+  wiring.
+- Hooks MUST be fail-open: on any parse error, exit 0 -- never block the
+  session.
+
+Pattern verified live across Dogany instances.
+
 ## tone
 - message skills -> follow shared output rules (RULES output/notation + AGENT.md
   output discipline). dont restate.
