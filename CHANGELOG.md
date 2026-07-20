@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-20
+
+### Changed
+- `skills/dogany-skill-creator/SKILL.md` gains a "driver-mode hook pattern"
+  note: guidance for skills that drive a CLI subagent in a persistent loop to
+  maintain a single-writer session registry via Claude Code hooks. Covers the
+  hook payload contract, the one-writer invariant, and the CAVEAT that hook
+  payload fields are implementation details, not a stable API surface. (DGN-458)
+- `agents/.template/baseline-editor.md` unified to one canonical form
+  (instance-neutral). The unified definition is the union of four previously
+  split rule sets: writing mandate (English/ASCII), stamp-lint
+  (move DGN/dec references to worklog), hot-inject discipline (Why-How-What;
+  hot carries What only), and pack-mirror gate. Persona tokens are now generic
+  throughout; no instance-specific proper nouns remain. (DGN-456)
+
+Both changes are framework/dev-tooling documentation only -- no runtime or
+behavior change for end users, no migration required.
+
 ## [1.13.0] - 2026-07-20
 
 ### Added
