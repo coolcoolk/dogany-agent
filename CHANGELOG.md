@@ -5,6 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.3] - 2026-07-21
+
+### Fixed
+- `update.sh` step 3j now re-substitutes mint tokens (`__USER_LABEL__` and
+  friends) after rsyncing the skills-bundle directory. Previously the
+  skills-bundle was excluded from the section-4 substitution pass, leaving
+  non-pack bundle skills with raw dunder tokens after the first update -- a
+  silent regression that required manual recovery on affected instances.
+  Instance-affecting: live instances with un-substituted tokens in
+  `skills-bundle/` need one `update.sh` run against this release to heal.
+  (DGN-406)
+- `database/relmod.py` / lifekit bundle: `relationship-care` bundle key
+  normalized from hyphen to underscore across 5 surfaces
+  (`service/lifekit/bundle.conf`, `.template/config/lifekit.conf`, i18n keys,
+  `agents/main/` copy, and the canonical bundle.conf). Fixes a 3-way drift
+  that left the relationship-care feature unreachable via the bundle toggle on
+  instances where the key mismatch silently suppressed activation. (DGN-468)
+
+### Changed
+- `dogany` CLI local-door branding: the terminal title and statusLine now
+  display a `dogany` label when the agent is launched via the dogany command,
+  making the session visually identifiable as a Dogany agent session. No
+  behavior change. (DGN-276)
+- Morning brief: workout card session label and schedule header title updated.
+  The workout card now shows the correct session label; the brief schedule
+  section header title is adjusted for clarity. (DGN-382 + brief UX)
+
 ## [1.13.2] - 2026-07-20
 
 ### Fixed
