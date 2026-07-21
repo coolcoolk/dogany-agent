@@ -145,6 +145,11 @@ cmd_chat() {
     return 1
   fi
   cd "$inst" || return 1
+  # DGN-276: brand the terminal title with the instance name for the duration of
+  # the chat session. bash 3.2 compatible, no external deps; the terminal restores
+  # its own title when claude exits (OSC 0 sets the current window/tab title only).
+  local label; label="dogany $(basename "$inst")"
+  printf '\033]0;%s\007' "$label"
   exec claude
 }
 

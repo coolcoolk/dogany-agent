@@ -1,6 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "model": "sonnet",
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/bin/python3 -c \"import sys,json,os; d=json.load(sys.stdin); w=d.get('workspace') or {}; p=w.get('project_dir') or w.get('current_dir') or os.getcwd(); print('dogany ' + os.path.basename(p.rstrip('/')))\""
+  },
   "hooks": {
     "PreToolUse": [
       {
