@@ -1343,6 +1343,17 @@ if [ -d "$TEMPLATE/.claude/skills-bundle" ]; then
     rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
       "$TEMPLATE/.claude/skills-bundle/" "$INSTANCE/.claude/skills-bundle/"
     UPDATED+=(".claude/skills-bundle/")
+    # DGN-406 FIX: re-substitute mint placeholders on the freshly rsynced bundle
+    # skills (mirror of section 3i's subst_skill_dir call). The plain rsync above
+    # copies template SKILL.md files carrying __USER_LABEL__ etc.; without this
+    # loop the live instance keeps unsubstituted placeholders. Skipped in dry-run
+    # (nothing was actually copied). subst_skill_dir is idempotent.
+    if [ "$DRY_RUN" = "0" ]; then
+      for _bundle_skill_dir in "$INSTANCE/.claude/skills-bundle"/*/; do
+        [ -d "$_bundle_skill_dir" ] || continue
+        subst_skill_dir "$_bundle_skill_dir"
+      done
+    fi
   fi
 fi
 
