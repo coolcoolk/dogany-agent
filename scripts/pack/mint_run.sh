@@ -656,7 +656,16 @@ if [[ -e "$ROOT" && -n "$(ls -A "$ROOT" 2>/dev/null)" ]]; then
   echo "[preflight] FAIL target dir not empty: $ROOT" >&2; fail=1
 fi
 command -v sqlite3 >/dev/null 2>&1 || echo "[preflight] WARN sqlite3 missing (lifekit.db init will be skipped)" >&2
-[[ -n "$OWNER_IDS" ]] || { echo "[preflight] FAIL owner id unresolved (pass --owner-id)" >&2; fail=1; }
+# Q4 / DGN-475: mirror the token dry-run pattern for owner-id. In dry-run,
+# an unresolved owner-id (e.g. parent lacks .telegram_bot/.env in a template
+# context) is a WARN, not a FAIL -- matching the token gate treatment below.
+if [[ -z "$OWNER_IDS" ]]; then
+  if [[ "$DRY" -eq 1 ]]; then
+    echo "[preflight] WARN owner id unresolved (ok for dry-run; pass --owner-id for real mint)" >&2
+  else
+    echo "[preflight] FAIL owner id unresolved (pass --owner-id)" >&2; fail=1
+  fi
+fi
 if [[ -z "${DOGANY_BOT_TOKEN:-}" ]]; then
   if [[ "$DRY" -eq 1 ]]; then
     echo "[preflight] WARN DOGANY_BOT_TOKEN not set (ok for dry-run)" >&2
