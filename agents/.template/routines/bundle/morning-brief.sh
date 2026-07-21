@@ -334,13 +334,13 @@ Structure (in this exact order; no closing line):
 - first output line is EXACTLY the title provided in the data (the '# title' value), verbatim
 - second output line is ONE short greeting sentence in the agent's own voice (address the user per the address/tone rules); it may reflect today's context from the data (weekday, empty or busy schedule) but must never invent facts; exactly one line, no icon, no filler beyond this single sentence
 - 💪 운동 - 워그 section next (only if a warg section is present in the data)
-- today's schedule under the 📅 header, ONLY if schedule items are present; if there are none, OMIT the schedule section entirely -- no line and no filler commentary (no 'open day' / '여유로운 하루' / etc.)
+- today's schedule under the 📅 오늘 일정 header, ONLY if schedule items are present; if there are none, OMIT the schedule section entirely -- no line and no filler commentary (no 'open day' / '여유로운 하루' / etc.)
 - 💬 연락해보세요 contact list (only if present in the data)
 
 Icon rules (fixed, apply the SAME icons every brief -- do not vary or substitute):
 - title line starts with 🌅 (use the provided title verbatim)
 - 💪 운동 - 워그 header for the warg section (carries the 워그 attribution)
-- schedule section header line starts with 📅 (bullets themselves stay plain)
+- schedule section header line is EXACTLY 📅 오늘 일정 (bullets themselves stay plain)
 - contact suggestions header line is EXACTLY 💬 연락해보세요 (rows below it stay plain, one per line, verbatim)
 
 ${WARG_SECTION_NOTE}

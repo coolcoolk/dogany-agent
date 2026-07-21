@@ -992,19 +992,36 @@ def load_card_data(iso_date, conn=None):
 
         # 운동: 항상 workout_find 실행 → workouts 배열 + burn_kcal detail 공용
         wo_rows = workout_find(iso_date, conn=conn)
+        # DGN-382: 카드 운동 라벨을 분류 태그(근력/가슴) 대신 세션 표시명으로.
+        # session_type 있으면 헬스([code]), 유산소는 헬스(유산소-[subtype]),
+        # 그 외 폴백은 기존 형식. 캘린더 제목/DB 기록명과 통일.
+        _code_by_id = {}
+        try:
+            for _wid, _code in conn.execute(
+                "SELECT w.id, st.code FROM workouts w "
+                "LEFT JOIN session_type st ON st.id = w.session_type_id "
+                "WHERE w.date=?;", (iso_date,)).fetchall():
+                _code_by_id[_wid] = _code
+        except Exception:
+            pass
+
+        def _wo_disp(wid, wtype, wname):
+            code = _code_by_id.get(wid)
+            if code:
+                return f"헬스({code})"
+            if wtype == '유산소' and wname:
+                return f"헬스(유산소-{wname})"
+            return f"{wtype} ({wname})" if wtype and wname else (wtype or wname or '운동')
+
         res['workouts'] = [
-            {'id': r[0], 'type': r[1], 'name': r[2], 'minutes': r[3], 'kcal': r[4]}
+            {'id': r[0], 'type': '', 'name': _wo_disp(r[0], r[1], r[2]),
+             'minutes': r[3], 'kcal': r[4]}
             for r in wo_rows
         ]
 
         burn = float(_f0(a['burn_kcal']))
         if burn > 0:
-            labels = []
-            for _id, wtype, wname, _min, _kc in wo_rows:
-                if wtype and wname:
-                    labels.append(f"{wtype} ({wname})")
-                elif wtype:
-                    labels.append(wtype)
+            labels = [_wo_disp(r[0], r[1], r[2]) for r in wo_rows]
             detail = ', '.join(labels) if labels else '운동'
             res['burn_kcal'] = {'current': burn, 'detail': detail}
 
