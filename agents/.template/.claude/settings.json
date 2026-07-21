@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "model": "sonnet",
+  "autoMemoryEnabled": false,
   "statusLine": {
     "type": "command",
     "command": "/usr/bin/python3 -c \"import sys,json,os; d=json.load(sys.stdin); w=d.get('workspace') or {}; p=w.get('project_dir') or w.get('current_dir') or os.getcwd(); print('dogany ' + os.path.basename(p.rstrip('/')))\""
@@ -13,6 +14,16 @@
           {
             "type": "command",
             "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/token-gate.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/cc-memory-write-guard.py",
             "timeout": 10
           }
         ]

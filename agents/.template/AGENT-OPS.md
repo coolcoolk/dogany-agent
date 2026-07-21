@@ -39,7 +39,22 @@ release tag, then runs update.sh --root <self> --yes. This CONSUMES an already
 published framework release into this instance. It is NOT a release: never a VERSION
 bump, never a tag (that is release.sh, a separate maintainer act).
 
-## 3. Subagent dispatch routing
+## 3. Moving / relocating an instance
+
+When an instance directory is moved to a new path (relocate / rename the install
+root), the launchd watchdog LaunchAgent keeps the OLD path baked into its plist
+(`ProgramArguments` + log paths). Left unfixed it runs the dead old `watchdog.sh`
+against the stale heartbeat and force-restarts the live bot on false stalls
+(DGN-480). After ANY move, re-register the watchdog from the NEW location:
+
+    __PROJECT_ROOT__/bridge/watchdog_setup.sh
+
+Zero-arg, idempotent, non-fatal. It derives the current root from its own on-disk
+location, boots out the old LaunchAgent, and bootstraps a plist repointed at the
+new path. A plain `self-update` (section 2) also runs this step, so an update from
+the new location fixes it too; run it directly when you move without updating.
+
+## 4. Subagent dispatch routing
 
 - baseline-editor -- any edit to AGENT.md or a SKILL.md (and other baseline docs).
   The main session never edits these inline.
@@ -54,7 +69,7 @@ bump, never a tag (that is release.sh, a separate maintainer act).
 These pointers arm dev-agent / product-steward workflows; a plain general instance
 may never invoke them, but they must exist so the subagent defs are routable.
 
-## 4. Upstream reporting
+## 5. Upstream reporting
 
 Framework defects / improvement proposals go through the dogany-upstream-report skill
 (standard gh-issue form, routed to the correct upstream repo). Internal handling;

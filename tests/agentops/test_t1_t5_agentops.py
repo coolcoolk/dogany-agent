@@ -21,6 +21,11 @@ Tests (all shell-level; NO network, NO real launchd registration):
      refresh happens, NO user-modified WARN, NO stray backup, manifest
      updated. (The test the V2 design could not pass; proves mandatory
      mint-time sha recording works.)
+  T6 DGN-480 move -> watchdog re-register: mint, register the watchdog,
+     relocate the instance dir, re-run watchdog_setup.sh from the new
+     path -> the registered LaunchAgents plist re-points at the NEW path,
+     no stale old path survives, and a re-run is a byte-identical no-op
+     (idempotent). launchctl is stubbed, so no real launchd mutation.
 T1/T2/T5 additionally assert: no AGENT-OPS.md.new.* litter remains, and
 the installed file's mode matches the template source.
 
@@ -300,6 +305,76 @@ def test_t5(sb):
            _mode(ops) == _mode(sb.template_ops))
 
 
+def _registered_watchdog_plist(home, name):
+    """Path of the watchdog plist watchdog_setup.sh copied into the sandbox
+    LaunchAgents dir, or None."""
+    la = os.path.join(home, "Library", "LaunchAgents")
+    if not os.path.isdir(la):
+        return None
+    want = "com.telegram-skill-bot.%s.watchdog.plist" % name
+    p = os.path.join(la, want)
+    return p if os.path.isfile(p) else None
+
+
+def test_t6(sb):
+    """DGN-480: moving an instance must re-point the watchdog plist at the NEW
+    path. Regression: watchdog_setup.sh baked the mint-time absolute path into
+    the registered plist and never repointed on a move, so a relocated instance
+    ran the dead old watchdog.sh against a stale heartbeat and force-restarted
+    the live bot on false stalls. launchctl is stubbed in this sandbox, so this
+    exercises the copy+repoint path with NO real launchd mutation."""
+    print("(T6) DGN-480 move -> watchdog_setup re-points plist at new path")
+    name = "t480bot"
+    old_inst = os.path.join(sb.base, "inst-t6-old")
+    r = sb.mint(old_inst, name)
+    _check("mint exited 0", r.returncode == 0,
+           "rc=%d err=%s" % (r.returncode, r.stderr[-400:]))
+    wd_setup = os.path.join(old_inst, "bridge", "watchdog_setup.sh")
+    _check("watchdog_setup.sh present in minted instance",
+           os.path.isfile(wd_setup))
+
+    # Register from the ORIGINAL location first (baseline: plist -> old path).
+    r = subprocess.run(["bash", wd_setup], capture_output=True, text=True,
+                       env=sb.env())
+    _check("watchdog_setup (old loc) exited 0", r.returncode == 0,
+           "rc=%d err=%s" % (r.returncode, r.stderr[-400:]))
+    reg = _registered_watchdog_plist(sb.home, name)
+    _check("watchdog plist registered from old location", reg is not None)
+    if reg:
+        _check("registered plist points at old instance path",
+               old_inst in _read(reg))
+
+    # Simulate a MOVE: relocate the whole instance dir to a new path. The
+    # registered plist in LaunchAgents still carries the OLD path at this point.
+    new_inst = os.path.join(sb.base, "inst-t6-new")
+    shutil.move(old_inst, new_inst)
+
+    # Re-register from the NEW location (the AGENT-OPS.md move procedure).
+    wd_setup_new = os.path.join(new_inst, "bridge", "watchdog_setup.sh")
+    r = subprocess.run(["bash", wd_setup_new], capture_output=True, text=True,
+                       env=sb.env())
+    _check("watchdog_setup (new loc) exited 0", r.returncode == 0,
+           "rc=%d err=%s" % (r.returncode, r.stderr[-400:]))
+    reg = _registered_watchdog_plist(sb.home, name)
+    _check("watchdog plist still registered after move", reg is not None)
+    if reg:
+        body = _read(reg)
+        _check("registered plist re-pointed at NEW instance path",
+               new_inst in body)
+        _check("NO stale old path survives in registered plist",
+               old_inst not in body,
+               "old path %s still present" % old_inst)
+        # Idempotency: a second run from the new location is a clean no-op.
+        r = subprocess.run(["bash", wd_setup_new], capture_output=True,
+                           text=True, env=sb.env())
+        _check("watchdog_setup re-run exited 0", r.returncode == 0)
+        body2 = _read(_registered_watchdog_plist(sb.home, name))
+        _check("re-run leaves plist byte-identical (idempotent)",
+               body2 == body)
+        _check("no plist .bak litter left in LaunchAgents",
+               not os.path.exists(reg + ".bak"))
+
+
 def main():
     sb = Sandbox()
     try:
@@ -309,6 +384,7 @@ def main():
         test_t3(sb, inst)
         test_t4(sb, inst)
         test_t5(sb)
+        test_t6(sb)
     finally:
         sb.cleanup()
     if _failures:

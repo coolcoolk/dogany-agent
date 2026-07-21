@@ -32,6 +32,34 @@ plist_label() {
   printf '%s' "$label"
 }
 
+# DGN-480: rewrite a macOS watchdog plist's baked absolute paths to THIS
+# instance's current PROJECT_ROOT (derived at the top from BASH_SOURCE). The
+# plist carries three path occurrences, all rooted at the mint-time PROJECT_ROOT:
+#   - ProgramArguments: <root>/bridge/watchdog.sh
+#   - StandardOutPath / StandardErrorPath: <root>/.telegram_bot/logs/watchdog_launchd.log
+# We match on the stable path SUFFIXES (/bridge/watchdog.sh and the log tail) and
+# replace the arbitrary prefix before them with the current PROJECT_ROOT. This is
+# prefix-agnostic: it fixes a stale absolute path, an unexpected root, or a
+# leftover __PROJECT_ROOT__ placeholder alike, and is a no-op when already correct
+# (idempotent). Portable BSD/GNU sed via sed -i with a backup suffix, backup
+# removed. NON-FATAL: a rewrite failure warns and leaves the copied plist as-is.
+repoint_plist_paths() {
+  local plist="$1"
+  [ -f "$plist" ] || return 0
+  # '#' sed delimiter avoids clashing with the '/' in the paths. Each pattern
+  # matches one whole <string>...</string> element by its stable path suffix and
+  # rewrites it wholesale to the current PROJECT_ROOT (no backrefs needed).
+  if sed -i.bak \
+      -e "s#<string>[^<]*/bridge/watchdog\.sh</string>#<string>${PROJECT_ROOT}/bridge/watchdog.sh</string>#" \
+      -e "s#<string>[^<]*/\.telegram_bot/logs/watchdog_launchd\.log</string>#<string>${PROJECT_ROOT}/.telegram_bot/logs/watchdog_launchd.log</string>#" \
+      "$plist" 2>/dev/null; then
+    rm -f "$plist.bak"
+  else
+    warn "could not repoint plist paths in $plist (registering as copied)"
+    rm -f "$plist.bak" 2>/dev/null || true
+  fi
+}
+
 setup_macos() {
   local src="" label dest
   for p in "$SCRIPT_DIR"/*.watchdog.plist; do
@@ -57,6 +85,17 @@ setup_macos() {
   dest="$HOME/Library/LaunchAgents/$(basename "$src")"
   mkdir -p "$HOME/Library/LaunchAgents"
   cp -p "$src" "$dest"
+  # DGN-480: repoint the registered plist at THIS instance's current location.
+  # The source plist's ProgramArguments/log paths were baked at mint time and
+  # do NOT move when the instance directory is relocated -- a moved instance
+  # would otherwise register a watchdog that runs the OLD (dead) watchdog.sh
+  # and reads the OLD heartbeat, firing false-stall restarts on the live bot.
+  # PROJECT_ROOT is derived from this script's own on-disk location (BASH_SOURCE
+  # -> SCRIPT_DIR -> ..), so it is always the CURRENT root regardless of any
+  # stale absolute path (or leftover placeholder) inside the plist. Rewriting to
+  # the same value is a no-op, so this is idempotent on re-run. The launchd Label
+  # is path-independent and is intentionally left untouched.
+  repoint_plist_paths "$dest"
   # Idempotent re-register: bootout an existing instance first (may not exist).
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null \
