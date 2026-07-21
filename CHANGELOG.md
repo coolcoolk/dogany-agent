@@ -5,6 +5,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.13.4] - 2026-07-21
+
+### Fixed
+- Bridge watchdog no longer force-restarts a running bot when the instance
+  has been moved to a new path. `watchdog_setup.sh` now rewrites the
+  registered LaunchAgent plist's baked absolute paths to match the instance's
+  current location before arming the watchdog. Previously a relocated instance
+  left the watchdog pointing at the old, dead path: the heartbeat file was
+  never written there, so the watchdog detected a perpetual stall and
+  repeatedly kicked the live bot -- resulting in a service-restarted
+  notification approximately every 10 minutes with no real fault present.
+  (DGN-480)
+- The Claude Code auto-memory shadow store (`autoMemoryEnabled`) is now
+  shipped as `false` in the template and protected by a new `PreToolUse`
+  write-guard hook (`cc-memory-write-guard.py`). The hook denies writes into
+  the CC shadow store (`.claude/projects/*/memory/`) and the Dogany engine
+  store (`memories/`), keeping all memory writes inside the Dogany memory
+  engine. Previously the v1.13.1 framework consume silently re-enabled the CC
+  shadow store by overwriting DGN-431's off-switch, causing the CC store to
+  drift out of sync with the memory engine. (DGN-479)
+
 ## [1.13.3] - 2026-07-21
 
 ### Fixed
