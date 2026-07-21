@@ -82,18 +82,37 @@ def has_numbered_list(text: str) -> bool:
 def extract_options(text: str) -> List[str]:
     """Extract option labels from a numbered list.
 
-    Requires >=1 item numbered consecutively from 1. Returns [] otherwise.
-    Code blocks are excluded so numbered items in code examples do not shadow
-    the actual options list (DGN-085).
+    Returns the LAST contiguous 1..N run of numbered lines, so buttons keep
+    working when the reply also contains an earlier numbered list -- e.g. a
+    prose description of the choices before the [[OPTIONS]] block (DGN-494).
+    A length-1 run broken by a non-consecutive numbered line is discarded, which
+    preserves the 'stray 1. then gap -> []' guard so incidental prose numbering
+    never yields a spurious button. Code blocks are excluded (DGN-085); a single
+    trailing item is accepted (DGN-325).
     """
     prose = _FENCED_CODE_RE.sub("", text)
     matches = _OPTION_RE.findall(prose)
     if not matches:
         return []
-    nums = [int(m[0]) for m in matches]
-    if nums != list(range(1, len(nums) + 1)):
+    runs = []
+    cur = []
+    for num_s, label in matches:
+        n = int(num_s)
+        if n == 1:
+            if cur:
+                runs.append(cur)
+            cur = [(1, label)]
+        elif cur and n == cur[-1][0] + 1:
+            cur.append((n, label))
+        else:
+            if cur and len(cur) >= 2:
+                runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    if not runs:
         return []
-    return [m[1].strip() for m in matches]
+    return [lbl.strip() for _, lbl in runs[-1]]
 
 
 def build_option_keyboard(options: List[str]) -> Optional[InlineKeyboardMarkup]:
