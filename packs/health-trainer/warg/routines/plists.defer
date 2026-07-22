@@ -1,0 +1,9 @@
+# DGN-238 OQ-D conservative default (owner precedent): weekly briefing
+# section goes live first; DAILY sections follow +1 week. mint_run.sh
+# start reads this manifest and skips the units below (staged only);
+# load them at the +1w gate with:
+#   mint_run.sh start --root <instance-root> --deferred
+# Grill-final MAJOR-1: without this manifest, start bootstrapped ALL
+# routines/*.plist and silently flipped the OQ-D deferral.
+com.telegram-skill-bot.warg.section-morning.plist
+com.telegram-skill-bot.warg.section-retro.plist

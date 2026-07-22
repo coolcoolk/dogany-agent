@@ -1,0 +1,19 @@
+# DGN-238: keys APPENDED to Warg config/agent.conf at package apply time
+# (mint creates the base file; this fragment is cat >> appended -- see
+# MANIFEST step 4 + the "L1 enrollment" section).
+
+# L1/L2 boundary (v3 section 1.3): Ag event ledger = shared READ only.
+L1_DB=/opt/dogany/agents/ag/database/lifekit.db
+# fail-closed version gate; lockstep with Ag migrations via
+# propagation-editor Warg enrollment (OQ-B, go-live blocking).
+# VALUE 6 = post-DGN-240 truth: the cutover landed FIRST (live Ag db is
+# user_version 6 since 2026-07-10), so this fragment carries 6 at mint
+# per the coordinated ordering rule (dgn240-build
+# staged/config/warg-agent.conf.l1.add; dgn240 MANIFEST step 4 = no-op).
+# Verified read-only against the live Ag db 2026-07-10: gate opens on 6,
+# fails closed on 5.
+L1_EXPECTED_USER_VERSION=6
+
+# handoff channel peers (name=root; used for decision.notice replies and
+# section submission)
+HANDOFF_PEER_AG=/opt/dogany/agents/ag

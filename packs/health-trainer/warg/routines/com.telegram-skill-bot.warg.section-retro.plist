@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- DGN-238 staged plist: NOT loaded from the sandbox. launchd load =
+     owner-gated MANIFEST step. Paths assume the minted Warg workspace
+     at /opt/dogany/agents/warg (mint substitutes on a different root). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.warg.section-retro</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/opt/dogany/agents/warg/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.warg.section-retro</string>
+        <string>--log</string>
+        <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-retro.stdout.log</string>
+        <string>--</string>
+        <string>/bin/bash</string>
+        <string>/opt/dogany/agents/warg/routines/handoff-submit.sh</string>
+        <string>retro</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>20</integer>
+            <key>Minute</key>
+            <integer>15</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>20</integer>
+            <key>Minute</key>
+            <integer>45</integer>
+        </dict>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/dogany/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/dogany/.local/bin</string>
+        <key>HOME</key>
+        <string>/opt/dogany</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-retro.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-retro.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/opt/dogany/agents/warg</string>
+</dict>
+</plist>
