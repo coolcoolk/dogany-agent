@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- DGN-240 T9: daily 03:40 roller cron unit. Slot verified against baseline
+     cron set: backup 00:00 / cleanup 04:00 / consolidate 04:30 / no conflict
+     at 03:40. Load at mint activation (not at update). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.__AGENT_NAME__.routine-roller</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.__AGENT_NAME__.routine-roller</string>
+        <string>--friendly-name</string>
+        <string>routine-roller</string>
+        <string>--log</string>
+        <string>__PROJECT_ROOT__/.telegram_bot/logs/routine-roller.stdout.log</string>
+        <string>--</string>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/routine-roller.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>40</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.local/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/routine-roller.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/routine-roller.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+</dict>
+</plist>
