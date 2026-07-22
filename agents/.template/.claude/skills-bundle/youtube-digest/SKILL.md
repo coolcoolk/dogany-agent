@@ -2,7 +2,7 @@
 name: youtube-digest
 display_name: 유튜브 요약
 description: >
-  Fires when 형님 drops a YouTube link (or asks to summarize / digest a YouTube
+  Fires when __USER_LABEL__ drops a YouTube link (or asks to summarize / digest a YouTube
   video). Pulls the video's transcript and metadata, then reports a Korean
   digest -- what the video says, key points, takeaways. Triggers (KO): a bare
   youtube.com/ or youtu.be/ URL, "이 영상 요약해줘", "유튜브 요약", "이거 무슨 내용이야",
@@ -18,9 +18,9 @@ description: >
 Take YouTube URL. Get transcript + metadata. Report digest in Korean.
 
 ## trigger
-- 형님 pastes a YouTube URL (youtube.com/watch, youtu.be/, /shorts/, /live/).
-- 형님 asks to summarize / digest / "무슨 내용" a YouTube video.
-- 형님 asks for the 전문 / full transcript of a video.
+- __USER_LABEL__ pastes a YouTube URL (youtube.com/watch, youtu.be/, /shorts/, /live/).
+- __USER_LABEL__ asks to summarize / digest / "무슨 내용" a YouTube video.
+- __USER_LABEL__ asks for the 전문 / full transcript of a video.
 
 ## tools
 - `yt_fetch.sh <url> [outfile]` -- pulls metadata + clean plain-text transcript.
@@ -30,25 +30,25 @@ Take YouTube URL. Get transcript + metadata. Report digest in Korean.
 - yt-dlp already installed (/opt/homebrew/bin/yt-dlp).
 
 ## steps
-1. get URL from 형님 message. strip tracking junk is not needed; pass as-is in quotes.
+1. get URL from __USER_LABEL__ message. strip tracking junk is not needed; pass as-is in quotes.
 2. run:
    `.claude/skills/youtube-digest/yt_fetch.sh "<url>" /tmp/yt_digest.txt`
    read the META lines from stdout (title, channel, upload date, duration, sublang).
 3. handle no-subtitle case:
-   - if exit 3 / NO_SUBTITLES -> tell 형님 the video has no captions, cannot digest
+   - if exit 3 / NO_SUBTITLES -> tell __USER_LABEL__ the video has no captions, cannot digest
      from transcript. offer nothing fake. stop.
 4. read transcript file. decide effort by size:
    - short/medium (< ~40k chars): read + summarize inline yourself.
-   - long (>= ~40k chars, or long lecture): delegate to 동생 (subagent, model=sonnet)
+   - long (>= ~40k chars, or long lecture): delegate to a subagent (model=sonnet)
      -- "long transcript, sonnet for summarize, cheap + good at wrangling".
-     per delegation-visibility rule: when 동생 finishes, report result to 형님 FIRST,
+     per delegation-visibility rule: when the subagent finishes, report result to __USER_LABEL__ FIRST,
      as lead message, before any follow-up.
 5. build digest (Korean). do NOT dump raw transcript. structure:
    - one header line: 채널 / 제목 / 길이 / 업로드일 (only fields that exist).
    - 핵심 내용: crisp bullets. concrete numbers, claims, conclusions kept.
    - if useful: one-line 전반 메시지 / takeaway at the end.
    - keep it tight; no per-step narration.
-6. offer full transcript only if 형님 wants it (do not auto-send). on request,
+6. offer full transcript only if __USER_LABEL__ wants it (do not auto-send). on request,
    deliver the transcript file via a standalone `send_file::` line.
 
 ## notes
@@ -58,7 +58,7 @@ Take YouTube URL. Get transcript + metadata. Report digest in Korean.
 - facts with exact values (price/number/spec) inside the video are the SPEAKER's
   claim, not verified truth. attribute to the video, don't assert as fact.
 - multiple links in one message -> process each, digest each separately.
-- model routing: inline summarize = you; long-transcript summarize = 동생 sonnet.
+- model routing: inline summarize = you; long-transcript summarize = subagent sonnet.
 
 ## tier
 - BEST-EFFORT. description auto-fire on YouTube links. no hook.
