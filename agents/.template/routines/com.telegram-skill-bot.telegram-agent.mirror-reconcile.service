@@ -7,7 +7,7 @@ Description=dogany mirror reconcile (__AGENT_NAME__) -- weekly GCal/GTasks recon
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.mirror-reconcile --friendly-name mirror-reconcile --log __PROJECT_ROOT__/.telegram_bot/logs/mirror-reconcile.stdout.log -- /bin/bash __PROJECT_ROOT__/routines/mirror-reconcile.sh
+ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.mirror-reconcile --friendly-name mirror-reconcile --log __PROJECT_ROOT__/.telegram_bot/logs/mirror-reconcile.stdout.log --queue heavy -- /bin/bash __PROJECT_ROOT__/routines/mirror-reconcile.sh
 WorkingDirectory=__PROJECT_ROOT__
 Environment=HOME=__HOME__
 Environment=PATH=__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.local/bin

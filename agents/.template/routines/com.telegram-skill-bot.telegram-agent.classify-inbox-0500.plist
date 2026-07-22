@@ -15,6 +15,8 @@
         <string>classify-inbox</string>
         <string>--log</string>
         <string>__PROJECT_ROOT__/.telegram_bot/logs/classify-inbox-0500.stdout.log</string>
+        <string>--queue</string>
+        <string>heavy</string>
         <string>--</string>
         <string>/bin/bash</string>
         <string>__PROJECT_ROOT__/routines/classify-inbox-check.sh</string>
