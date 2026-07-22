@@ -16,10 +16,9 @@
 #   refresh-source-sync.sh [--source-file <path>] [--sections-file <path>]
 #
 #   --source-file <path>
-#       Path to the source AGENT.md to hash.  Defaults to the
-#       DEV_PACK_SOURCE_FILE env var when set, otherwise falls back to
-#       ~/dogany/Metal/AGENT.md (the conventional Metal location).
-#       Machine-specific; never stored in this repo.
+#       Path to the source AGENT.md to hash.  Required: either this flag or
+#       the DEV_PACK_SOURCE_FILE env var must be set.  The source file path
+#       is machine-specific and is never stored in this repo.
 #
 #   --sections-file <path>
 #       Plain-text file listing section headings to track, one per line.
@@ -45,8 +44,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Fall back to conventional Metal location when no source file supplied
-SOURCE_FILE="${SOURCE_FILE:-$HOME/dogany/Metal/AGENT.md}"
+# No source file supplied -- require explicit argument rather than guessing a
+# machine-specific path.  The source AGENT.md location differs per instance;
+# there is no safe universal default.
+if [[ -z "$SOURCE_FILE" ]]; then
+    echo "[refresh-source-sync] ERROR: source file not specified." >&2
+    echo "  Pass --source-file <path> or set DEV_PACK_SOURCE_FILE." >&2
+    exit 1
+fi
 
 if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "[refresh-source-sync] ERROR: source file not found: $SOURCE_FILE" >&2

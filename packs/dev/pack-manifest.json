@@ -12,14 +12,6 @@
     {
       "category": "scripts",
       "required": true
-    },
-    {
-      "category": "routines",
-      "required": true
-    },
-    {
-      "category": "plists",
-      "required": true
     }
   ]
 }
