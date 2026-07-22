@@ -151,6 +151,8 @@ record() {  # $1=cat idx  $2=file  $3=detail
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   if is_allowed "$f"; then continue; fi
+  # Skip the patterns config file itself (false positive by construction)
+  [ "$f" = "config/secret-patterns.conf" ] && continue
   abs="$REPO_ROOT/$f"
 
   # S4: forbidden filenames (tracked at all = violation)
