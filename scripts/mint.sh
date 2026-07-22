@@ -198,10 +198,11 @@ echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
 #    RULES.md + framework skills land as real files in the self-contained instance.
 #    Excludes VCS / runtime / build cruft.
 #
-#    config/lifekit.conf + config/agent.conf are EXCLUDED here and copied
-#    write-if-absent below (same contract as .env / lifekit.db): a re-mint
-#    with --force must never reset the instance's lifekit activation state
-#    or the user's language/address settings.
+#    config/lifekit.conf + config/agent.conf + config/secret-patterns.conf are
+#    EXCLUDED here and copied write-if-absent below (same contract as .env /
+#    lifekit.db): a re-mint with --force must never reset the instance's lifekit
+#    activation state, the user's language/address settings, or owner-identity
+#    sweep patterns already customized after onboarding.
 #
 #    CONSTRAINT (lifekit bundle dormancy): bundle skills live as REAL dirs in
 #    .claude/skills-bundle/ and are activated by an instance-local symlink
@@ -224,6 +225,7 @@ rsync -aL \
   --exclude '*.db' \
   --exclude 'config/lifekit.conf' \
   --exclude 'config/agent.conf' \
+  --exclude 'config/secret-patterns.conf' \
   "$TEMPLATE/" "$PROJECT_ROOT/"
 
 # 1a) identity markdown: keep-if-present (re-mint must NEVER reset an agent's
@@ -239,7 +241,7 @@ for idmd in AGENT.md USER.md; do
 done
 
 # 1b) per-instance conf state: scaffold only if absent (idempotent re-mint).
-for conf in lifekit.conf agent.conf; do
+for conf in lifekit.conf agent.conf secret-patterns.conf; do
   if [ ! -f "$PROJECT_ROOT/config/$conf" ] && [ -f "$TEMPLATE/config/$conf" ]; then
     mkdir -p "$PROJECT_ROOT/config"
     cp -p "$TEMPLATE/config/$conf" "$PROJECT_ROOT/config/$conf"

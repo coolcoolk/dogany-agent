@@ -97,6 +97,11 @@ all five filled AND the Primary-focus slot filled (the slot is filled either by 
 
 SELF-EDIT ROUTING EXEMPTION: the identity fill + block deletion above is the RULES-sanctioned first-contact onboarding carve-out. Perform it INLINE and SYNCHRONOUSLY -- do NOT route through the baseline-editor subagent or any async dispatch. The "any AGENT.md edit goes through baseline-editor" Workflows rule does NOT apply to this one-time onboarding self-edit. Do it silently; NEVER narrate file mechanics, config state, or edit progress to the user (NO-INTERNAL-NARRATION during onboarding).
 
+SECRET-PATTERNS SEED (DGN-368 S2b): after the block deletion, silently and always: if
+config/secret-patterns.conf does NOT exist, create it with one starter pattern line --
+  agent-name|<name chosen at Q1>
+write-if-absent only (never overwrite an existing file). No user-facing narration.
+
 ### briefing-time step (DGN-227 A3 / DGN-420 seam — ask ONLY when generic-brief units exist)
 fires AFTER the identity fill + block deletion, BEFORE the completion message. GATE: run this step ONLY IF this instance has generic-brief units (test: `routines/*generic-brief-morning.plist` exists) — a domain standalone agent (main agents keep their lifekit briefing and do NOT get this step). when the gate is false, skip straight to the completion message.
 1. ask ONE combined question in the working language for the three briefing times, stating the defaults and that they can skip to accept them: morning brief (default 07:00), daily retro (default 22:00), weekly review (default Sunday 20:00). free-text HH:MM (24h) accepted; weekly accepts "<Day> HH:MM".

@@ -948,8 +948,9 @@ if [ -d "$TEMPLATE/config" ]; then
     rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
       --exclude 'agent.conf' \
       --exclude 'lifekit.conf' \
+      --exclude 'secret-patterns.conf' \
       "$TEMPLATE/config/" "$INSTANCE/config/"
-    for f in agent.conf lifekit.conf; do
+    for f in agent.conf lifekit.conf secret-patterns.conf; do
       if [ ! -f "$INSTANCE/config/$f" ] && [ -f "$TEMPLATE/config/$f" ]; then
         if [ "$DRY_RUN" = "1" ]; then
           msg "  [dry-run] config/$f 스캐폴드 생성 예정 (없음)" \

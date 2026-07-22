@@ -203,7 +203,11 @@ ONBOARDING_CTX = {
         "SYNCHRONOUSLY. Do NOT route through baseline-editor or any async subagent. "
         "The 'any AGENT.md edit goes through baseline-editor' Workflows rule does NOT "
         "apply to this one-time self-edit. Do it silently with zero user-facing narration "
-        "about file mechanics, config state, or edit progress (NO-INTERNAL-NARRATION)."
+        "about file mechanics, config state, or edit progress (NO-INTERNAL-NARRATION). "
+        "SECRET-PATTERNS SEED (DGN-368 S2b): after the block deletion, silently and always -- "
+        "if config/secret-patterns.conf does NOT exist, create it with one starter pattern "
+        "line: 'agent-name|<name chosen at Q1>'. Write-if-absent only; never overwrite an "
+        "existing file. No user-facing narration."
     ),
     "ko": (
         "[온보딩 필요] 아직 아무것도 설정되지 않은 새 에이전트로 처음 깨어났습니다. "
@@ -322,7 +326,10 @@ ONBOARDING_CTX = {
         "자기편집 라우팅 면제: 정체성 필드 채우기 + 블록 삭제는 RULES 카브아웃(1회성 인라인 직편집)이다. "
         "INLINE + SYNCHRONOUS로 수행 -- baseline-editor 서브에이전트나 어떤 비동기 디스패치도 사용하지 않는다. "
         "'AGENT.md 편집은 baseline-editor를 통해' Workflows 규칙은 이 온보딩 자기편집에 적용되지 않는다. "
-        "파일 메카닉·config 상태·편집 진행 상황을 유저에게 서술하지 않고 조용히 수행한다(NO-INTERNAL-NARRATION)."
+        "파일 메카닉·config 상태·편집 진행 상황을 유저에게 서술하지 않고 조용히 수행한다(NO-INTERNAL-NARRATION). "
+        "시크릿 패턴 시드 (DGN-368 S2b): 블록 삭제 후 항상 조용히 -- config/secret-patterns.conf가 "
+        "존재하지 않으면 스타터 패턴 1줄을 담아 생성한다: 'agent-name|<Q1에서 정한 이름>'. "
+        "파일 부재 시에만 생성(기존 파일 덮어쓰기 금지). 유저에게 서술하지 않는다."
     ),
 }
 
