@@ -1984,6 +1984,10 @@ class TelegramBot:
         streamed: bool = False,
         draft_message_ids: Optional[List[int]] = None,
     ) -> None:
+        # D2 (DGN-515): guard shutdown race -- application is set to None in
+        # _graceful_shutdown; queued run_task closures may call this after that.
+        if self.application is None:
+            raise RuntimeError("Bot application already stopped")
         bot = self.application.bot
         display, has_marker = strip_options_marker(content)
         display, _ = strip_send_markers(display)
@@ -2088,7 +2092,12 @@ class TelegramBot:
         if not await self._check_access(update):
             return
         query = update.callback_query
-        await query.answer()
+        # D1 (DGN-515): spinner-dismiss failure must never kill the handler.
+        # Telegram API blips (ConnectTimeout, QueryExpired) are non-fatal here.
+        try:
+            await query.answer()
+        except Exception as e:
+            logger.warning("query.answer() failed (ignored): %s", e)
         user_id = update.effective_user.id
         chat = update.effective_chat
         app = self.application
@@ -2126,6 +2135,14 @@ class TelegramBot:
             chat_id = chat.id
 
             async def run_task() -> None:
+                # D2 (DGN-515): app captured at dispatch time; if shutdown raced
+                # and cleared self.application, fail soft so no AttributeError.
+                if app is None:
+                    logger.warning(
+                        "opt run_task skipped: application stopped before execution "
+                        "(chat %s)", chat_id
+                    )
+                    return
                 session = await session_manager.get_session(user_id)
                 try:
                     await app.bot.send_chat_action(chat_id, action="typing")

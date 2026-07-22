@@ -700,9 +700,17 @@ class SdkBridge:
         is_streamed = bool(req.streaming_handler and req.streaming_handler.drafts)
 
         if req.synthetic_response:
-            content = self._clean_response(req.synthetic_response) or "(No response)"
+            content = self._clean_response(req.synthetic_response)
         else:
-            content = self._clean_response(result_text) or "(No response)"
+            content = self._clean_response(result_text)
+
+        # DGN-519: empty-final turns are silently dropped for non-error results.
+        # Error turns must still reach the PROCESSING_FAILED path below regardless
+        # of content value, so the empty-drop guard is placed before the error
+        # check only for the non-error branch.
+        if not msg.is_error and not content:
+            logger.info("empty-final turn dropped for user %s", user_id)
+            return
 
         if msg.is_error:
             req.future.set_result(
