@@ -851,6 +851,106 @@ def _is_structured_input(text):
     return False
 
 
+# DGN-446 (P1b): work-item semantic gate.
+# Memory stores durable user facts (semantic recall, no lifecycle).
+# Work-items (backlog entries, parked features, tasks, to-dos, pending decisions)
+# belong in worklog/ tickets (status/priority/lifecycle), not in the fact store.
+# This gate catches work-item vocabulary and imperative-future framing in plain
+# conversational prose that the structural gate (P2) would miss.
+#
+# Independent signal patterns (all matching is case-insensitive).
+# Each pattern that fires contributes ONE signal.  Refusal threshold: >= 2.
+# A single weak token never triggers alone -- prevents false-positives on
+# ordinary user facts ("형님은 P2 커피를 좋아한다" has zero signals because
+# P2 is mid-sentence, not a prefix/colon construct).
+#
+# _WI_VOCAB -- explicit work-item lifecycle vocabulary (each is its own pattern so
+#   two matches in the same text = 2 signals, e.g. "backlog ... parked"):
+#   TODO, 백로그, backlog, parked, 보류, 이연, 다음에 하(다/기), 나중에 하(다/기),
+#   티켓으로, as a ticket
+#   Korean tokens omit \b (word-boundary anchor fails on CJK).
+#
+# _WI_STATUS -- status/priority colon-keyed tokens found anywhere in text:
+#   "status:", "priority:" (case-insensitive; mid-sentence is fine -- these are
+#   strong markers in any position, unlike bare "P1"/"P2" which need context).
+#
+# _WI_PRIORITY_PREFIX -- bare P1/P2 as a line-starter (stripped of bullets/spaces):
+#   prevents "형님은 P2 커피를 좋아한다" from triggering (P2 mid-sentence is NOT
+#   a prefix).  Only "P1:" / "P2:" or "P1 <space/EOL>" at line start count.
+#
+# _WI_FUTURE -- imperative future-work framings:
+#   Korean: 해야 함/한다/될, 할 것/예정/필요
+#   English: needs to be done/implemented, should implement/be done/be implemented,
+#            has to be done
+_WI_VOCAB_PATTERNS = [
+    re.compile(r"(?i)\btodo\b"),
+    re.compile(r"백로그"),
+    re.compile(r"(?i)\bbacklog\b"),
+    re.compile(r"(?i)\bparked\b"),
+    re.compile(r"보류"),
+    re.compile(r"이연"),
+    re.compile(r"다음에\s*하"),
+    re.compile(r"나중에\s*하"),
+    re.compile(r"티켓으로"),
+    re.compile(r"(?i)as\s+a\s+ticket"),
+]
+
+_WI_STATUS = re.compile(r"(?i)\b(?:status|priority)\s*:")
+
+_WI_PRIORITY_PREFIX = re.compile(r"(?im)^[\-\*\s]*\b(p1|p2)\b(?:\s*:|[\s]|$)")
+
+_WI_FUTURE = re.compile(
+    r"(?i)해야\s*(?:함|한다|될|되)"
+    r"|할\s*(?:것|예정|필요)"
+    r"|\bneeds?\s+to\s+be\s+(?:done|implemented)\b"
+    r"|\bshould\s+(?:implement|be\s+(?:done|implemented))\b"
+    r"|\bhas\s+to\s+be\s+done\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_work_item(text):
+    """Return True when text carries >= 2 independent work-item signals.
+
+    Signal sources (each that fires = +1):
+      - Each _WI_VOCAB_PATTERNS[i] that matches: +1 per distinct pattern match.
+        Two vocabulary words (e.g. "backlog ... parked") = 2 independent signals.
+      - _WI_STATUS matches ("status:" / "priority:" anywhere): +1
+      - _WI_PRIORITY_PREFIX matches (P1/P2 at line start): +1
+      - _WI_FUTURE matches (imperative future-work framing): +1
+
+    Threshold: >= 2 signals -> work-item.  One weak token alone -> pass.
+    Conservative: empty / very short texts are never flagged."""
+    if not text or len(text.strip()) < 10:
+        return False
+
+    signals = 0
+
+    # Each vocabulary pattern is independent -- two vocab hits = 2 signals.
+    for pat in _WI_VOCAB_PATTERNS:
+        if pat.search(text):
+            signals += 1
+            if signals >= 2:
+                return True  # early exit
+
+    if _WI_STATUS.search(text):
+        signals += 1
+        if signals >= 2:
+            return True
+
+    if _WI_PRIORITY_PREFIX.search(text):
+        signals += 1
+        if signals >= 2:
+            return True
+
+    if _WI_FUTURE.search(text):
+        signals += 1
+        if signals >= 2:
+            return True
+
+    return False
+
+
 def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MODEL):
     """
     Compress raw text into persistent-fact atomic items using headless claude.
@@ -996,6 +1096,21 @@ def cmd_write(args):
             "conversational prose; structured content causes fragment explosion and "
             "fact fabrication. This belongs in a ticket or document, not memory.\n"
             "Pass --force to bypass this check and attempt compression anyway.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # DGN-446 (P1b): work-item semantic gate.
+    # Plain conversational prose carrying work-item vocabulary or imperative-future
+    # framing belongs in worklog/ tickets (status/priority/lifecycle), not the fact
+    # store. Refuse unless --force is passed.
+    if not force and _looks_like_work_item(raw):
+        print(
+            "[error] input looks like a work-item (backlog entry, task, parked feature, "
+            "or to-do). Work-items belong in the agent's worklog/ ticket surface "
+            "(status / priority / lifecycle tracking), not in memory (fact-recall only). "
+            "Copy worklog/_TEMPLATE.md to open a ticket.\n"
+            "Pass --force to bypass this check and attempt fact extraction anyway.",
             file=sys.stderr,
         )
         return 2
