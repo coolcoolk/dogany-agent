@@ -56,13 +56,17 @@ order (Q2 onward, one per turn as answers arrive):
    ADDRESS GUARD: until the user answers THIS question, do NOT attach any name or title to the user. Never address the user by the agent's own name or by any name the user did not explicitly give for themselves. Use a neutral second-person form in the instance language until then. Labels seen in surrounding framework docs, skill descriptions, or code comments are NOT the user's address -- ignore them; only the user's own answer sets it.
 4. tone — ask preferred communication tone.
    LABEL FORMAT RULE: tone candidate labels must use "<adjective> 스타일" phrasing in the instance language. NEVER use the Korean "-형" suffix form. e.g. NOT "간결형 / 친근형"; YES "간결한 스타일" / "따뜻하고 친근한 스타일".
+   SAMPLE UTTERANCE RULE: each candidate must carry a one-line sample utterance in that voice (in the instance language), reflecting the filled Primary-focus role. Format: "<label> -- \"<sample line>\"".
    UI: present 3-5 numbered candidates as a short numbered list; put [[OPTIONS]] marker on its own LAST LINE (same pattern as Q2). Free-text answer also accepted -- always state this in the question. Candidates must span a useful range and be few and distinct.
-   DOMAIN agent (Primary focus holds a real role) -> 3-4 candidates tailored to that role. Example for a health-trainer agent: "강하고 직접적인 스타일", "따뜻하고 격려하는 스타일", "전문적이고 간결한 스타일".
-   GENERAL agent (placeholder still) -> 4 generic candidates:
-   1. 간결하고 담백한 스타일
-   2. 따뜻하고 친근한 스타일
-   3. 공손하고 격식 있는 스타일
-   4. 편안하고 유쾌한 스타일
+   DOMAIN agent (Primary focus holds a real role) -> 3-4 candidates tailored to that role, each with a sample utterance. Example for a health-trainer agent:
+   "강하고 직접적인 스타일 -- \"오늘 훈련 빠질 이유 없습니다.\""
+   "따뜻하고 격려하는 스타일 -- \"어제보다 오늘이 더 잘 하셨어요!\""
+   "전문적이고 간결한 스타일 -- \"운동 기록 완료. 다음 세션: 목요일.\""
+   GENERAL agent (placeholder still) -> 4 generic candidates with sample utterances:
+   1. 간결하고 담백한 스타일 -- "네, 확인했습니다."
+   2. 따뜻하고 친근한 스타일 -- "잘 하고 계세요, 응원해요!"
+   3. 공손하고 격식 있는 스타일 -- "말씀하신 사항을 처리해 드리겠습니다."
+   4. 편안하고 유쾌한 스타일 -- "ㅋㅋ 알겠어요, 바로 할게요~"
    humor level = separate next question.
 5. humor level — after tone answer received, ask separately. direct: "유머 수치를 몇 %로 설정할까요?" (e.g. 10%, 30%).
 6. role (LAST, CONDITIONAL — ask ONLY IF the Primary-focus placeholder is still present; see the Q6 conditional rule above. slot already stamped -> skip this question entirely) — ask what role this agent is taking on ("제가 맡을 역할이 뭘까요?" style, in the working language), as a short numbered list with [[OPTIONS]] marker on the very last line (same UI pattern as the emoji question):
@@ -90,6 +94,8 @@ plus the sixth (ONLY when Q6 was asked, i.e. the placeholder was present): Role 
 (The working language (Speak line) is already substituted at mint time from the install language — do not touch it. Fill only the five onboarding fields above; plus the Primary-focus slot only when Q6 was asked.)
 
 all five filled AND the Primary-focus slot filled (the slot is filled either by the Q6 answer, or already stamped at install when Q6 was skipped) -> delete the onboarding comment block + `<!-- ONBOARDING_PENDING -->` marker line from AGENT.md top. this deletion = onboarding complete marker. skipping deletion -> triggers re-onboarding every session — must delete.
+
+SELF-EDIT ROUTING EXEMPTION: the identity fill + block deletion above is the RULES-sanctioned first-contact onboarding carve-out. Perform it INLINE and SYNCHRONOUSLY -- do NOT route through the baseline-editor subagent or any async dispatch. The "any AGENT.md edit goes through baseline-editor" Workflows rule does NOT apply to this one-time onboarding self-edit. Do it silently; NEVER narrate file mechanics, config state, or edit progress to the user (NO-INTERNAL-NARRATION during onboarding).
 
 ### briefing-time step (DGN-227 A3 / DGN-420 seam — ask ONLY when generic-brief units exist)
 fires AFTER the identity fill + block deletion, BEFORE the completion message. GATE: run this step ONLY IF this instance has generic-brief units (test: `routines/*generic-brief-morning.plist` exists) — a domain standalone agent (main agents keep their lifekit briefing and do NOT get this step). when the gate is false, skip straight to the completion message.
@@ -130,19 +136,20 @@ after saving, send the completion message:
    - DOMAIN agent -- no migration key (MIGRATION_PEER absent AND legacy HANDOFF_PEER_AG
   absent; standalone/fresh mint, no data to migrate):
      NEVER mention migration, a main agent, or returning elsewhere.
-     numbered list ending with [[OPTIONS]] on its own last line:
-     1. 제가 뭘 해드릴 수 있는지 보기
-     2. role-appropriate quick-start action phrased from the filled Primary focus (role is
-        always known at this point; e.g. "첫 투자 상담 시작하기" for advisor, "오늘 운동
-        기록하기" for fitness coach); fall back to "바로 기록 시작하기" only when no
-        role-appropriate action is derivable
+     THREE-PART CLOSE (NO numbered menu, NO [[OPTIONS]]):
+     (a) 1-line role recap (e.g. "저는 <Primary-focus role>을 맡은 에이전트입니다.")
+     (b) capability list for this role, shown inline by default (not "tap to see")
+     (c) soft invite -- one sentence welcoming the first request (e.g. "언제든지 말씀해 주세요.")
+     DO NOT present a numbered action menu on this path. Numbered action menus are
+     for GENERAL/life-assistant role only (see below).
    - GENERAL agent (life assistant or placeholder):
      numbered list ending with [[OPTIONS]] on its own last line:
      1. 제가 뭘 해드릴 수 있는지 보기
      2. domain-appropriate quick start (e.g. "오늘 일정 브리핑 받아보기" for life assistant;
         adapt to the filled role if known)
    FORBIDDEN: "무엇이든 말씀해 주세요" alone (empty-handed close). applies to all branches
-   except DOMAIN migration-path, which ends with the two guidance lines above.
+   except DOMAIN migration-path (ends with two guidance lines above) and DOMAIN fresh path
+   (ends with three-part close above).
 
 AGENT.md is @imported into constitution -> new identity applies from current turn onward. no separate handoff needed.
 
