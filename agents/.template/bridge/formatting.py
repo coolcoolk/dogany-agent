@@ -294,3 +294,55 @@ def code_segment_html(code: str, lang: Optional[str]) -> str:
     if lang:
         return f'<pre><code class="language-{lang}">{escaped}</code></pre>'
     return f"<pre>{escaped}</pre>"
+
+
+# DGN-372: Telegram legacy Markdown (parse_mode="Markdown") swallows unmatched
+# '[' -- e.g. "[status]" renders as "status" with the brackets lost.  Backslash
+# escaping is supported for '_', '*', '`', and '[' in legacy Markdown.
+#
+# Strategy: escape every '[' that does NOT open a valid legacy Markdown link of
+# the form [text](url).  Real links must pass through untouched.  The regex
+# looks ahead for an immediately-following '](' sequence (which is the minimal
+# signal that this '[' starts a link); anything else gets a backslash prefix.
+_LEGACY_LINK_RE = re.compile(
+    r"\["                   # literal [
+    r"(?:[^\[\]]*)"         # link text -- no nested brackets (legacy spec)
+    r"\]"                   # closing ]
+    r"\("                   # opening ( -- marks this as a real link
+    r"[^)]*"                # URL body
+    r"\)"                   # closing )
+)
+
+
+def escape_legacy_markdown_brackets(text: str) -> str:
+    """Escape bare '[' characters for Telegram legacy Markdown parse_mode.
+
+    Telegram's legacy Markdown parser silently swallows any '[' that does not
+    form a valid [text](url) link pattern, causing bracket loss (e.g. "[status]"
+    renders as "status").  This function prepends a backslash to every '[' that
+    is NOT the start of a valid link pattern, so it is displayed literally.
+    Real [text](url) links are left intact.  ']' needs no escaping.
+
+    Must be applied ONLY on prose segments (not code spans/fences) and ONLY
+    when parse_mode="Markdown" is active.  Apply exactly once at send time;
+    double-application doubles backslashes.
+    """
+    if "[" not in text:
+        return text
+
+    # Collect the byte-spans of real links so we can leave them untouched.
+    protected: List[Tuple[int, int]] = [m.span() for m in _LEGACY_LINK_RE.finditer(text)]
+
+    def _in_protected(pos: int) -> bool:
+        for start, end in protected:
+            if start <= pos < end:
+                return True
+        return False
+
+    parts: List[str] = []
+    for i, ch in enumerate(text):
+        if ch == "[" and not _in_protected(i):
+            parts.append("\\[")
+        else:
+            parts.append(ch)
+    return "".join(parts)

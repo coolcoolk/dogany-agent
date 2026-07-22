@@ -49,6 +49,7 @@ from bridge import ownership
 from bridge.formatting import (
     IMAGE_EXTS,
     code_segment_html,
+    escape_legacy_markdown_brackets,
     resolve_send_paths,
     split_into_segments,
     split_paths_by_scope,
@@ -1919,7 +1920,14 @@ class TelegramBot:
                     if not part.strip():
                         continue
                     try:
-                        await message.reply_text(part, parse_mode=parse_mode)
+                        # DGN-372: escape bare '[' for legacy Markdown so brackets
+                        # are never silently swallowed by Telegram's parser.
+                        send_part = (
+                            escape_legacy_markdown_brackets(part)
+                            if parse_mode == "Markdown"
+                            else part
+                        )
+                        await message.reply_text(send_part, parse_mode=parse_mode)
                     except Exception:
                         await message.reply_text(part)
 
@@ -2019,7 +2027,9 @@ class TelegramBot:
                     if not part.strip():
                         continue
                     try:
-                        await bot.send_message(chat_id, part, parse_mode="Markdown")
+                        # DGN-372: escape bare '[' so legacy Markdown never loses brackets.
+                        send_part = escape_legacy_markdown_brackets(part)
+                        await bot.send_message(chat_id, send_part, parse_mode="Markdown")
                     except Exception:
                         await bot.send_message(chat_id, part)
 
