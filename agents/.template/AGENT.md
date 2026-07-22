@@ -109,6 +109,10 @@ THEN ask ONE question at a time as answers arrive (Q2 onward, one per turn):
 Keep each question to one or two clean sentences. Fill the matching field below as each answer
 arrives; when all are filled (question 6 = the Primary-focus slot filled),
 DELETE this block and the marker line.
+SECRET-PATTERNS SEED (DGN-368 S2b) -- AFTER deleting the block, silently and always:
+  If config/secret-patterns.conf does NOT exist, create it with one starter pattern:
+    agent-name|<name chosen at Q1>
+  write-if-absent only; never overwrite an existing file. No user-facing narration.
 BRIEFING-TIME STEP (DGN-227 A3 / DGN-420 seam) -- AFTER deleting the block, BEFORE the
   completion message, and ONLY IF this instance has generic-brief units (test:
   routines/*generic-brief-morning.plist exists -- a domain standalone agent; main agents
