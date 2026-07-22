@@ -212,6 +212,8 @@ fi
 #   skills/dogany-*         official framework skills (edit-detect + backup)
 #   .claude/skills-bundle/  dormant lifekit bundle skills
 #   RULES.md                framework constitution (edit-detect + backup; DGN-130)
+#   git-hooks/              tracked hook scripts (pre-commit detached-HEAD guard;
+#                           DGN-525); exec bit preserved; no --delete
 #
 # Everything NOT on this list is instance state / personal data and is never
 # written: memories/, *.db, .env, sessions, runtime/, logs/, bridge/venv/,
@@ -1434,6 +1436,24 @@ if [ -f "$TEMPLATE/RULES.md" ]; then
   UPDATED+=("RULES.md (framework constitution)")
 fi
 
+# 3k1) git-hooks/ -- tracked hook scripts (DGN-525). Framework-owned: the
+#      pre-commit detached-HEAD guard lives here. Synced verbatim; exec bit
+#      preserved via rsync -aL. Never deletes user-added hooks (no --delete).
+#      write-if-absent semantics for any hook that does not yet exist; a hook
+#      already present is refreshed (consistent with the rest of the manifest).
+if [ -d "$REPO_ROOT/git-hooks" ]; then
+  build_preserve_excludes "git-hooks"
+  if [ "$SECTION_HELD" = "1" ]; then
+    _section_held_warn "git-hooks" "$REPO_ROOT/git-hooks" "$INSTANCE/git-hooks"
+    UPDATED+=("git-hooks/ (HELD -- skipped by .dogany-preserve)")
+  else
+    ensure_dir "$INSTANCE/git-hooks"
+    rsync -aL $RSYNC_DRY "${COMMON_EXCLUDES[@]}" ${PEX[@]+"${PEX[@]}"} \
+      "$REPO_ROOT/git-hooks/" "$INSTANCE/git-hooks/"
+    UPDATED+=("git-hooks/")
+  fi
+fi
+
 # 3k2) AGENT-OPS.md -- framework ops reference doc (DGN-387). A framework-owned
 #     file at the instance root, like RULES.md, but with ONE deliberate
 #     difference from 3k: AGENT-OPS.md carries a placeholder (__PROJECT_ROOT__),
@@ -1655,6 +1675,27 @@ fi
 # is_preserved check -- such an entry silently protects nothing (typo / wrong
 # path / removed section).
 _preserve_check_invalid
+
+# ---------------------------------------------------------------------------
+# 3m) git hooks path -- wire the tracked git-hooks/ dir as the active hooks
+#     path so the pre-commit guard is always active in this instance.
+#     Idempotent: only sets the config key when it is absent or points
+#     elsewhere; safe to run on every update.
+# ---------------------------------------------------------------------------
+if command -v git >/dev/null 2>&1 && [ -d "$INSTANCE/.git" ]; then
+  _cur_hookspath="$(git -C "$INSTANCE" config --local core.hooksPath 2>/dev/null || true)"
+  if [ "$_cur_hookspath" != "git-hooks" ]; then
+    if [ "$DRY_RUN" = "1" ]; then
+      msg "  [dry-run] git config core.hooksPath = git-hooks 설정 예정" \
+          "  [dry-run] would set git config core.hooksPath = git-hooks"
+    else
+      git -C "$INSTANCE" config core.hooksPath git-hooks
+      msg "  [update] git config core.hooksPath = git-hooks" \
+          "  [update] git config core.hooksPath = git-hooks"
+    fi
+    UPDATED+=("git config core.hooksPath=git-hooks")
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 4) Re-substitute the five mint placeholders on the refreshed files.

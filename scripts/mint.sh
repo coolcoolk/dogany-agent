@@ -556,12 +556,19 @@ fi
 #    config, worklog, and identity markdown.
 if [ -d "$PROJECT_ROOT/.git" ]; then
   echo "[mint] .git exists -> skip git init (idempotent)"
+  # Idempotent: ensure core.hooksPath is set even on re-mint.
+  git -C "$PROJECT_ROOT" config core.hooksPath git-hooks
+  echo "[mint] git config core.hooksPath = git-hooks (idempotent)"
 elif ! command -v git >/dev/null 2>&1; then
   echo "[mint][WARN] git not found -- skipping repo init" >&2
 else
   (
     cd "$PROJECT_ROOT"
     git init -q
+    # Wire the tracked git-hooks/ dir as the active hooks path so the
+    # pre-commit guard (git-hooks/pre-commit) is active from the first commit.
+    # Idempotent: safe to re-run; only sets if not already correct.
+    git config core.hooksPath git-hooks
     git add --all
     GIT_AUTHOR_NAME="dogany-mint" \
     GIT_AUTHOR_EMAIL="mint@dogany.local" \
