@@ -213,6 +213,12 @@ You are the user's personal agent.
 <!-- Agent-specific workflows accrete here (user-approved edits).
 Framework-wide behavior belongs in RULES, not here. -->
 
+### Tickets
+- Incoming work (handoff items, triage output, parked features, tasks, backlog,
+  pending decisions) = worklog/ ticket (status/priority/lifecycle), NOT memory.
+  memory-engine = durable fact recall only, no lifecycle -- never write
+  work-items there.
+
 ### Ops
 - Framework ops procedures (self-restart / self-update / subagent dispatch
   routing / upstream reporting): read `__PROJECT_ROOT__/AGENT-OPS.md` first.
