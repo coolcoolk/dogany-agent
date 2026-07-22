@@ -46,7 +46,21 @@ EMBED_DIM = 1024  # bge-m3 output dimension
 
 RRF_K = 60          # standard RRF constant
 MISS_THRESHOLD = 0.30  # top1 cosine below this counts as a "miss" (stats)
-TRANSCRIPT_FTS_TOPK = 3  # max raw conversations to splice in from the same-day rolling index search
+TRANSCRIPT_TOPK = 3            # (rename: TRANSCRIPT_FTS_TOPK) search_core splice cap
+HOOK_TODAY_TOPK = 2            # max same-day snippets injected by the hook (dec-089 policy1)
+TRANSCRIPT_KW_MIN_LEN_KO = 2   # min length for a token containing Korean chars (FATAL2)
+TRANSCRIPT_ECHO_SEC = 60       # self-echo belt: exclude __USER_LABEL__ rows within now-60s
+TRANSCRIPT_MTIME_SKEW_SEC = 120  # mtime skip safety margin (F4)
+TRANSCRIPT_MAX_AGE_H = 72      # failsafe belt: only fires after 3 consecutive consolidate misses (MAJOR3)
+TODAY_CHAR_CAP = 8000          # today output total char cap (MINOR)
+TRANSCRIPT_NOISE_MARKERS = (   # MAJOR1: prefix-match on row text -> excluded from ingest (measured samples)
+    "<task-notification",      # subagent completion notice (measured 190)
+    "[cron-inject]",           # cron inject prompt (measured 31)
+    "[DGN-",                   # continuous-work loop machine prompt (measured 12/12 machine)
+    "Stop hook feedback:",     # footer hook feedback row (measured in current transcript_notes)
+    "<command-name",
+    "<local-command",
+)
 
 
 # ======================================================================
@@ -90,6 +104,18 @@ def redact_secrets(text):
     # key=value: keep the key + separator, redact only the value.
     text = _SECRET_KV_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED]", text)
     return text
+
+
+def _parse_iso_utc(ts_iso):
+    """Parse a stored UTC ISO8601 timestamp ('...Z') into a tz-aware datetime.
+    macOS system python3.9 fromisoformat does not accept a trailing 'Z', so
+    substitute '+00:00' first; fall back to strptime with an explicit UTC tz."""
+    try:
+        return datetime.datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return datetime.datetime.strptime(
+            ts_iso, "%Y-%m-%dT%H:%M:%S.%fZ"
+        ).replace(tzinfo=datetime.timezone.utc)
 
 
 # ======================================================================
@@ -403,6 +429,41 @@ def init_db(conn):
     )
     conn.commit()
 
+    # MAJOR4: idempotent UNIQUE index for same-day ingest dedup (guards the
+    # concurrent-hook watermark race). Wrapped separately from the executescript
+    # above: if a pre-existing DB already holds race-remnant duplicates, the
+    # CREATE fails with OperationalError -> reset the same-day cache once and
+    # retry. The cache is fully re-loaded from today's jsonl (from local midnight)
+    # so this is lossless; consolidate's own watermark (last_ts) is a separate
+    # key and unaffected. This fallback keeps the whole path idempotent -- no
+    # manual migration step.
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tnotes_dedup "
+            "ON transcript_notes(session, ts, role)"
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Spec section 2 names OperationalError, but SQLite raises IntegrityError
+        # for a UNIQUE-constraint violation on pre-existing race-remnant dups.
+        # Catch the common base (sqlite3.Error) so the reset-and-retry fallback
+        # fires for either -- the spec's intent is the fallback, not the label.
+        conn.rollback()
+        # Reset the same-day cache. transcript_fts is external-content and is no
+        # longer written by index_transcript_notes (section 4-3), so it drifts from
+        # transcript_notes; a plain `DELETE FROM transcript_fts` then raises
+        # "database disk image is malformed". Use the FTS5 'delete-all' command,
+        # which clears the index without reconciling against content rows.
+        conn.execute("INSERT INTO transcript_fts(transcript_fts) VALUES('delete-all')")
+        conn.execute("DELETE FROM transcript_notes")
+        conn.execute("DELETE FROM consolidation_state WHERE key='ts_fts_last'")
+        conn.commit()
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_tnotes_dedup "
+            "ON transcript_notes(session, ts, role)"
+        )
+        conn.commit()
+
 
 def file_sha256(path):
     h = hashlib.sha256()
@@ -627,7 +688,7 @@ def search_core(query, k=5, log=True):
     # Same-day rolling index: incrementally load today's raw conversations just before searching
     # (mechanical, best effort). Conversations from other sessions the same day that are not yet
     # consolidated are still captured here and exposed in search results.
-    index_transcript_fts(conn)
+    index_transcript_notes(conn)
 
     # gather a generous candidate pool then fuse
     pool = max(k * 4, 20)
@@ -659,7 +720,7 @@ def search_core(query, k=5, log=True):
     # Append today's raw conversation matches as a separate source
     # (no embedding -> FTS bm25 only, cosine=None). Appended as a cap after note
     # results so as not to disturb note ranking via RRF.
-    for tr in transcript_fts_search(conn, query, TRANSCRIPT_FTS_TOPK):
+    for tr in transcript_search(conn, query, TRANSCRIPT_TOPK):
         results.append(
             {
                 "id": f"t{tr['id']}",
@@ -708,6 +769,99 @@ def cmd_search(args):
         for ln in r["text"].splitlines():
             print(f"    {ln}")
         print()
+    return 0
+
+
+# ======================================================================
+# today command (F3): same-day cross-session conversation browse (zero LLM)
+# ======================================================================
+def _today_since_utc(since_arg):
+    """Resolve the --since argument to a UTC ISO8601 '...Z' string for comparison
+    against stored ts. None -> local midnight today; 'HH:MM' -> that local time
+    today; otherwise a local ISO datetime string."""
+    if not since_arg:
+        base = datetime.datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+    elif re.match(r"^\d{1,2}:\d{2}$", since_arg.strip()):
+        hh, mm = since_arg.strip().split(":")
+        base = datetime.datetime.now().astimezone().replace(
+            hour=int(hh), minute=int(mm), second=0, microsecond=0
+        )
+    else:
+        dt = datetime.datetime.fromisoformat(since_arg.strip())
+        if dt.tzinfo is None:
+            dt = dt.astimezone()
+        base = dt
+    return base.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def cmd_today(args):
+    """Browse today's same-day conversation across sessions (zero LLM / zero embedding).
+    Reads transcript_notes after --since, groups by session, applies a char cap."""
+    since_utc = _today_since_utc(getattr(args, "since", None))
+    conn = connect()
+    init_db(conn)
+    index_transcript_notes(conn)
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT ts, role, session, text FROM transcript_notes "
+            "WHERE ts > ? ORDER BY ts ASC",
+            (since_utc,),
+        )
+    ]
+    conn.close()
+
+    if getattr(args, "json", False):
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+
+    # --limit N: keep the newest N rows overall before the char cap.
+    limit = getattr(args, "limit", 0) or 0
+    if limit and len(rows) > limit:
+        rows = rows[-limit:]
+
+    if not rows:
+        print("(오늘 다른 세션 대화 없음)")
+        return 0
+
+    # Char cap: remove the globally-oldest rows until total is within TODAY_CHAR_CAP
+    # (each session keeps its newest tail). Track how many rows each session lost.
+    def _row_len(r):
+        return len((r.get("text") or "")) + 24  # + header/format overhead estimate
+
+    kept = list(rows)
+    omitted = {}  # session -> count removed
+    total = sum(_row_len(r) for r in kept)
+    while total > TODAY_CHAR_CAP and len(kept) > 1:
+        drop = kept.pop(0)  # globally oldest (rows are ts ASC)
+        omitted[drop["session"]] = omitted.get(drop["session"], 0) + 1
+        total -= _row_len(drop)
+
+    # group by session preserving first-appearance order
+    order = []
+    groups = {}
+    for r in kept:
+        s = r["session"]
+        if s not in groups:
+            groups[s] = []
+            order.append(s)
+        groups[s].append(r)
+
+    out = []
+    for s in order:
+        grp = groups[s]
+        head = f"== {(s or '')[:8]} ({len(grp)}행) =="
+        if omitted.get(s):
+            head += f" (… 앞부분 {omitted[s]}행 생략)"
+        out.append(head)
+        for r in grp:
+            local = _parse_iso_utc(r["ts"]).astimezone()
+            body = (r.get("text") or "").replace("\n", " ")
+            out.append(f"{local.strftime('%H:%M')} {r.get('role', '')}: {body}")
+        out.append("")
+    print("\n".join(out).rstrip())
     return 0
 
 
@@ -1267,6 +1421,7 @@ _NOISE_MARKERS = (
     "<system-reminder>",
     "[관련 기억 — 자동검색]",
     "[관련 기억",
+    "[오늘 다른 세션",
     "hookSpecificOutput",
     "additionalContext",
 )
@@ -1416,35 +1571,50 @@ def _rule_filter_candidates(items):
     return kept, dropped
 
 
-def _extract_text_from_content(content):
-    """Extract human-written text from user/assistant message.content.
-    - If a string: use as-is (returns empty string if it is noise).
-    - If a list: keep only type=='text' blocks (discard thinking/tool_use/tool_result).
-    After extraction, apply compression-input denoising (code fences / shell commands stripped).
-    Original is unchanged.
-    Returns: cleaned text (may be empty string)."""
+def _extract_raw_text(content):
+    """user/assistant message.content -> raw human text.
+    Text blocks only (thinking/tool_use/tool_result dropped), _is_noise blocks
+    dropped, NO denoise / NO junk-line stripping (same-day lane keeps
+    question lines and '__USER_LABEL__,' openings verbatim). Returns '' when empty."""
     if isinstance(content, str):
-        raw = "" if _is_noise(content) else content.strip()
-    elif isinstance(content, list):
+        return "" if _is_noise(content) else content.strip()
+    if isinstance(content, list):
         parts = []
         for b in content:
             if isinstance(b, dict) and b.get("type") == "text":
                 t = b.get("text", "")
                 if t and not _is_noise(t):
                     parts.append(t.strip())
-        raw = "\n".join(parts).strip()
-    else:
-        return ""
+        return "\n".join(parts).strip()
+    return ""
+
+
+def _is_marker_noise_row(text):
+    """True if the row is machine traffic (cron inject / loop prompt /
+    task notification / hook feedback) mis-attributed to the owner speaker.
+    Prefix match on lstripped text against TRANSCRIPT_NOISE_MARKERS."""
+    return text.lstrip().startswith(TRANSCRIPT_NOISE_MARKERS)
+
+
+def _extract_text_from_content(content):
+    """Extract human-written text from user/assistant message.content, then
+    apply compression-input denoising (code fences / shell commands stripped).
+    Composition of _extract_raw_text + _preprocess_for_compress (behavior
+    unchanged). Original is unchanged. Returns cleaned text (may be empty)."""
+    raw = _extract_raw_text(content)
     if not raw:
         return ""
     return _preprocess_for_compress(raw)
 
 
-def _iter_transcript_rows(watermark_iso, now):
+def _iter_transcript_rows(watermark_iso, now, raw=False):
     """Collect __USER_LABEL__ <-> __AGENT_LABEL__ messages after the watermark as
     a (ts, speaker, text, session) list.
-    Shared by collect_transcript (consolidate) and index_transcript_fts (same-day index).
+    Shared by collect_transcript (consolidate) and index_transcript_notes (same-day index).
     watermark_iso: ISO8601 string or None (first run -> now - DEFAULT_LOOKBACK_DAYS).
+    raw=True (same-day lane): keep near-verbatim text (marker filter + redaction
+    only, no denoise). raw=False (consolidate lane): full denoise, as before.
+    Marker filter (TRANSCRIPT_NOISE_MARKERS) applies to BOTH lanes (dec-089 policy3).
     Returns: list sorted by timestamp ascending (may be empty)."""
     if watermark_iso:
         cutoff = watermark_iso
@@ -1455,9 +1625,18 @@ def _iter_transcript_rows(watermark_iso, now):
 
     import glob
 
+    # F4: skip files last modified before the watermark (minus a skew margin) --
+    # they hold no post-watermark messages, so opening them is wasted I/O.
+    wm_epoch = _parse_iso_utc(cutoff).timestamp()
+
     rows = []  # (ts, speaker, text, session)
     for fp in glob.glob(TRANSCRIPT_GLOB):
         session = os.path.splitext(os.path.basename(fp))[0]
+        try:
+            if os.path.getmtime(fp) < wm_epoch - TRANSCRIPT_MTIME_SKEW_SEC:
+                continue
+        except OSError:
+            continue
         try:
             with open(fp, "r", encoding="utf-8") as fh:
                 for line in fh:
@@ -1475,7 +1654,12 @@ def _iter_transcript_rows(watermark_iso, now):
                     if not ts or ts <= cutoff:
                         continue  # at or before watermark (already processed) -> skip
                     content = o.get("message", {}).get("content")
-                    text = _extract_text_from_content(content)
+                    raw_text = _extract_raw_text(content)
+                    if not raw_text:
+                        continue
+                    if _is_marker_noise_row(raw_text):
+                        continue  # both lanes (MAJOR1 / policy3)
+                    text = raw_text if raw else _preprocess_for_compress(raw_text)
                     if not text:
                         continue
                     speaker = "__USER_LABEL__" if typ == "user" else "__AGENT_LABEL__"
@@ -1520,8 +1704,8 @@ def _tsfts_save_watermark(conn, ts_iso):
     )
 
 
-def index_transcript_fts(conn, now=None):
-    """Incrementally load today's raw conversation into transcript_notes/transcript_fts
+def index_transcript_notes(conn, now=None):
+    """Incrementally load today's raw conversation into transcript_notes
     (mechanical, zero LLM). Only messages after the watermark (ts_fts_last) are added.
     First run starts from local midnight. Called on every hook/search turn; cheap thanks to
     the watermark. Swallows all DB errors to never block search/turns (best effort).
@@ -1537,25 +1721,37 @@ def index_transcript_fts(conn, now=None):
             wm = start.astimezone(datetime.timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%S.%fZ"
             )
-        rows = _iter_transcript_rows(wm, now)
-        if not rows:
-            return 0
-        cur = conn.cursor()
-        for ts, speaker, text, session in rows:
-            # F6: redact secrets before the raw message enters the same-day FTS
-            # (transcript_notes/transcript_fts are recalled + re-injected by the hook).
-            text = redact_secrets(text)
-            cur.execute(
-                "INSERT INTO transcript_notes(ts, role, session, text) VALUES(?,?,?,?)",
-                (ts, speaker, session, text),
-            )
-            cur.execute(
-                "INSERT INTO transcript_fts(rowid, text) VALUES(?,?)",
-                (cur.lastrowid, text),
-            )
-        _tsfts_save_watermark(conn, rows[-1][0])
+        rows = _iter_transcript_rows(wm, now, raw=True)
+        loaded = 0
+        if rows:
+            cur = conn.cursor()
+            for ts, speaker, text, session in rows:
+                # F6: redact secrets before the raw message enters the same-day index
+                # (transcript_notes is recalled + re-injected by the hook).
+                text = redact_secrets(text)
+                # MAJOR4: INSERT OR IGNORE against idx_tnotes_dedup absorbs the
+                # concurrent-hook watermark race; rowcount==0 means an identical
+                # (session, ts, role) row already exists -> skip follow-up.
+                cur.execute(
+                    "INSERT OR IGNORE INTO transcript_notes(ts, role, session, text) "
+                    "VALUES(?,?,?,?)",
+                    (ts, speaker, session, text),
+                )
+                if cur.rowcount == 0:
+                    continue
+                loaded += 1
+            _tsfts_save_watermark(conn, rows[-1][0])
+            conn.commit()
+        # Failsafe belt (MAJOR3): drop rows older than TRANSCRIPT_MAX_AGE_H. Only
+        # fires when consolidate has missed 3+ consecutive nights (normally
+        # consolidate prunes first). Prevents unbounded cache growth.
+        cutoff = (
+            datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(hours=TRANSCRIPT_MAX_AGE_H)
+        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        conn.execute("DELETE FROM transcript_notes WHERE ts <= ?", (cutoff,))
         conn.commit()
-        return len(rows)
+        return loaded
     except sqlite3.Error:
         try:
             conn.rollback()
@@ -1564,39 +1760,103 @@ def index_transcript_fts(conn, now=None):
         return 0
 
 
-def transcript_fts_search(conn, query, limit):
-    """FTS5 trigram search on the same-day transcript_fts (bm25 ascending). No embeddings -> FTS only.
-    Returns: [{"id","ts","role","session","text"}, ...] up to limit."""
-    safe = '"' + query.replace('"', '""') + '"'
-    try:
-        rows = conn.execute(
-            "SELECT t.id AS id, t.ts AS ts, t.role AS role, "
-            "t.session AS session, t.text AS text "
-            "FROM transcript_fts f JOIN transcript_notes t ON t.id=f.rowid "
-            "WHERE transcript_fts MATCH ? ORDER BY bm25(transcript_fts) LIMIT ?",
-            (safe, limit),
-        ).fetchall()
-    except sqlite3.OperationalError:
+def _tokenize_for_transcript(query):
+    """Tokenize a query for the same-day LIKE search.
+    - re.findall over Korean/ASCII/digit runs.
+    - A token containing any Korean char must be >= TRANSCRIPT_KW_MIN_LEN_KO (2);
+      other (ASCII/digit) tokens must be >= HOOK_KW_MIN_LEN (3).
+    - Drop HOOK_STOPWORDS, order-preserving dedup, cap at HOOK_KW_MAX_TERMS (6).
+    Returns: [term, ...] (may be empty)."""
+    if not query:
         return []
-    return [dict(r) for r in rows]
+    raw = re.findall(r"[0-9A-Za-z가-힣]+", query)
+    seen = set()
+    terms = []
+    for w in raw:
+        has_ko = bool(re.search(r"[가-힣]", w))
+        min_len = TRANSCRIPT_KW_MIN_LEN_KO if has_ko else HOOK_KW_MIN_LEN
+        if len(w) < min_len:
+            continue
+        lw = w.lower()
+        if lw in HOOK_STOPWORDS:
+            continue
+        if lw in seen:
+            continue
+        seen.add(lw)
+        terms.append(w)
+        if len(terms) >= HOOK_KW_MAX_TERMS:
+            break
+    return terms
+
+
+def _like_escape(term):
+    """Escape %, _, and \\ in a LIKE operand (ESCAPE '\\')."""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def transcript_search(conn, query, limit, exclude_session=None, now=None):
+    """Same-day lane keyword search. Full LIKE scan over transcript_notes
+    (few hundred rows/day, ~1ms measured) -- no FTS, so 2-char Korean works.
+    Rank: matched-token count desc, then ts desc. Excludes the caller's own
+    session (exclude_session) and __USER_LABEL__ rows within TRANSCRIPT_ECHO_SEC of now
+    (self-echo belt for when session id is unknown).
+    Returns [{"id","ts","role","session","text"}, ...] up to limit."""
+    terms = _tokenize_for_transcript(query)
+    if not terms:
+        return []
+    where = " OR ".join("text LIKE ? ESCAPE '\\'" for _ in terms)
+    params = ["%" + _like_escape(t) + "%" for t in terms]
+    sql = (
+        "SELECT id, ts, role, session, text FROM transcript_notes "
+        "WHERE (" + where + ")"
+    )
+    if exclude_session:
+        sql += " AND session != ?"
+        params.append(exclude_session)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.Error:
+        return []
+    lowered = [t.lower() for t in terms]
+    # self-echo belt: exclude __USER_LABEL__ rows written within the last TRANSCRIPT_ECHO_SEC
+    if now is None:
+        now = datetime.datetime.now().astimezone()
+    echo_cutoff = (
+        now.astimezone(datetime.timezone.utc)
+        - datetime.timedelta(seconds=TRANSCRIPT_ECHO_SEC)
+    ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    scored = []
+    for r in rows:
+        d = dict(r)
+        if d.get("role") == "__USER_LABEL__" and (d.get("ts") or "") >= echo_cutoff:
+            continue
+        low_text = (d.get("text") or "").lower()
+        mc = sum(1 for t in lowered if t in low_text)
+        scored.append((mc, d.get("ts") or "", d))
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [d for _mc, _ts, d in scored[:limit]]
 
 
 def prune_transcript_fts(conn, cutoff_iso):
     """Delete same-day raw rows at or before cutoff_iso (already distilled into real notes).
-    Called at end of consolidate. External-content FTS: delete fts->notes in that order by rowid.
+    Called at end of consolidate. Name kept for update continuity; the abandoned
+    transcript_fts index (no longer written -- section 4-3) is cleared once via the
+    FTS5 'delete-all' command (a per-rowid DELETE would raise 'database disk image
+    is malformed' now that the external-content shadow drifts from transcript_notes).
     Returns: number of rows deleted."""
     try:
-        ids = [
-            r["id"]
-            for r in conn.execute(
-                "SELECT id FROM transcript_notes WHERE ts <= ?", (cutoff_iso,)
-            )
-        ]
-        for tid in ids:
-            conn.execute("DELETE FROM transcript_fts WHERE rowid=?", (tid,))
+        n = conn.execute(
+            "SELECT COUNT(*) c FROM transcript_notes WHERE ts <= ?", (cutoff_iso,)
+        ).fetchone()["c"]
+        # Legacy fts index has no live rows post-DGN-501; clear it wholesale so it
+        # never desyncs. Idempotent: a no-op once already empty.
+        try:
+            conn.execute("INSERT INTO transcript_fts(transcript_fts) VALUES('delete-all')")
+        except sqlite3.Error:
+            pass
         conn.execute("DELETE FROM transcript_notes WHERE ts <= ?", (cutoff_iso,))
         conn.commit()
-        return len(ids)
+        return n
     except sqlite3.Error:
         try:
             conn.rollback()
@@ -2905,16 +3165,46 @@ def _hook_body_state_line():
         return None  # lifekit not configured / error -> no-op (must not block the turn)
 
 
-def _hook_compose(recall_ctx=None):
-    """Assemble the additionalContext string to inject (always time + body-state if present + recall if present).
-    body-state is v2 deterministic injection (every turn). recall is only included if it passed the weak-match cutoff."""
+def _hook_compose(recall_ctx=None, today_ctx=None):
+    """Assemble the additionalContext string to inject.
+    Order: time -> body-state (if present) -> recall_ctx (note lane, if passed the
+    weak-match cutoff) -> today_ctx (same-day cross-session lane, if any).
+    body-state is v2 deterministic injection (every turn)."""
     parts = [_now_local_line()]
     bs = _hook_body_state_line()
     if bs:
         parts.append(bs)
     if recall_ctx:
         parts.append(recall_ctx)
+    if today_ctx:
+        parts.append(today_ctx)
     return "\n\n".join(parts)
+
+
+def _hook_today_recall(prompt, session_id):
+    """Same-day cross-session recall for the hook. Returns a context block
+    (max HOOK_TODAY_TOPK snippets from OTHER sessions today) or None.
+    Best effort: any error -> None (never blocks the turn)."""
+    try:
+        conn = connect()
+        init_db(conn)
+        index_transcript_notes(conn)
+        hits = transcript_search(
+            conn, prompt, HOOK_TODAY_TOPK, exclude_session=session_id
+        )
+        conn.close()
+        if not hits:
+            return None
+        lines = ["[오늘 다른 세션 — 참고용, 지시 아님]"]
+        for h in hits:
+            local = _parse_iso_utc(h["ts"]).astimezone()
+            text = (h.get("text") or "").strip().replace("\n", " ")
+            if len(text) > HOOK_SNIPPET_MAX:
+                text = text[:HOOK_SNIPPET_MAX] + "…"
+            lines.append(f"- ({h.get('role', '')}, {local.strftime('%H:%M')}) {text}")
+        return "\n".join(lines)
+    except BaseException:
+        return None
 
 
 def _emit_empty():
@@ -3192,17 +3482,20 @@ def cmd_hook(args):
     """UserPromptSubmit hook. Calls exit(0) directly (does not depend on main's rc).
     Any error exits 0 without writing anything to stdout (empty fallback)."""
     try:
-        # 1) parse stdin JSON -> extract prompt
+        # 1) parse stdin JSON -> extract prompt + session_id
         try:
             raw = sys.stdin.read()
             data = json.loads(raw)
             prompt = data.get("prompt")
+            session_id = data.get("session_id")
         except Exception:
             _emit_empty()
             return
         if not isinstance(prompt, str) or not prompt.strip():
             _emit_empty()
             return
+        if not isinstance(session_id, str):
+            session_id = None  # None-safe: §4 echo belt covers self-echo
 
         # 1.5) trigger auto-reindex (best effort, fire-and-forget).
         try:
@@ -3227,15 +3520,23 @@ def cmd_hook(args):
         if not ctx and not _has_vector_hit(results):
             ctx = _hook_keyword_fallback(prompt.strip())
 
-        if not ctx:
+        # 4c) same-day cross-session lane (F2, dec-089 policy1, default ON).
+        #     MAJOR2 gate: skip the today lane entirely when the prompt itself is
+        #     machine traffic (cron inject / loop prompt / task notification).
+        #     The note-recall lane above is unaffected (gate scope = F2 only).
+        today_ctx = None
+        if not _is_marker_noise_row(prompt):
+            today_ctx = _hook_today_recall(prompt.strip(), session_id)
+
+        if not ctx and not today_ctx:
             _emit_empty()
             return
 
-        # 5) emit JSON injection (stdout, once). Order: time + body-state (if present) + recall.
+        # 5) emit JSON injection (stdout, once). Order: time + body-state + recall + today.
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
-                "additionalContext": _hook_compose(ctx),
+                "additionalContext": _hook_compose(ctx, today_ctx),
             }
         }
         print(json.dumps(out, ensure_ascii=False), flush=True)
@@ -3269,6 +3570,11 @@ def main():
     sp.add_argument("--json", action="store_true", help="JSON output")
 
     sub.add_parser("stats", help="index/search statistics")
+
+    tp = sub.add_parser("today", help="same-day conversation browse (zero LLM)")
+    tp.add_argument("--since", default=None, help="'HH:MM' (local today) or local ISO datetime; default local midnight")
+    tp.add_argument("--limit", type=int, default=0, help="max rows (0 = all within char cap)")
+    tp.add_argument("--json", action="store_true")
 
     wp = sub.add_parser("write", help="raw text -> Haiku compress -> md write -> reindex")
     wp.add_argument("text", nargs="?", default=None, help="raw text (omit to read from stdin)")
@@ -3307,6 +3613,8 @@ def main():
         return cmd_search(args)
     if args.cmd == "stats":
         return cmd_stats(args)
+    if args.cmd == "today":
+        return cmd_today(args)
     if args.cmd == "write":
         return cmd_write(args)
     if args.cmd == "consolidate":
