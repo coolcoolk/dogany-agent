@@ -15,6 +15,11 @@ Hybrid search (FTS + vector, RRF fusion) -> finds by meaning even without keywor
 - uncertain fact -> search before guessing (recall = 0 tokens, no cost concern)
 - "do I already know this about the user?" -> search first
 
+## work-item exclusion
+memory stores durable facts only -- work-items (backlog, parked ideas, tasks, to-dos, pending decisions) are NOT stored here.
+work-items live in the agent's worklog/ ticket surface; route them to a worklog ticket instead.
+write path refuses work-item shapes (DGN-446 gate) -- do not attempt to write tasks or decisions to memory.
+
 ## absence claim gate
 before saying user data is missing, unknown, or not recorded -> run this search FIRST.
 only after 0-hit search may you say "not in memory (searched)".
