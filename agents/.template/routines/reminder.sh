@@ -30,8 +30,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 META_DIR="$SCRIPT_DIR/.reminders"
-LABEL_PREFIX="com.telegram-skill-bot.telegram-agent.reminder"
+
+# Agent slug from instance manifest written by mint.sh; fallback = dirname.
+# `|| true` prevents set -e from aborting when .instance.conf is absent.
+AGENT_SLUG="$(grep -E '^DOGANY_AGENT_NAME=' "$AGENT_DIR/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+AGENT_SLUG="${AGENT_SLUG:-$(basename "$AGENT_DIR")}"
+
+LABEL_PREFIX="com.telegram-skill-bot.${AGENT_SLUG}.reminder"
 mkdir -p "$META_DIR"
 
 # ---- OS kind (macos = launchd/BSD date, linux = systemd/GNU date) ----
