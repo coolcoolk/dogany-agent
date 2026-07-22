@@ -87,6 +87,9 @@ def turns_of(path, char_cap):
                 if low.startswith("<") and ("command-name" in t or "task-notification" in t
                                             or "system-reminder" in t):
                     continue
+                # skip machine prompts (cron inject spool tail / continuous-work loop)
+                if low.startswith(("[cron-inject]", "[DGN-")):
+                    continue
                 if len(t) > char_cap:
                     t = t[:char_cap] + " ...(truncated)"
                 turns.append((role, t))

@@ -261,10 +261,9 @@ done
 #     - database/ (schema only; *.db excluded -- lifekit.db is initialized below),
 #     - service/ SDK facade (resolves ../../database/lifekit.py at the instance root).
 mkdir -p "$PROJECT_ROOT/database"
-[ -f "$REPO_ROOT/database/schema.sql" ] && cp -p "$REPO_ROOT/database/schema.sql" "$PROJECT_ROOT/database/schema.sql"
-[ -f "$REPO_ROOT/database/lifekit.py" ] && cp -p "$REPO_ROOT/database/lifekit.py" "$PROJECT_ROOT/database/lifekit.py"
-[ -f "$REPO_ROOT/database/lifekit.sh" ] && cp -p "$REPO_ROOT/database/lifekit.sh" "$PROJECT_ROOT/database/lifekit.sh"
-[ -f "$REPO_ROOT/database/schema.sql" ] && [ -f "$REPO_ROOT/database/README.md" ] && cp -p "$REPO_ROOT/database/README.md" "$PROJECT_ROOT/database/README.md"
+for f in schema.sql lifekit.py lifekit.sh README.md remind_select.py routine_roller.py routine_projection.py relmod.py; do
+  [ -f "$REPO_ROOT/database/$f" ] && cp -p "$REPO_ROOT/database/$f" "$PROJECT_ROOT/database/$f"
+done
 if [ -d "$REPO_ROOT/service" ]; then
   rsync -aL --exclude '__pycache__' --exclude '*.pyc' "$REPO_ROOT/service/" "$PROJECT_ROOT/service/"
 fi
