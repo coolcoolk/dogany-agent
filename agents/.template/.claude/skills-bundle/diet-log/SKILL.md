@@ -144,6 +144,7 @@ $PROJECT_ROOT/database/lifekit.sh meal-add \
     <carb> <protein> <fat> <fiber> <sugar> <alt_sugar> <grams> [alcohol] --new
   ```
 - user-facing message when splitting a multi-item meal: use the user's language only (e.g. "여러 항목을 나눠서 기록할게요"). never expose internal flags, match keys, or English mechanics to the user (DGN-210 i18n baseline + RULES output rules).
+- NEVER narrate scaling/composite step mechanics to the user. do NOT emit planning/step lines such as "Scaled values confirmed", "Now record both as a composite entry", or ANY English working text. portion scaling and per-row `--new` inserts are silent internal mechanics; the ONLY user-facing output is the final record summary in the user's language. English skill text here is internal working material, never a speaking register (RULES output discipline; DGN-503).
 
 ### update existing record (meal-upd)
 
