@@ -773,6 +773,27 @@ import subprocess  # noqa: E402  (write-only; kept separate from top-level impor
 
 HAIKU_MODEL = "haiku"  # claude CLI alias. Verified working (2026-06-24).
 
+# DGN-446: compressor hardening constants.
+# Max items the extractor may return from a single write input before we treat
+# the output as a fragment explosion (extraction failure).
+WRITE_FRAGMENT_CAP = 8
+
+# (a) Scaffolding-line deny-list: extractor narration / preamble patterns that
+# must never become stored items. Conservative: only clearly non-fact shapes.
+# Applied as a post-process filter on raw extractor output in compress_with_haiku.
+_SCAFFOLDING_RES = [
+    # First-person extractor narration ("I'll extract ...", "Let me ...", "Here are ...")
+    re.compile(r"^(I'?ll |Let me |I will |I've |I am |I'm |Here are |Here is |Below are |Below is )",
+               re.IGNORECASE),
+    # Bare "Output:" or any label-colon header (zero content after colon / or only a colon)
+    re.compile(r"^[A-Za-z ]{1,30}:\s*$"),
+    # Instruction-restatement lines that echo what the prompt asked to do
+    re.compile(r"(extract|identify|persistent facts?|long.?term mem|장기 기억|영속적 사실)",
+               re.IGNORECASE),
+    # "User's X:" category headers emitted by the model
+    re.compile(r"^(User'?s |사용자'?s? )\w.*:\s*$", re.IGNORECASE),
+]
+
 COMPRESS_PROMPT = (
     "다음 내용에서 __USER_LABEL__(사용자)에 대해 장기 기억할 가치가 있는 영속적 사실만 골라, "
     "각각 한 줄짜리 원자적 항목으로 압축해라. 잡담/일시적 내용/추측은 버려라. "
@@ -796,6 +817,38 @@ def _scrub_claude_session_env():
         k: v for k, v in _os.environ.items()
         if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE")
     }
+
+
+# DGN-446 (b): structured-input detection heuristics.
+# The compressor is designed for conversational prose. Pre-structured inputs
+# (backlog blocks, spec paragraphs, markdown docs) trigger fragment explosion
+# and fact fabrication. Detect them before invoking the extractor.
+def _is_structured_input(text):
+    """Return True when text looks like pre-structured (non-conversational) prose.
+    Heuristics (any one sufficient):
+    - Markdown bullet density: more than 35% of non-empty lines start with '- ' or '* '
+    - Markdown header presence: at least 2 header lines (##+ ) in the text
+    - Numbered-list density: more than 30% of non-empty lines start with a digit-dot/paren
+    - Code-fence presence: contains a ``` block
+    Conservative: short texts (<3 non-empty lines) are never flagged (not enough signal)."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return False
+
+    bullet = sum(1 for ln in lines if re.match(r"^[\-\*]\s", ln.strip()))
+    headers = sum(1 for ln in lines if re.match(r"^#{1,6}\s", ln.strip()))
+    numbered = sum(1 for ln in lines if re.match(r"^\d+[.)]\s", ln.strip()))
+    has_fence = "```" in text
+
+    if has_fence:
+        return True
+    if headers >= 2:
+        return True
+    if len(lines) > 0 and (bullet / len(lines)) > 0.35:
+        return True
+    if len(lines) > 0 and (numbered / len(lines)) > 0.30:
+        return True
+    return False
 
 
 def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MODEL):
@@ -839,6 +892,11 @@ def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MOD
         # handle "nothing to remember" signal
         if s.upper() == "NONE":
             return []
+        # DGN-446 (a): strip scaffolding / preamble lines the extractor emits.
+        # These are not facts -- they are the model narrating what it is doing.
+        # Deny-list is conservative: only clearly non-fact shapes are dropped.
+        if any(pat.search(s) for pat in _SCAFFOLDING_RES):
+            continue
         items.append(s)
     return items
 
@@ -926,6 +984,22 @@ def cmd_write(args):
         print("[error] input text is empty.", file=sys.stderr)
         return 1
 
+    force = getattr(args, "force", False)
+
+    # DGN-446 (b): input shape gate.
+    # Structured inputs (backlog blocks, spec paragraphs, markdown docs) cause
+    # fragment explosion and fact fabrication. Refuse unless --force is passed.
+    if not force and _is_structured_input(raw):
+        print(
+            "[error] input looks like pre-structured content (markdown bullets/headers/"
+            "numbered list/code fence detected). The compressor is designed for "
+            "conversational prose; structured content causes fragment explosion and "
+            "fact fabrication. This belongs in a ticket or document, not memory.\n"
+            "Pass --force to bypass this check and attempt compression anyway.",
+            file=sys.stderr,
+        )
+        return 2
+
     # 1) compress (with raw-append fallback: a write must never be lost to a
     #    compression failure -- DGN-352)
     compression_ok = True
@@ -936,6 +1010,21 @@ def cmd_write(args):
         compression_ok = False
         # Treat the entire raw text as one uncompressed item so the write survives.
         items = [raw]
+
+    # DGN-446 (c): fragment cap.
+    # More than WRITE_FRAGMENT_CAP items from a single write input is a strong
+    # signal of extraction failure (the extractor over-segmented or hallucinated).
+    # Refuse to store -- same path as the shape gate.
+    if not force and len(items) > WRITE_FRAGMENT_CAP:
+        print(
+            f"[error] extractor returned {len(items)} items from a single write input "
+            f"(cap={WRITE_FRAGMENT_CAP}). This is a fragment-explosion signal -- the "
+            "compressor likely mis-read the input as many separate facts. "
+            "This belongs in a ticket or document, not memory.\n"
+            "Pass --force to bypass this check and store all items anyway.",
+            file=sys.stderr,
+        )
+        return 2
 
     if not items:
         print("No persistent facts worth remembering; nothing stored.")
@@ -3046,6 +3135,8 @@ def main():
     wp.add_argument("--file", default="inbox.md", help="target md file (default inbox.md — specify identity/work-rules/routines/infra/about-user.md when topic is clear)")
     wp.add_argument("--section", default=None, help="target section header (created or appended to end if absent)")
     wp.add_argument("--dry-run", action="store_true", help="show compression result only, do not modify file")
+    wp.add_argument("--force", action="store_true",
+                    help="bypass DGN-446 structured-input gate and fragment-cap guard (use with care)")
 
     cp = sub.add_parser("consolidate", help="nightly consolidation: conversation transcript -> inbox.md distillation")
     cp.add_argument("--dry-run", action="store_true",
