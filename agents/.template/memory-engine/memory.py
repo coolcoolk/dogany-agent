@@ -974,7 +974,16 @@ def compress_with_haiku(raw_text, prompt_prefix=COMPRESS_PROMPT, model=HAIKU_MOD
             env=child_env,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise RuntimeError(f"{model} call failed: {e}")
+        # Do NOT embed str(e) directly: TimeoutExpired.__str__ includes the full cmd
+        # list (which contains the prompt), making the error unreadable in logs and
+        # the retry-queue last_error field (truncated to 500 chars = just prompt text).
+        # Use type name + a safe attribute only.
+        detail = (
+            f"timeout after {e.timeout}s"
+            if isinstance(e, subprocess.TimeoutExpired)
+            else str(e)
+        )
+        raise RuntimeError(f"{model} call failed: {type(e).__name__}: {detail}")
     if proc.returncode != 0:
         raise RuntimeError(f"{model} exited abnormally (rc={proc.returncode}): {proc.stderr.strip()}")
 
@@ -1960,12 +1969,14 @@ def _backup_md(path):
     return bak
 
 
-def _build_consolidate_report(new_items, skipped, had_error, mem_lines):
+def _build_consolidate_report(new_items, skipped, had_error, mem_lines, error_hint=None):
     """Build the Telegram silent-report text (user-friendly, no technical jargon, no bold asterisks).
     new_items: newly stored items (raw one-liners without metadata).
     skipped: count skipped as duplicates (for stdout log only, not included in report).
     had_error: whether an error occurred during consolidation (embedding/compression failure etc.).
     mem_lines: current line count of inbox.md.
+    error_hint: optional short string describing what failed (e.g. "3 chunk(s): rc=1").
+                Appended after the snag line so the Telegram notification carries actionable detail.
     Returns: report string to send, or None (skip sending).
     """
     md = datetime.date.today().strftime("%-m/%-d")
@@ -1987,7 +1998,10 @@ def _build_consolidate_report(new_items, skipped, had_error, mem_lines):
     if over_cap:
         lines.append("Inbox is getting full -- want to sort by topic?")
     if had_error:
-        lines.append("Hit a snag during sorting, please check")
+        snag = "Hit a snag during sorting, please check"
+        if error_hint:
+            snag += f" ({error_hint})"
+        lines.append(snag)
 
     return "\n".join(lines)
 
@@ -2088,7 +2102,8 @@ def cmd_consolidate(args):
             print(f"[consolidate] retry queue untouched ({len(pending_retries)} chunk(s) still queued for retry)")
         conn.close()
         if not args.dry_run and not args.no_push:
-            rep = _build_consolidate_report([], 0, True, 0)
+            _hint = f"all {compress_failed} chunk(s) failed compression"
+            rep = _build_consolidate_report([], 0, True, 0, error_hint=_hint)
             if rep:
                 _send_silent_report(rep)
         return 1
@@ -2255,7 +2270,18 @@ def cmd_consolidate(args):
     except OSError:
         mem_lines = 0
     had_error = embed_failed or compress_failed > 0 or filter_failed
-    report = _build_consolidate_report(new_items, len(dup_items), had_error, mem_lines)
+    # Build a short hint string so the Telegram report names what went wrong
+    # instead of the opaque "Hit a snag" bare message (DGN-523).
+    _error_parts = []
+    if compress_failed > 0:
+        _error_parts.append(f"{compress_failed} chunk(s) failed compression")
+    if filter_failed:
+        _error_parts.append("second-stage filter failed")
+    if embed_failed:
+        _error_parts.append("embedding failed (dedup skipped)")
+    _error_hint = "; ".join(_error_parts) if _error_parts else None
+    report = _build_consolidate_report(new_items, len(dup_items), had_error, mem_lines,
+                                       error_hint=_error_hint)
 
     if report is None:
         print("[consolidate] report send skipped (0 new items, no error, within capacity).")
