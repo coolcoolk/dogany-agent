@@ -104,7 +104,13 @@ _RETRYABLE_TYPES = (
     "BrokenPipeError",
     "OSError",
 )
-_RETRYABLE_MSG = ("timeout", "connection", "refused", "unreachable", "exit code -15", "exit code -9")
+# DGN-517: "maximum buffer size" added so a per-message JSON overflow (SDK
+# raises this from the stdout framer when a single line exceeds max_buffer_size)
+# routes through _reconnect_and_retry instead of killing the reader loop and
+# losing the session. The underlying cause is a large tool result (e.g. base64
+# image); the 16MB ceiling in config.py prevents the common case, but if a
+# message still exceeds it the reader loop must survive.
+_RETRYABLE_MSG = ("timeout", "connection", "refused", "unreachable", "exit code -15", "exit code -9", "maximum buffer size")
 
 
 def _is_retryable_sdk_error(error: Exception) -> bool:
@@ -311,6 +317,11 @@ class SdkBridge:
             # SDK >=0.2 exposes a supported cli_path option (no monkeypatch needed).
             opts["cli_path"] = CLAUDE_CLI_PATH
 
+        logger.info(
+            "Creating SDK stream for user %s (max_buffer_size=%d)",
+            user_id,
+            CLAUDE_MAX_BUFFER_SIZE,
+        )
         client = ClaudeSDKClient(options=ClaudeAgentOptions(**opts))
         await client.connect()
         state = _UserStreamState(client=client, model=model)
