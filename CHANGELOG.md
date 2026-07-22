@@ -5,6 +5,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-22
+
+### Added
+- `skills-bundle/youtube-digest/`: YouTube transcript digest skill promoted
+  from the estate shared-skills incubation tier into the canonical
+  skills-bundle. Ships dormant (present in bundle, not linked by default);
+  per-instance opt-in via the standard default-off skill policy. Includes
+  `SKILL.md` and `yt_fetch.sh` transcript fetcher. (DGN-507)
+- `routines/promote-to-main.sh`: estate-growth promote-to-main script (build
+  step-1). Grill-locked design: `--role` required, `--pack` opt-in, pack-id
+  fail-fast, re-run recovery, depth-1 hardening, P28 order, token gate before
+  class stamp. (DGN-475)
+
+### Fixed
+- `skills-bundle/diet-log/SKILL.md`: guard against English step-narration
+  leak in the portion-scaling and composite-record flow. Internal planning
+  lines were leaking into user-facing replies; the fix keeps scaling and
+  per-row `--new` inserts silent (internal mechanics only), with only the
+  final record summary presented to the user in the configured language.
+  (DGN-503)
+
+### Changed
+- Template cron queue class set to `heavy` for the three stampede-prone
+  Claude crons: `consolidate`, `classify-inbox`, and `mirror-reconcile`.
+  Fresh mints now serialize these jobs via the machine-global cron-guard
+  queue (slots=2, fail-open). Covers macOS plists and the Linux
+  mirror-reconcile `.service` variant. (DGN-360)
+- `bridge/options.py`: `extract_options` now takes the last contiguous
+  `1..N` numbered run in a reply, so a prose description of choices
+  preceding the `[[OPTIONS]]` block no longer suppresses button extraction.
+  A length-1 run broken by a non-consecutive number is still discarded
+  (DGN-085/325 guard preserved). Adds `test_dgn494_multi_list`. (DGN-494)
+- `scripts/pack/mint_run.sh`: owner-id preflight at line 659 changed from a
+  hard fail in dry-run mode to a WARN, mirroring the token-gate behavior.
+  (DGN-475)
+
 ## [1.13.4] - 2026-07-21
 
 ### Fixed
