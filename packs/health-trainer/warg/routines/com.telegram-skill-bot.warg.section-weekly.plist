@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- DGN-238 staged plist: NOT loaded from the sandbox. Sun 20:30
+     (90-min lead on Ag weekly 22:00; transition-judgement subagent
+     dispatch rides this run). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.warg.section-weekly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/opt/dogany/agents/warg/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.warg.section-weekly</string>
+        <string>--log</string>
+        <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-weekly.stdout.log</string>
+        <string>--</string>
+        <string>/bin/bash</string>
+        <string>/opt/dogany/agents/warg/routines/handoff-submit.sh</string>
+        <string>weekly</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/dogany/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/dogany/.local/bin</string>
+        <key>HOME</key>
+        <string>/opt/dogany</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-weekly.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/section-weekly.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/opt/dogany/agents/warg</string>
+</dict>
+</plist>

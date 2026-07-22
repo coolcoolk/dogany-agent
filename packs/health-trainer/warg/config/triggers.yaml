@@ -1,0 +1,22 @@
+# Warg push-gate trigger whitelist -- DGN-238 v3 section 7(a).
+# Flat map: <trigger-id>: <daily cap int | unlimited>
+# Registry additions = USER APPROVAL (V3). Parsed by lib/push_gate.py
+# (stdlib flat-YAML subset; stays valid YAML).
+#
+# v1 registered triggers (spec):
+#   safety-anomaly        safety exception to the 1/day unsolicited budget
+#                         (LOCKED V4 wording) -> uncapped; cap number =
+#                         OPEN QUESTION OQ-R, conservative = never gate a
+#                         safety signal silently.
+#   overlay-expire-resume overlay expiry auto-revert notice (1 user
+#                         notification per v3 section 4)
+#   first-consult-offer   first-consult proactive teaser (OQ-H default:
+#                         counted, 1/day)
+#   redirect-response     dec-013 B': misdelivery relay response --
+#                         user-initiated extension, V4 counter does NOT
+#                         apply (classification baked here, not
+#                         self-declared)
+safety-anomaly: unlimited
+overlay-expire-resume: 1
+first-consult-offer: 1
+redirect-response: unlimited

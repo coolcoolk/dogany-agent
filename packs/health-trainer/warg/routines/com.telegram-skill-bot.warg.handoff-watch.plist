@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- DGN-238 dec-013 B': WatchPaths event ping on the handoff inbox.
+     A file drop fires handoff-consume.sh immediately (no polling, no
+     per-message manual spawn). flock in the consumer keeps concurrent
+     fires single; ThrottleInterval coalesces bursts. Scheduled sweeps
+     04:05/12:30/20:15 remain the loss backstop (missed watch / reboot).
+     STAGED FILE -- NOT loaded from the sandbox (owner-gated). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.warg.handoff-watch</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/opt/dogany/agents/warg/routines/handoff-consume.sh</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>/opt/dogany/agents/warg/files/handoff/inbox</string>
+    </array>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/dogany/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/dogany/.local/bin</string>
+        <key>HOME</key>
+        <string>/opt/dogany</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/handoff-watch.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/dogany/agents/warg/.telegram_bot/logs/handoff-watch.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>/opt/dogany/agents/warg</string>
+</dict>
+</plist>
