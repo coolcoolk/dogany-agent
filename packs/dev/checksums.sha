@@ -2,4 +2,4 @@
 27bbcad6151036b2e3bb44e1bf6def7b1cd75a9927abb7bcf3f17d7a5ed119ef  pack-manifest.json
 0adf91462f8192228d071145faac19a78f6f0ac5946c6416f67ae1a9db3d14e9  refdev/AGENT.md.add
 69cbb1d818840576fb6d8c2db3bf45fe461300bbf6ee105ac8e54a48fdcf37bd  refdev/scripts/claude-usage.sh
-9b9a0a9bafcf5ba558f8a5244cf6717bd0cab5fdf3ef81092d2cb2f983260bb5  refdev/scripts/secret-sweep.sh
+2e9d4fed196bbd6b99189ba1ae6938cafba436bf8c290b08c769b197dd8d39ca  refdev/scripts/secret-sweep.sh
