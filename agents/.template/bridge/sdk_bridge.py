@@ -31,6 +31,7 @@ from claude_agent_sdk import (
 
 from bridge import messages
 from bridge.config import (
+    BRIDGE_REGISTER_GUARD,
     BRIDGE_SCAFFOLD_GUARD,
     CLAUDE_CLI_PATH,
     CLAUDE_MAX_BUFFER_SIZE,
@@ -178,6 +179,114 @@ def _scaffold_guard(text: str) -> str:
                 len(text) - len(kept),
             )
             return kept
+    return text
+
+
+# DGN-376 T2: design-system register guard.
+#
+# Absorbs DGN-429 (language charset guard) + DGN-430 tier-1 (internal-mechanic
+# leak detectors) into ONE guard. v1 STRENGTH = log-warn only: it detects and
+# passes the text through UNCHANGED (no block, no rewrite). v2 block/regenerate
+# (draft recall) is a follow-up ticket and is deliberately not built here.
+#
+# Detection rules are the machine enforcement of DESIGN-SYSTEM.md R2 (text
+# register) doctrine: user-facing output never carries tool names, file paths,
+# the send_file:: marker exposed as prose, or scheduler (launchd/cron) terms,
+# and the user-facing register stays in the configured natural language.
+# Registries are LITERAL and low-false-positive by design -- fuzzy matching is
+# avoided so a legitimate message is never flagged.
+#
+# Gated by BRIDGE_REGISTER_GUARD (default on; the Metal dev agent sets it to 0
+# because developer output legitimately quotes these terms).
+
+# DGN-430: internal tool names. Matched only as a whole word immediately
+# followed by "(" -- i.e. a function/tool call form like "Bash(" -- so prose
+# uses of the common English word ("read the file", "write it down") do not
+# trip. Ordered longest-first is irrelevant here (word-boundary anchored).
+_REGISTER_TOOL_NAMES = (
+    "Bash", "Edit", "Write", "Read", "Grep", "Glob",
+    "Task", "WebFetch", "WebSearch", "NotebookEdit",
+    "TodoWrite", "MultiEdit", "ToolSearch",
+)
+_REGISTER_TOOL_RE = re.compile(
+    r"\b(?:" + "|".join(_REGISTER_TOOL_NAMES) + r")\("
+)
+
+# DGN-430: the send_file:: delivery marker must be CONSUMED by the bridge, never
+# echoed as literal prose. A line that merely starts with it is the legitimate
+# delivery form; the leak we detect is the token appearing inline in text.
+_REGISTER_MARKER_RE = re.compile(r"send_file::")
+
+# DGN-430: filesystem path shapes that only ever come from internal plumbing --
+# absolute home/tmp/root paths and the workspace-relative script dirs. Kept
+# deliberately narrow (must contain a "/" segment) so ordinary text with a
+# slash (dates "7/23", "and/or") does not match.
+_REGISTER_PATH_RE = re.compile(
+    r"(?:/Users/[\w.-]+|/home/[\w.-]+|/tmp/|/private/tmp/)[\w./-]*"
+    r"|\b(?:routines|memory-engine|bridge|worklog)/[\w./-]+\.(?:py|sh|md)\b"
+)
+
+# DGN-430: OS scheduler / process-plumbing terminology that should surface to a
+# user only as an outcome ("set a daily reminder"), never as the mechanism.
+_REGISTER_SCHEDULER_RE = re.compile(
+    r"\b(?:launchd|launchctl|systemd|crontab|cron job|com\.[\w.-]+\.plist)\b",
+    re.IGNORECASE,
+)
+
+# DGN-429: user-facing language charset guard. The configured user locale is
+# ko/en (config.locale). For a ko instance we expect Hangul to be present in a
+# substantive reply; a long reply with ZERO Hangul (and no CJK) is a register
+# slip (the model answered in the framework's working English). Low-false-
+# positive: only fires on locale "ko", on replies over a length floor, and only
+# when Hangul is entirely absent -- short/code-only/link-only replies are
+# exempt. This detector is advisory in v1 (log only).
+_HANGUL_RE = re.compile(r"[가-힣]")
+_LOCALE_MIN_LEN = 80
+
+
+def _register_findings(text: str) -> List[str]:
+    """Return a list of register-violation labels found in text (may be empty).
+
+    Pure detector -- no side effects, no mutation. Used by _register_guard and
+    directly by the tests.
+    """
+    findings: List[str] = []
+    if _REGISTER_TOOL_RE.search(text):
+        findings.append("tool-name")
+    if _REGISTER_MARKER_RE.search(text):
+        findings.append("send_file-marker")
+    if _REGISTER_PATH_RE.search(text):
+        findings.append("internal-path")
+    if _REGISTER_SCHEDULER_RE.search(text):
+        findings.append("scheduler-term")
+    locale = getattr(config, "locale", "") or ""
+    if (
+        locale.startswith("ko")
+        and len(text) >= _LOCALE_MIN_LEN
+        and not _HANGUL_RE.search(text)
+    ):
+        findings.append("locale-register")
+    return findings
+
+
+def _register_guard(text: str) -> str:
+    """Log-warn register guard (DGN-376 T2, v1). Returns text UNCHANGED.
+
+    Detects internal-mechanic leaks and user-language register slips in
+    outgoing user-facing text and logs a WARNING listing the violation kinds.
+    v1 never blocks or rewrites -- detection is the deliverable; v2 owns the
+    block/regenerate path (draft recall design). No-op when the guard is gated
+    off (BRIDGE_REGISTER_GUARD=0, e.g. the Metal dev agent) or text is empty.
+    """
+    if not BRIDGE_REGISTER_GUARD or not text:
+        return text
+    findings = _register_findings(text)
+    if findings:
+        logger.warning(
+            "Register guard (v1 log-warn) flagged outgoing text: %s (%d chars)",
+            ", ".join(findings),
+            len(text),
+        )
     return text
 
 
@@ -489,7 +598,10 @@ class SdkBridge:
                         if isinstance(block, TextBlock):
                             # DGN-285: guard at ingestion so both the final
                             # assembly and the live streaming drafts are clean.
-                            block_text = _scaffold_guard(block.text)
+                            # DGN-376 T2 seat 1/3: register guard (log-warn)
+                            # runs as the next pipeline stage after the scaffold
+                            # guard, on the same ingestion path.
+                            block_text = _register_guard(_scaffold_guard(block.text))
                             req.last_assistant_texts.append(block_text)
                             if req.streaming_handler:
                                 try:
@@ -593,7 +705,12 @@ class SdkBridge:
                 return
             for block in msg.content:
                 if isinstance(block, TextBlock):
-                    state.proactive_texts.append(_scaffold_guard(block.text))
+                    # DGN-376 T2 seat 2/3: proactive push bypasses
+                    # _finalize_result, so the register guard must ride here or
+                    # briefing/routine pushes escape it entirely (grill M3).
+                    state.proactive_texts.append(
+                        _register_guard(_scaffold_guard(block.text))
+                    )
             return
 
         if isinstance(msg, ResultMessage):
@@ -697,7 +814,8 @@ class SdkBridge:
             result_text = block_text
         # DGN-285 (leak class 2): signature guard also covers the msg.result
         # fallback path, which bypasses the guarded block capture above.
-        result_text = _scaffold_guard(result_text)
+        # DGN-376 T2 seat 3/3: register guard (log-warn) on the finalized text.
+        result_text = _register_guard(_scaffold_guard(result_text))
         if req.streaming_handler:
             try:
                 await req.streaming_handler.finalize_all()
