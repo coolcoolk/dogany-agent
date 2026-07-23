@@ -33,6 +33,7 @@
 # Dump JSON:      python3 design_tokens.py --json
 
 import json
+import os
 import re
 import sys
 
@@ -60,6 +61,7 @@ BRAND = {
     "navy":        "#13132B",  # card background
     "navy-panel":  "#1A1A35",  # raised panel
     "navy-quote":  "#1C1C3A",  # quote / inset block
+    "navy-seg":    "#1C1C38",  # inset bar segment (diet exercise track)
     "navy-track":  "#2A2A50",  # progress track base
     "navy-line":   "#2A2A55",  # separator / panel edge
     # ink family (text on navy)
@@ -67,6 +69,11 @@ BRAND = {
     "ink-soft":    "#C4D4FF",  # secondary text / labels
     "ink-value":   "#DDDDEE",  # value text
     "grey":        "#888899",  # fallback / unknown-category grey
+    # air-quality / status grade scale (measured from the brief card)
+    "grade-good":  "#2ECC71",  # good (== green)
+    "grade-ok":    "#A8D86E",  # normal
+    "grade-bad":   "#95A5A6",  # bad
+    "grade-vbad":  "#636E72",  # very bad
 }
 
 # Font tokens (measured from card scripts; files ship in
@@ -183,6 +190,49 @@ def to_json():
     return json.dumps(
         {"brand": BRAND, "fonts": FONTS, "themes": THEMES},
         indent=2, sort_keys=True,
+    )
+
+
+# The bundled TTFs live under the diet-log skill bundle; every card script
+# resolved them by walking up to <agent_root>/.claude/skills-bundle/diet-log/
+# fonts/. Centralize that walk here so card scripts consume FONTS through one
+# token-owned resolver instead of each re-deriving the path (DGN-376 T3).
+_FONT_BUNDLE_REL = os.path.join(
+    ".claude", "skills-bundle", "diet-log", "fonts"
+)
+
+
+def find_font_dir(start=None):
+    """Locate the bundled font dir, or None. AGENT_ROOT env first, then a
+    walk up from `start` (default: this module's dir). Same lookup shape as
+    the card scripts' former _find_font_dir()."""
+    agent_root = os.environ.get("AGENT_ROOT", "")
+    if agent_root:
+        cand = os.path.join(agent_root, _FONT_BUNDLE_REL)
+        if os.path.isdir(cand):
+            return cand
+    base = start or os.path.dirname(os.path.abspath(__file__))
+    parent = base
+    for _ in range(6):
+        cand = os.path.join(parent, _FONT_BUNDLE_REL)
+        if os.path.isdir(cand):
+            return cand
+        nxt = os.path.dirname(parent)
+        if nxt == parent:
+            break
+        parent = nxt
+    return None
+
+
+def font_paths(start=None):
+    """Return (medium_ttf, extrabold_ttf) absolute paths, or ('', '') if the
+    bundle is not found. Names come from the FONTS token block."""
+    fdir = find_font_dir(start)
+    if not fdir:
+        return "", ""
+    return (
+        os.path.join(fdir, FONTS["medium"]),
+        os.path.join(fdir, FONTS["extrabold"]),
     )
 
 

@@ -40,8 +40,11 @@ differs): DGN-535 (skill rule examples).
   `to_json()` as the language-neutral export for vendoring and drift lint.
 - Layer A `BRAND`: named family hues. Canonicalized by measurement from the
   incumbent card palette (teal `#4ECDC4` / amber `#FFD166` / coral
-  `#FF6B6B` on navy `#13132B` ground, plus ink/secondary families) and the
+  `#FF6B6B` on navy `#13132B` ground, plus ink/secondary families, the navy
+  ground sub-tones, and the air-quality/status `grade-*` scale) and the
   README diagram set. New brand colors are added here and only here.
+  `FONTS` names the bundled ASDGN faces; `font_paths()` is the token-owned
+  walk-up resolver card scripts consume instead of each re-deriving the path.
 - Layer B `THEMES`: per-surface mappings filling 11 semantic slots
   (`bg surface border text muted accent green yellow red purple orange` --
   the measured console `:root` vocabulary, adopted estate-wide). A slot
@@ -78,7 +81,7 @@ differs): DGN-535 (skill rule examples).
 
 | # | Point | Surface | Mechanism | Status |
 |---|-------|---------|-----------|--------|
-| 1 | Token import | card scripts (telegram) | replace module constants with design_tokens import | T3 |
+| 1 | Token import | card scripts (telegram) | replace module constants with design_tokens import | T3 done (.template canon; 4-way copies = v2) |
 | 2 | Register guard | bridge output (3 seats) | guard fn, v1 log-warn | T2 done (log-warn) |
 | 3 | Token import | matplotlib chart scripts | same import replacement, 4-way | v2 |
 | 4 | Drift lint | console vendored copy / doc hygiene | estate-doc-watch R6 lint + skill-creator hint | v2 |

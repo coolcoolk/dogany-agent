@@ -43,34 +43,37 @@ LON = _args.lon
 OUT_PATH = _args.output
 
 # ---------------------------------------------------------------------------
-# Font resolution
-# Search order:
-#   1. AGENT_ROOT env var  -> <AGENT_ROOT>/.claude/skills-bundle/diet-log/fonts/
-#   2. Script parent chain -> look 2 levels up for .claude/skills-bundle/diet-log/fonts/
-#   3. Fall back to matplotlib default
+# Design tokens (DGN-376 T3): palette + fonts come from the single token canon
+# (routines/lib/design_tokens.py), not hardcoded here. This script sits in
+# routines/bundle/, so routines/lib/ is a sibling -- resolve it by walking up
+# and importing the module by file path (no package install assumed).
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def _find_font_dir():
-    # Try AGENT_ROOT env
-    agent_root = os.environ.get('AGENT_ROOT', '')
-    if agent_root:
-        candidate = os.path.join(agent_root, '.claude', 'skills-bundle', 'diet-log', 'fonts')
-        if os.path.isdir(candidate):
-            return candidate
-    # Try walking up from script dir (bundle/ -> routines/ -> agent root)
-    for levels in range(1, 5):
-        parent = _SCRIPT_DIR
-        for _ in range(levels):
-            parent = os.path.dirname(parent)
-        candidate = os.path.join(parent, '.claude', 'skills-bundle', 'diet-log', 'fonts')
-        if os.path.isdir(candidate):
-            return candidate
-    return None
+def _load_design_tokens():
+    import importlib.util
+    parent = _SCRIPT_DIR
+    for _ in range(6):
+        cand = os.path.join(parent, 'routines', 'lib', 'design_tokens.py')
+        if os.path.isfile(cand):
+            spec = importlib.util.spec_from_file_location('design_tokens', cand)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        nxt = os.path.dirname(parent)
+        if nxt == parent:
+            break
+        parent = nxt
+    raise ImportError('design_tokens.py not found from %s' % _SCRIPT_DIR)
 
-_FONT_DIR = _find_font_dir()
-FONT_MED  = os.path.join(_FONT_DIR, 'ASDGN_Medium.ttf')   if _FONT_DIR else ''
-FONT_XBLD = os.path.join(_FONT_DIR, 'ASDGN_ExtraBold.ttf') if _FONT_DIR else ''
+_tokens = _load_design_tokens()
+_T = _tokens.theme('card-dark')
+_BRAND = _tokens.BRAND
+
+# ---------------------------------------------------------------------------
+# Font resolution (via token FONTS + shared walk-up resolver)
+# ---------------------------------------------------------------------------
+FONT_MED, FONT_XBLD = _tokens.font_paths(_SCRIPT_DIR)
 
 def _resolve_fonts():
     if FONT_MED and FONT_XBLD and os.path.exists(FONT_MED) and os.path.exists(FONT_XBLD):
@@ -83,26 +86,28 @@ def _resolve_fonts():
 prop, bold_prop = _resolve_fonts()
 
 # ---------------------------------------------------------------------------
-# Color palette (dark theme)
+# Color palette (dark theme) -- derived from the card-dark token theme.
+# Values are pixel-identical to the former hardcoded block by construction
+# (Layer A was canonicalized from this very palette, DGN-376 T1).
 # ---------------------------------------------------------------------------
-BG         = '#13132B'
-INK        = '#FFFFFF'
-INK_SOFT   = '#C4D4FF'
-INK_VALUE  = '#DDDDEE'
-TRACK_BASE = '#2A2A50'
-SEP_LINE   = '#2A2A55'
-ACCENT     = '#4ECDC4'
-WARM       = '#FFD166'
-QUOTE_BG   = '#1C1C3A'
-PANEL_BG   = '#1A1A35'
-PANEL_EDGE = '#2A2A55'
+BG         = _T['bg']
+INK        = _T['text']
+INK_SOFT   = _T['muted']
+INK_VALUE  = _BRAND['ink-value']
+TRACK_BASE = _BRAND['navy-track']
+SEP_LINE   = _BRAND['navy-line']
+ACCENT     = _T['accent']
+WARM       = _T['yellow']
+QUOTE_BG   = _BRAND['navy-quote']
+PANEL_BG   = _T['surface']
+PANEL_EDGE = _BRAND['navy-line']
 
-# Air quality grade display colors
+# Air quality grade display colors (grade scale tokens)
 AQ_COLORS = {
-    '좋음':     '#2ECC71',   # good
-    '보통':     '#A8D86E',   # normal
-    '나쁨':     '#95A5A6',   # bad
-    '매우나쁨': '#636E72',   # very bad
+    '좋음':     _BRAND['grade-good'],   # good
+    '보통':     _BRAND['grade-ok'],     # normal
+    '나쁨':     _BRAND['grade-bad'],    # bad
+    '매우나쁨': _BRAND['grade-vbad'],   # very bad
 }
 # Readable mapping for internal use
 _AQ_GOOD    = '좋음'
