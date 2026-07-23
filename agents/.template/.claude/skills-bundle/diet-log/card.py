@@ -61,6 +61,31 @@ if _DATA_DIR not in sys.path:
     sys.path.insert(0, _DATA_DIR)
 import lifekit as life
 
+# -- Design tokens (single canon; DGN-376 T3) ---------------------------------
+# design_tokens.py lives at <agent_root>/routines/lib/. This script is under
+# .claude/skills-bundle/diet-log/, so walk up and import it by file path
+# (no package install assumed). Loaded before fonts/colors, which consume it.
+def _load_design_tokens():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    parent = here
+    for _ in range(8):
+        cand = os.path.join(parent, 'routines', 'lib', 'design_tokens.py')
+        if os.path.isfile(cand):
+            spec = importlib.util.spec_from_file_location('design_tokens', cand)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        nxt = os.path.dirname(parent)
+        if nxt == parent:
+            break
+        parent = nxt
+    raise ImportError('design_tokens.py not found from %s' % here)
+
+_tokens = _load_design_tokens()
+_T = _tokens.theme('card-dark')
+_BRAND = _tokens.BRAND
+
 # -- Fonts (path-independent, graceful) ---------------------------------------
 # Preference order:
 #   1) Bundled TTFs shipped with the skill (fonts/*.ttf) -- fully portable.
@@ -68,9 +93,11 @@ import lifekit as life
 #      first, then common macOS locations) -- best effort only.
 #   3) Fall back to matplotlib's default font (CJK may not render, but the card
 #      still draws). Never hardcode an absolute font path as a hard dependency.
+# Font filenames come from the token FONTS block (DGN-376 T3); this skill owns
+# the physical fonts/ dir locally (plus a system-TTC extraction fallback).
 FONT_DIR  = os.path.join(os.path.dirname(__file__), 'fonts')
-FONT_MED  = os.path.join(FONT_DIR, 'ASDGN_Medium.ttf')
-FONT_XBLD = os.path.join(FONT_DIR, 'ASDGN_ExtraBold.ttf')
+FONT_MED  = os.path.join(FONT_DIR, _tokens.FONTS['medium'])
+FONT_XBLD = os.path.join(FONT_DIR, _tokens.FONTS['extrabold'])
 
 # Candidate system TTC files to source the fonts from if the bundled TTFs are
 # missing. Env override wins; then common CJK-capable system fonts.
@@ -152,28 +179,30 @@ def load_from_life_db(iso_date):
     return life.load_card_data(iso_date)
 
 
-# -- Colors (dark theme) ------------------------------------------------------
-BG          = '#13132B'
-INK         = '#FFFFFF'
-INK_SOFT    = '#C4D4FF'
-INK_VALUE   = '#DDDDEE'
-TRACK_BASE  = '#2A2A50'
-BAR_EXERCISE_SEG = '#1C1C38'
-BURN_ACCENT = '#FF9F43'
-INTAKE_FILL = '#FF6B6B'
-SEP_LINE    = '#2A2A55'
+# -- Colors (dark theme) -- from the single token canon (DGN-376 T3) ----------
+# Values are pixel-identical to the former hardcoded block by construction
+# (Layer A / card-dark was canonicalized from this palette, DGN-376 T1).
+BG          = _T['bg']
+INK         = _T['text']
+INK_SOFT    = _T['muted']
+INK_VALUE   = _BRAND['ink-value']
+TRACK_BASE  = _BRAND['navy-track']
+BAR_EXERCISE_SEG = _BRAND['navy-seg']
+BURN_ACCENT = _T['orange']
+INTAKE_FILL = _T['red']
+SEP_LINE    = _BRAND['navy-line']
 
 MACRO_COLORS = {
-    '단백질':   '#4ECDC4',
-    '탄수화물': '#FFD166',
-    '지방':     '#A8E6CF',
+    '단백질':   _T['accent'],   # teal
+    '탄수화물': _T['yellow'],   # amber
+    '지방':     _BRAND['mint'],
 }
 MEAL_COLORS = {
-    '아침': '#FF6B6B',
-    '점심': '#4ECDC4',
-    '저녁': '#A8E6CF',
-    '간식': '#FFD166',
-    '운동': '#FF9F43',
+    '아침': _T['red'],          # coral
+    '점심': _T['accent'],       # teal
+    '저녁': _BRAND['mint'],
+    '간식': _T['yellow'],       # amber
+    '운동': _T['orange'],
 }
 
 
