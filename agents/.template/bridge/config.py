@@ -234,7 +234,21 @@ CLAUDE_MAX_BUFFER_SIZE = int(
 # sdk_bridge._scaffold_guard). Default ON when unset; set
 # BRIDGE_SCAFFOLD_GUARD=0 on channels that legitimately quote the guarded
 # signature strings (e.g. a dev channel pasting incident reports).
+# See also BRIDGE_REGISTER_GUARD below (DGN-376 T2).
 BRIDGE_SCAFFOLD_GUARD = os.getenv("BRIDGE_SCAFFOLD_GUARD", "1").strip().lower() not in (
+    "0",
+    "false",
+    "off",
+    "no",
+    "",
+)
+# DGN-376 T2: design-system register guard for outgoing user-facing text
+# (see sdk_bridge._register_guard). v1 strength = log-warn only (detect and
+# pass, never block or rewrite). Default ON when unset. Same env-gate seam as
+# BRIDGE_SCAFFOLD_GUARD: the Metal dev agent sets BRIDGE_REGISTER_GUARD=0 in
+# its environment (developer output legitimately quotes tool names / paths /
+# scheduler terms), so the exemption is a deploy-time value, not a code fork.
+BRIDGE_REGISTER_GUARD = os.getenv("BRIDGE_REGISTER_GUARD", "1").strip().lower() not in (
     "0",
     "false",
     "off",

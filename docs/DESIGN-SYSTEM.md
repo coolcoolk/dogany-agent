@@ -59,20 +59,27 @@ differs): DGN-535 (skill rule examples).
   mechanics in user-facing text, user-language speech, no asterisk-bold,
   table rendering rules, [[OPTIONS]] contract. This document does NOT copy
   them; it binds them to enforcement points. RULES stays the prose canon.
-- Register guard (T2, DGN-429+430 merged): one guard function, three
-  mandatory seats in the bridge (ingestion / proactive / finalize -- the
-  proactive seat exists because routine pushes bypass finalize, grill M3).
-  Strength is staged: v1 log-warn, v2 block/regenerate (v2 needs draft
-  recall design because streaming sends drafts early).
+- Register guard (T2, DGN-429+430 merged): one guard function
+  (`sdk_bridge._register_guard`), three mandatory seats in the bridge
+  (ingestion / proactive / finalize -- the proactive seat exists because
+  routine pushes bypass finalize, grill M3). Detectors are literal,
+  low-false-positive: tool-name call form, `send_file::` marker, internal
+  path shapes, scheduler terms (launchd/cron), and a ko-locale register
+  slip check. Strength is staged: v1 log-warn (detect and pass unchanged),
+  v2 block/regenerate (v2 needs draft recall design because streaming sends
+  drafts early).
 - Exemption: Metal (dev agent) is exempt from the register guard
-  (owner decision 2026-07-23).
+  (owner decision 2026-07-23). Mechanism: the `BRIDGE_REGISTER_GUARD` env
+  gate (default on; Metal deploys with `=0`), mirroring the
+  `BRIDGE_SCAFFOLD_GUARD` seam -- exemption is a deploy-time value, not a
+  code fork, so the template stays identical estate-wide.
 
 ### R3. Enforcement points map
 
 | # | Point | Surface | Mechanism | Status |
 |---|-------|---------|-----------|--------|
 | 1 | Token import | card scripts (telegram) | replace module constants with design_tokens import | T3 |
-| 2 | Register guard | bridge output (3 seats) | guard fn, v1 log-warn | T2 (first to ship) |
+| 2 | Register guard | bridge output (3 seats) | guard fn, v1 log-warn | T2 done (log-warn) |
 | 3 | Token import | matplotlib chart scripts | same import replacement, 4-way | v2 |
 | 4 | Drift lint | console vendored copy / doc hygiene | estate-doc-watch R6 lint + skill-creator hint | v2 |
 
