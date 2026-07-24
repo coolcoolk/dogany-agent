@@ -1810,6 +1810,36 @@ if [ "$DRY_RUN" = "1" ]; then
 else
   msg "[update] 완료. 브릿지 재시작이 필요하면 승인 후 진행하세요." \
       "[update] done. If the bridge needs a restart, do so with approval."
+
+  # ---------------------------------------------------------------------------
+  # Auto-commit: if the instance is a git repo and the update left uncommitted
+  # changes, commit them now so framework updates are captured in history.
+  # Rationale: without this step, update.sh installs files but never commits,
+  # causing silent drift accumulation (DGN-557).
+  # Guard: a failed commit never fails the update (|| true); warning is printed
+  # so the operator knows to investigate. .gitignore is respected by git add -A,
+  # so runtime artifacts (*.user-*, skill-backups/, etc.) stay out.
+  # ---------------------------------------------------------------------------
+  if [ -d "$INSTANCE/.git" ]; then
+    _porcelain="$(git -C "$INSTANCE" status --porcelain 2>/dev/null)"
+    if [ -n "$_porcelain" ]; then
+      _fw_ver="${REPO_VERSION:-unknown}"
+      msg "[update] 변경 사항 자동 커밋 중 (프레임워크 ${_fw_ver}) ..." \
+          "[update] auto-committing framework update changes (${_fw_ver}) ..."
+      (
+        git -C "$INSTANCE" add -A \
+          && git -C "$INSTANCE" commit \
+               -m "framework update ${_fw_ver} [auto]" \
+               --no-verify
+      ) || {
+        msg "[update][경고] 자동 커밋 실패 -- 수동으로 커밋하세요 (git status -s 로 확인)." \
+            "[update][WARN] auto-commit failed -- please commit manually (check: git status -s)."
+      }
+    else
+      msg "[update] 인스턴스 git 변경 없음 -- 자동 커밋 건너뜀." \
+          "[update] instance git: no changes after update -- auto-commit skipped."
+    fi
+  fi
 fi
 
 # WSL: nag (never fail) if the Windows-side setup drifted below the required version.
