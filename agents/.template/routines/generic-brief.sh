@@ -81,6 +81,7 @@ i18n_get() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get
 ADDRESS="$(conf_get AGENT_ADDRESS | tr -d '[:space:]')"
 [[ -z "$ADDRESS" ]] && ADDRESS="$(i18n_get address)"
 TONE="$(i18n_get tone_guide)"
+if [[ "$AGENT_LANG" == "ko" ]]; then SCHED_HEADER="📅 오늘 일정"; else SCHED_HEADER="📅 Today's Schedule"; fi
 
 # Role prose (generic life-assistant default; DGN-420 confirmed input). The
 # instance's own ROLE_PROSE (onboarding/pack stamp) wins when present; the
@@ -180,7 +181,7 @@ Write in the user's language (locale: ${AGENT_LANG}). Address the user as: ${ADD
 Your role: ${ROLE_PROSE}
 Tone rules: ${TONE}
 
-Compose a short, warm ${SLOT} briefing from the data below. Lead with a one-line greeting in your own voice; then render the schedule (omit the section entirely if none -- no filler); include highlights / my section / peer sections only when present, each verbatim as its own short block. Never invent facts or numbers. Output the message body only.
+Compose a short, warm ${SLOT} briefing from the data below. Lead with a one-line greeting in your own voice; then render the schedule under a header line that reads EXACTLY '${SCHED_HEADER}' (omit the section entirely if none -- no filler; header and bullets stay plain, no markdown); include highlights / my section / peer sections only when present, each verbatim as its own short block. Never invent facts or numbers. Output the message body only.
 
 === DATA ===
 ${data}
