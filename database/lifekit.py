@@ -1073,7 +1073,7 @@ def load_card_data(iso_date, conn=None):
 # facade time parser). datetime/timezone are already imported at file top.
 from zoneinfo import ZoneInfo
 
-EXPECTED_USER_VERSION = 8  # 008_travel_blocks (DGN-274)
+EXPECTED_USER_VERSION = 9  # 009_spend_tables (DGN-553)
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
