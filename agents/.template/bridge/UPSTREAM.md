@@ -12,8 +12,10 @@ This `bridge/` directory is a VENDORED (in-tree) copy of the standalone Telegram
   OSS 01764ee),
   DGN-541 (dashboard.py debounced empty-delete pin state machine; OSS commit
   883841f, local -- OSS push pending owner approval),
-  DGN-555 (selective reply-linking; pushed OSS 7dedc41).
-  Base pin held (pre-existing STREAM_INTERIM drift vs OSS HEAD).
+  DGN-555 (selective reply-linking; pushed OSS 7dedc41),
+  DGN-558 (DGN-426 C-strict interim suppression ported from OSS c2d64a4:
+  STREAM_INTERIM config + stop_reason gate pair; resolves the previously
+  noted STREAM_INTERIM drift vs OSS HEAD).
 
 ## Why vendored instead of a git submodule
 

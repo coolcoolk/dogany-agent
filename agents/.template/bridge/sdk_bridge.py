@@ -24,6 +24,7 @@ from claude_agent_sdk import (
     PermissionResultAllow,
     PermissionResultDeny,
     ResultMessage,
+    ServerToolUseBlock,
     SystemMessage,
     TextBlock,
     ToolUseBlock,
@@ -36,6 +37,7 @@ from bridge.config import (
     CLAUDE_CLI_PATH,
     CLAUDE_MAX_BUFFER_SIZE,
     PROCESS_TIMEOUT,
+    STREAM_INTERIM,
     config,
 )
 from bridge.options import OPTIONS_MARKER, classify_is_choice, has_numbered_list
@@ -594,6 +596,18 @@ class SdkBridge:
                     if getattr(msg, "parent_tool_use_id", None):
                         continue
                     req.last_assistant_texts = []
+                    # DGN-426 C-strict: determine whether this message is terminal.
+                    # stop_reason="end_turn" is the measured 100%-clean terminality
+                    # signal (164 turns). "tool_use", None, or a ServerToolUseBlock
+                    # present -> non-terminal (suppress live display; typing indicator
+                    # is the only feedback). When STREAM_INTERIM is True the gating
+                    # is bypassed and all TextBlocks display live (pre-DGN-426 behavior).
+                    stop_reason = getattr(msg, "stop_reason", None)
+                    has_server_tool = any(
+                        isinstance(b, ServerToolUseBlock) for b in msg.content
+                    )
+                    is_terminal = stop_reason == "end_turn" and not has_server_tool
+                    live_stream = STREAM_INTERIM or is_terminal
                     for block in msg.content:
                         if isinstance(block, TextBlock):
                             # DGN-285: guard at ingestion so both the final
@@ -603,7 +617,7 @@ class SdkBridge:
                             # guard, on the same ingestion path.
                             block_text = _register_guard(_scaffold_guard(block.text))
                             req.last_assistant_texts.append(block_text)
-                            if req.streaming_handler:
+                            if req.streaming_handler and live_stream:
                                 try:
                                     await req.streaming_handler.update_if_needed(block_text)
                                 except Exception as e:
