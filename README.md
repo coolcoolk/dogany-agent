@@ -128,12 +128,15 @@ root, and each agent lives under `agents/`.
   `dogany-skill-creator`, `dogany-upstream-report`, `dogany-user-onboarding`).
   A minted instance carries its own real copies under
   `.claude/skills/`. Domain (lifekit) skills -- `diet-log`, `workout-log`,
-  `appointment-log`, `relationship`, `relationship-care`, `task-update` -- ship
-  DORMANT as real dirs under `.claude/skills-bundle/` and are activated only
-  post-mint by the `dogany-lifekit-setup` skill, which creates an instance-local
-  symlink `.claude/skills/<id> -> ../skills-bundle/<id>`. They are never
-  pre-placed as live dirs under `.claude/skills/` (that would make the bundle
-  un-gateable).
+  `appointment-log`, `relationship`, `relationship-care`, `task-update`,
+  `dogany-routine` -- ship DORMANT as real dirs under `.claude/skills-bundle/`
+  and are activated only post-mint by the `dogany-lifekit-setup` skill, which
+  creates an instance-local symlink `.claude/skills/<id> -> ../skills-bundle/<id>`.
+  They are never pre-placed as live dirs under `.claude/skills/` (that would
+  make the bundle un-gateable). Non-lifekit opt-in skills also ship dormant in
+  `skills-bundle/` with their own activation paths: `agent-browser` (activated
+  during install via the browser automation opt-in step) and `youtube-digest`
+  (activated post-mint by asking the agent to enable YouTube summaries).
 - **`database/`** -- `lifekit.py` / `lifekit.sh`, an optional structured-data
   lane (a local SQLite "life OS": meals, workouts, people, appointments). CODE
   ONLY -- `schema.sql` is the structure; no `*.db` data is shipped.
