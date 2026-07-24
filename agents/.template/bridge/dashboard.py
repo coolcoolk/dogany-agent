@@ -31,6 +31,18 @@ Pin lifecycle: no probe edit at startup. When an edit fails with "message to
 edit not found" or "message can't be edited" (token-swap collision), the
 message is recreated: send + pin(disable_notification) + state save, guarded
 by a recreate cooldown (armed on success only) against chained recreation.
+
+Empty content (DGN-541 S1): an empty dashboard.md is the generator's hide
+signal.  It drives a mechanical, debounced delete state machine: an empty
+read with a live message_id only MARKS "empty pending"; the actual
+unpin+delete runs after the empty state persisted EMPTY_DEBOUNCE_SECS
+(kills flapping from generator false-empties).  Not-found on delete
+converges as success (dead message_id, e.g. a restart that lost the
+post-delete state save -- the first tick after boot is always dirty, so a
+ghost pin never survives a restart).  Delete failures fail open (state
+kept, retried on a later tick).  Re-appearance goes through the normal
+recreate path (send+pin, both silent, RECREATE_COOLDOWN unchanged and
+separate from the empty debounce).
 An old message_id (e.g. left behind by a bot-token swap) gets a best-effort
 unpin; failures are ignored. "message is not modified" is normal flow
 (streaming._is_not_modified precedent). Terminal chat-level errors ("chat
@@ -64,6 +76,10 @@ STATE_FILE: Path = config.bot_data_dir / "dashboard_state.json"
 POLL_INTERVAL = 3.0       # seconds between mtime checks (spec: ~3s)
 MIN_EDIT_INTERVAL = 3.0   # min seconds between edits per chat (spec: >=3s)
 RECREATE_COOLDOWN = 60.0  # min seconds between send+pin recreations
+# Empty state must persist this long before the pinned message is actually
+# unpinned+deleted (DGN-541 S1 debounce, spec range [30, 60]).  Separate
+# from RECREATE_COOLDOWN by design.
+EMPTY_DEBOUNCE_SECS = 45.0
 # Telegram's 4096 message limit counts UTF-16 code units. The GENERATOR owns
 # the smart, section-aware length cut (pending decisions preserved first);
 # this bridge-side value only backs a dumb tail-cut safeguard so an oversized
@@ -114,6 +130,26 @@ def _is_chat_gone(error: Exception) -> bool:
     return "chat not found" in str(error).lower()
 
 
+def _is_message_gone(error: Exception) -> bool:
+    """Delete errors proving the message is ALREADY gone -> success.
+
+    "message to delete not found": deleted earlier (e.g. a restart lost the
+    post-delete state save) or the id belongs to another bot.  Converging a
+    dead message_id here is what keeps the delete path idempotent (DGN-541).
+    """
+    text = str(error).lower()
+    return "message to delete not found" in text or "message not found" in text
+
+
+def _is_undeletable(error: Exception) -> bool:
+    """Permanent delete refusal: a bot cannot delete-for-everyone a message
+    older than 48h.  Retrying never succeeds, so once the best-effort unpin has
+    hidden the board we converge and drop the id -- the orphan body stays in
+    the chat, unpinned (DGN-541).
+    """
+    return "can't be deleted for everyone" in str(error).lower()
+
+
 class DashboardSync:
     """Async task syncing dashboard.md into the pinned owner-chat message."""
 
@@ -137,6 +173,9 @@ class DashboardSync:
         self._last_edit: Optional[float] = None      # monotonic
         self._last_recreate: Optional[float] = None  # monotonic
         self._flood_until: float = 0.0               # monotonic deadline
+        # First empty read (monotonic) while a message is pinned; None when
+        # content is present or no delete is pending (DGN-541 S1 debounce).
+        self._empty_since: Optional[float] = None
         self._load_state()
 
     # --- state file ({chat_id, message_id}, atomic writes) ---
@@ -257,8 +296,78 @@ class DashboardSync:
         except OSError:
             return
         if not text.strip():
-            return  # empty content: nothing to render (Telegram rejects "")
+            # Empty board = generator hide signal: drive the debounced
+            # delete state machine instead of leaving a stale pin (DGN-541).
+            await self._handle_empty(chat_id, mtime)
+            return
+        self._empty_since = None  # content is back; cancel any pending delete
         await self._sync(chat_id, _tail_cut(text), mtime)
+
+    # --- empty content: debounced unpin+delete (DGN-541 S1) ---
+
+    async def _handle_empty(self, chat_id: int, mtime: float) -> None:
+        """Debounced unpin+delete of the pinned message on empty content.
+
+        Mechanical only: empty vs non-empty plus timers -- no content
+        decisions.  First empty read MARKS "empty pending" (stays dirty, no
+        delete); the actual unpin+delete runs only once the empty state has
+        persisted EMPTY_DEBOUNCE_SECS.  Not-found converges as success;
+        other failures fail open (state kept, retried on a later tick).
+        After a completed delete message_id is marked None and the state
+        saved, so later Stops do not re-attempt the delete in a loop.
+        """
+        now = time.monotonic()
+        if self._message_id is None:
+            # Nothing pinned: empty content is already converged.
+            self._empty_since = None
+            self._mark_synced(mtime, now)
+            return
+        if self._empty_since is None:
+            self._empty_since = now  # mark pending; stay dirty, no delete yet
+            return
+        if (now - self._empty_since) < EMPTY_DEBOUNCE_SECS:
+            return  # debounce running; stay dirty
+        # Best-effort unpin first; the delete is the authoritative removal.
+        try:
+            await self._bot.unpin_chat_message(
+                chat_id=chat_id, message_id=self._message_id
+            )
+        except telegram.error.TelegramError:
+            pass
+        try:
+            await self._bot.delete_message(
+                chat_id=chat_id, message_id=self._message_id
+            )
+        except telegram.error.RetryAfter as e:
+            self._flood_until = now + float(getattr(e, "retry_after", 5.0))
+            return  # stay dirty; retried after the flood wait
+        except telegram.error.Forbidden as e:
+            logger.warning("Dashboard chat forbidden on delete (%s); state reset", e)
+            self._clear_state()
+            return
+        except telegram.error.TelegramError as e:
+            if not _is_message_gone(e):
+                if _is_chat_gone(e):
+                    logger.warning(
+                        "Dashboard chat unusable on delete (%s); state reset", e
+                    )
+                    self._clear_state()
+                    return
+                if not _is_undeletable(e):
+                    # Fail-open: keep state, retry on a later tick, never crash.
+                    logger.warning("Dashboard delete failed (retrying later): %s", e)
+                    return
+                # Undeletable (48h age limit): the best-effort unpin already hid
+                # the board, so converge and drop the id -- retrying can never
+                # succeed.  The orphan body stays in the chat, unpinned.
+                logger.info(
+                    "Dashboard message undeletable (age limit); unpinned, converging: %s", e
+                )
+            # Not-found or undeletable: converge as success.
+        self._message_id = None
+        self._save_state()
+        self._empty_since = None
+        self._mark_synced(mtime, now)
 
     # --- sync / recreate ---
 
@@ -328,7 +437,12 @@ class DashboardSync:
 
         old_message_id = self._message_id
         try:
-            message = await self._bot.send_message(chat_id=chat_id, text=text)
+            # Silent send (DGN-541): with conditional display the board
+            # re-appears routinely; a notifying send each time would be an
+            # alert storm.  Matches the pin's disable_notification below.
+            message = await self._bot.send_message(
+                chat_id=chat_id, text=text, disable_notification=True
+            )
         except telegram.error.RetryAfter as e:
             self._flood_until = now + float(getattr(e, "retry_after", 5.0))
             return
