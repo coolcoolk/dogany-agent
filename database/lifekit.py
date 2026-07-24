@@ -5641,6 +5641,53 @@ def cli_appt_show(argv):
         conn.close()
 
 
+def _appt_fetch(conn, eid):
+    return conn.execute(
+        "SELECT id, ulid, title, start_at, end_at, schedule_kind, display_tz, "
+        "settled_outcome, settled_at, version FROM event "
+        "WHERE id=? AND kind='appointment';", (eid,)).fetchone()
+
+
+def _resolve_appt(conn, token):
+    """Accept integer id or ulid; must be an appointment row."""
+    row = None
+    if str(token).isdigit():
+        row = _appt_fetch(conn, int(token))
+    if row is None:
+        r = conn.execute(
+            "SELECT id FROM event WHERE ulid=? AND kind='appointment';",
+            (token,)).fetchone()
+        if r is not None:
+            row = _appt_fetch(conn, r[0])
+    if row is None:
+        _err(f"약속 없음: {token}")
+    return row
+
+
+def cli_appt_cancel(argv):
+    # appt-cancel <id>  — settle appointment as abandoned (cancel / del path).
+    # appt-del is a registered alias for the same operation: the event model
+    # has no hard DELETE; the canonical removal path is settled_outcome='abandoned',
+    # which drops the row from appt-find and the morning brief (D4 filter).
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh appt-cancel <id>")
+    conn = event_conn()
+    _cancel_ulid = None
+    try:
+        row = _resolve_appt(conn, argv[0])
+        if row[7] == 'abandoned':
+            _err(f"이미 취소된 약속: {row[0]}")
+        res = cancel(conn, row[0], row[9], _facade_agent())
+        if res != MutationResult.APPLIED:
+            _err(f"appt-cancel 실패 ({res}): 이미 종결되었거나 동시 변경")
+        _cancel_ulid = row[1]
+        print(f"{row[0]}\t{row[2]}\tcancelled")
+    finally:
+        conn.close()
+    if _cancel_ulid:
+        _outbox_enqueue_best_effort(_cancel_ulid)
+
+
 def cli_migrate_body_stats(argv):
     """body_stats.json 의 모든 키를 config 테이블로 복사(멱등, v2).
 
@@ -6677,6 +6724,8 @@ _DISPATCH = {
     'appt-upd': cli_appt_upd,
     'appt-person': cli_appt_person,
     'appt-show': cli_appt_show,
+    'appt-cancel': cli_appt_cancel,
+    'appt-del': cli_appt_cancel,
     'task-add': cli_task_add,
     'task-find': cli_task_find,
     'task-done': cli_task_done,
