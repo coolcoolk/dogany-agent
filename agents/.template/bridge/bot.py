@@ -25,6 +25,7 @@ from telegram import (
     BotCommandScopeAllPrivateChats,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyParameters,
     Update,
 )
 from telegram.ext import (
@@ -43,6 +44,8 @@ from bridge.config import (
     AUTO_RESUME,
     AUTO_RESUME_MAX,
     PROCESS_TIMEOUT,
+    REPLY_LINK_ENABLED,
+    REPLY_LINK_LATENCY_S,
     config,
 )
 from bridge import ownership
@@ -165,6 +168,10 @@ class TelegramBot:
         # media_group_id -> buffered album state, flushed as one task.
         self._media_groups: Dict[str, dict] = {}
         self._media_group_lock = asyncio.Lock()
+        # DGN-555: per-chat newest incoming user message_id, recorded on every
+        # accepted inbound message. The reply-link policy compares it against a
+        # turn's triggering message_id at send time to detect interleave.
+        self._last_incoming_mid: Dict[int, int] = {}
         # Inbound documents land here: files worth keeping (PDF, code, data).
         # Kept indefinitely (not pruned by cleanup).
         self._inbox_dir = PROJECT_ROOT / "files" / "inbox"
@@ -645,7 +652,27 @@ class TelegramBot:
                     messages.NO_PERMISSION_CALLBACK, show_alert=True
                 )
             return False
+        self._note_incoming_message(update.message)
         return True
+
+    def _note_incoming_message(self, message) -> None:
+        """DGN-555: record the newest accepted incoming user message_id per chat.
+
+        Read by _reply_link_id at send time: a recorded id newer than a turn's
+        triggering message means user messages interleaved during the turn.
+        Callback queries never reach here (update.message is None for them), so
+        button taps do not count as incoming user messages.
+        """
+        if message is None:
+            return
+        mid = getattr(message, "message_id", None)
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        if not isinstance(mid, int) or not isinstance(chat_id, int):
+            return
+        prev = self._last_incoming_mid.get(chat_id)
+        if prev is None or mid > prev:
+            self._last_incoming_mid[chat_id] = mid
 
     async def _handle_claim_attempt(self, update: Update, user_id: int) -> bool:
         """Claim-mode interception. Returns False in every case so NO inbound
@@ -1872,6 +1899,53 @@ class TelegramBot:
 
     # --- send logic ---
 
+    def _reply_link_id(self, message) -> Optional[int]:
+        """DGN-555: reply-link policy for a turn's final response.
+
+        Returns the triggering user message_id when the final response should
+        go out as a Telegram reply -- (a) interleave: a newer user message
+        arrived in this chat after the trigger, or (b) latency: the response
+        fires more than REPLY_LINK_LATENCY_S seconds after the trigger arrived.
+        Otherwise (including an unavailable trigger id) returns None: plain
+        send. Tight back-and-forth thus stays link-free.
+        """
+        if not REPLY_LINK_ENABLED:
+            return None
+        trigger_id = getattr(message, "message_id", None)
+        if not isinstance(trigger_id, int):
+            return None
+        chat = getattr(message, "chat", None)
+        chat_id = getattr(chat, "id", None)
+        last_seen = self._last_incoming_mid.get(chat_id)
+        if isinstance(last_seen, int) and last_seen > trigger_id:
+            return trigger_id
+        age = (datetime.now(timezone.utc) - self._message_ts(message)).total_seconds()
+        if age > REPLY_LINK_LATENCY_S:
+            return trigger_id
+        return None
+
+    async def _try_send_linked(
+        self, message, text: str, reply_to: int, parse_mode: Optional[str] = "HTML"
+    ) -> bool:
+        """DGN-555: attempt the reply-linked send of the first body part.
+
+        allow_sending_without_reply lets Telegram itself degrade to a plain
+        send when the trigger message is gone; any other rejection returns
+        False so the caller re-sends unlinked. Never raises.
+        """
+        try:
+            await message.reply_text(
+                text,
+                parse_mode=parse_mode,
+                reply_parameters=ReplyParameters(
+                    message_id=reply_to, allow_sending_without_reply=True
+                ),
+            )
+            return True
+        except Exception as e:
+            logger.warning("Reply-linked send failed (mid=%s): %s", reply_to, e)
+            return False
+
     async def _reply_smart(
         self,
         message,
@@ -1886,9 +1960,11 @@ class TelegramBot:
         # DGN-159: last-mile scrub of leaked tool-call markup on the non-streamed
         # / finalized send path (streamed drafts are scrubbed in strip_display_markers).
         display = strip_toolcall_markup(display)
+        # DGN-555: selective reply-linking of the final response body.
+        reply_to = self._reply_link_id(message)
         has_code = "```" in display
         if not streamed:
-            await self._send_text_body(message, display, parse_mode)
+            await self._send_text_body(message, display, parse_mode, reply_to=reply_to)
         elif has_code and (force_options or draft_message_ids):
             # DGN-085: when code blocks and [[OPTIONS]] buttons coexist, streaming
             # drafts are finalized without parse_mode so code/tables render literally.
@@ -1902,31 +1978,60 @@ class TelegramBot:
                     await bot.delete_message(chat_id, mid)
                 except Exception as e:
                     logger.warning("Failed to delete streamed draft %s: %s", mid, e)
-            await self._send_text_body(message, display, parse_mode)
+            await self._send_text_body(message, display, parse_mode, reply_to=reply_to)
+        elif draft_message_ids and display.strip():
+            # DGN-555: a reply link cannot ride an in-place edit, so when the
+            # link policy fires the draft is deleted and the body is re-sent as a
+            # fresh, linked message.
+            bot = message.get_bot()
+            chat_id = message.chat.id
+            if reply_to is not None:
+                for mid in draft_message_ids:
+                    try:
+                        await bot.delete_message(chat_id, mid)
+                    except Exception as e:
+                        logger.warning("Failed to delete streamed draft %s: %s", mid, e)
+                await self._send_text_body(message, display, parse_mode, reply_to=reply_to)
         await self._send_content_artifacts(message, content, force_options)
 
-    async def _send_text_body(self, message, content: str, parse_mode: str) -> None:
+    async def _send_text_body(
+        self, message, content: str, parse_mode: str, reply_to: Optional[int] = None
+    ) -> None:
+        # DGN-555: only the FIRST sent part of the final body carries the reply
+        # link; every subsequent part goes out plain.
+        link_pending = reply_to is not None
         for segment, is_code, lang in split_into_segments(content):
             if is_code:
                 for part in split_text(segment):
                     if not part.strip():
                         continue
+                    rendered = code_segment_html(part, lang)
+                    if link_pending:
+                        link_pending = False
+                        if await self._try_send_linked(message, rendered, reply_to, parse_mode="HTML"):
+                            continue
+                        # DGN-555: linked send rejected -> degrade to the plain send below.
                     try:
-                        await message.reply_text(code_segment_html(part, lang), parse_mode="HTML")
+                        await message.reply_text(rendered, parse_mode="HTML")
                     except Exception:
                         await message.reply_text(part)
             else:
                 for part in split_text(segment):
                     if not part.strip():
                         continue
+                    # DGN-372: escape bare '[' for legacy Markdown so brackets
+                    # are never silently swallowed by Telegram's parser.
+                    send_part = (
+                        escape_legacy_markdown_brackets(part)
+                        if parse_mode == "Markdown"
+                        else part
+                    )
+                    if link_pending:
+                        link_pending = False
+                        if await self._try_send_linked(message, send_part, reply_to, parse_mode=parse_mode):
+                            continue
+                        # DGN-555: linked send rejected -> degrade to the plain send below.
                     try:
-                        # DGN-372: escape bare '[' for legacy Markdown so brackets
-                        # are never silently swallowed by Telegram's parser.
-                        send_part = (
-                            escape_legacy_markdown_brackets(part)
-                            if parse_mode == "Markdown"
-                            else part
-                        )
                         await message.reply_text(send_part, parse_mode=parse_mode)
                     except Exception:
                         await message.reply_text(part)
