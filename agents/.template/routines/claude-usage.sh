@@ -9,11 +9,15 @@
 set -euo pipefail
 # NOTE: set -x is FORBIDDEN (would expose token in logs)
 
-# --- arg parse: default live-only, --full appends the cache snapshot report ---
+# --- arg parse: default live-only, --full appends the cache snapshot report,
+# --json prints the raw /api/oauth/usage response body and exits (machine
+# consumers, e.g. routines/usage-gate.py; DGN-546) ---
 SHOW_FULL=0
+JSON_OUT=0
 for _arg in "$@"; do
   case "$_arg" in
     --full) SHOW_FULL=1 ;;
+    --json) JSON_OUT=1 ;;
   esac
 done
 
@@ -141,6 +145,17 @@ if [[ -z "$_live_err" ]]; then
       _live_err="API returned HTTP ${_resp_code}"
     fi
   fi
+fi
+
+# --json: emit the raw usage JSON for machine consumers and stop (DGN-546).
+if [[ "$JSON_OUT" == "1" ]]; then
+  _access_token=""  # clear from memory before any output
+  if [[ -n "$_live_err" ]]; then
+    echo "[claude-usage] live lookup failed (${_live_err})" >&2
+    exit 1
+  fi
+  printf '%s\n' "$_resp_body"
+  exit 0
 fi
 
 # Parse and print live section via python3

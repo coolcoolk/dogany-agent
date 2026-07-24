@@ -33,6 +33,10 @@
 #   --label LABEL   (optional) launchd label (default com.telegram-skill-bot.__AGENT_NAME__)
 #   --env PATH      (optional) agent bot .env for push.sh (default workspace .telegram_bot/.env)
 #   --prefix EMOJI  (optional) emoji prefix in notify messages (default: instance prefix, fallback [agent])
+#   --trigger T     (optional) user|auto (default auto; DGN-546). user = explicit
+#                   owner command -> idle guard skipped entirely (semantic alias
+#                   of --force). auto = autonomous restart -> idle guard applies;
+#                   on refusal exit quietly (defer to next natural restart).
 #   --dry-run       (optional) skip the kill; test the wait+notify wiring
 #
 # Exit codes: 0 restarted+polling up / 2 came back but polling marker missing / 3 setup error
@@ -53,6 +57,7 @@ DRY_RUN=""
 WORKER=""
 FORCE=""
 IDLE_MINS=10
+TRIGGER="auto"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,12 +72,14 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN="true"; shift 1 ;;
     --force)      FORCE="true"; shift 1 ;;
     --idle-mins)  IDLE_MINS="$2"; shift 2 ;;
+    --trigger)    TRIGGER="$2"; shift 2 ;;
     --_worker) WORKER="true"; shift 1 ;;
     *) echo "unknown arg: $1" >&2; exit 3 ;;
   esac
 done
 
 [[ -z "$REASON" ]] && { echo "need --reason" >&2; exit 3; }
+case "$TRIGGER" in user|auto) ;; *) echo "invalid --trigger '$TRIGGER' (user|auto)" >&2; exit 3 ;; esac
 [[ -x "$PUSH" ]]   || { echo "push.sh not executable at $PUSH" >&2; exit 3; }
 
 notify() { "$PUSH" --env "$ENV_FILE" --text "$1" || echo "[self_restart] push failed" >&2; }
@@ -86,6 +93,11 @@ cur_pid() { launchctl list | awk -v l="$LABEL" '$3==l && $1 ~ /^[0-9]+$/ {print 
 # Fail-open: if the transcript dir is missing or has no jsonl files, print a
 # warning and proceed so an emergency restart is never bricked.
 check_idle_guard() {
+  # DGN-546: explicit owner command outranks the idle guard entirely.
+  if [[ "$TRIGGER" == "user" ]]; then
+    echo "[self_restart] trigger=user (explicit owner command); skipping idle guard"
+    return 0
+  fi
   if [[ -n "$FORCE" ]]; then
     echo "[self_restart] --force set; skipping idle guard"
     return 0
