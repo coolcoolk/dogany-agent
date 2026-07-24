@@ -540,6 +540,297 @@ def agg_week(monday, conn=None):
             conn.close()
 
 
+# ── 소비 CRUD (DGN-553 J1) ────────────────────────────────
+# spend_category: 카테고리 사전 (workout_types 패턴 -- 미지 카테고리 자동 등록).
+# spend_entry:    지출 한 건 (scope='personal'|'business'|'unknown').
+# source: 'chat' (C1 대화 즉시 기록) | 'batch' (C2 세션 보충 입력).
+# SDK enforces source value set -- no CHECK on the column by design (grill r1 m3).
+
+def spend_category_id(conn, name):
+    """카테고리명 -> spend_category.id. 없으면 None."""
+    row = conn.execute(
+        "SELECT id FROM spend_category WHERE name=? LIMIT 1;",
+        (name,)).fetchone()
+    return row[0] if row else None
+
+
+def spend_category_get_or_create(conn, name):
+    """카테고리명 -> id. 미등록이면 (is_fixed_default=0) 자동 등록 후 id 반환.
+    빈 이름이면 None (카테고리 없는 행 허용)."""
+    nm = (name or '').strip()
+    if not nm:
+        return None
+    cid = spend_category_id(conn, nm)
+    if cid is not None:
+        return cid
+    cur = conn.execute(
+        "INSERT INTO spend_category (name, is_fixed_default, sort) VALUES (?,0,0);",
+        (nm,))
+    print(f"[spend] 미등록 카테고리 자동 등록: '{nm}' -> id={cur.lastrowid}",
+          file=sys.stderr)
+    return cur.lastrowid
+
+
+def spend_add(date, amount, name, category=None, method=None, scope='personal',
+              note=None, is_fixed=None, source='chat', conn=None):
+    """지출 한 건 기록. 새 행 id 반환.
+
+    is_fixed 미지정(None) 시 spend_category.is_fixed_default 상속.
+    카테고리 미등록이면 auto-register (+ stderr 경고). scope는 verb 계층에서 검증."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        cid = spend_category_get_or_create(conn, category) if category else None
+        if is_fixed is None:
+            if cid is not None:
+                row = conn.execute(
+                    "SELECT is_fixed_default FROM spend_category WHERE id=?;",
+                    (cid,)).fetchone()
+                is_fixed = row[0] if row else 0
+            else:
+                is_fixed = 0
+        cur = conn.execute(
+            "INSERT INTO spend_entry "
+            "(date, amount, name, category_id, method, is_fixed, scope, source, note) "
+            "VALUES (?,?,?,?,?,?,?,?,?);",
+            (date, int(amount), name, cid, _txt(method), int(is_fixed),
+             scope, source, _txt(note)))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        if own:
+            conn.close()
+
+
+def spend_find(date, scope_filter='personal', include_all=False, conn=None):
+    """그날 지출 목록. 반환: (id, name, amount, category, method, scope) 튜플 리스트.
+
+    include_all=True -> scope 무관 전체. False -> scope_filter 일치행만."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        if include_all:
+            return conn.execute(
+                "SELECT e.id, e.name, e.amount, "
+                "COALESCE(c.name,''), COALESCE(e.method,''), e.scope "
+                "FROM spend_entry e "
+                "LEFT JOIN spend_category c ON c.id = e.category_id "
+                "WHERE e.date=? ORDER BY e.id;", (date,)).fetchall()
+        return conn.execute(
+            "SELECT e.id, e.name, e.amount, "
+            "COALESCE(c.name,''), COALESCE(e.method,''), e.scope "
+            "FROM spend_entry e "
+            "LEFT JOIN spend_category c ON c.id = e.category_id "
+            "WHERE e.date=? AND e.scope=? ORDER BY e.id;",
+            (date, scope_filter)).fetchall()
+    finally:
+        if own:
+            conn.close()
+
+
+def spend_del(sid, conn=None):
+    """지출 한 건 삭제."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        conn.execute("DELETE FROM spend_entry WHERE id=?;", (int(sid),))
+        conn.commit()
+    finally:
+        if own:
+            conn.close()
+
+
+# Updatable columns for spend-upd (amount is INTEGER, others text/int).
+_SPEND_UPD_COLS = {
+    'date': _txt, 'name': _txt, 'method': _txt, 'note': _txt,
+    'amount': lambda v: int(_num(v)),
+    'is_fixed': lambda v: int(_num(v)),
+    'scope': _txt, 'source': _txt, 'category': None,  # handled specially
+}
+_SPEND_UPD_VALID_SCOPE = {'personal', 'business', 'unknown'}
+_SPEND_UPD_VALID_SOURCE = {'chat', 'batch', 'import', 'receipt'}
+
+
+def spend_upd(sid, fields, conn=None):
+    """지출 한 건의 지정 필드 부분 갱신. 갱신 후 (id, name, amount, category) 반환 (없으면 None)."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        sets, vals = [], []
+        cat_name = None
+        for col, raw in fields.items():
+            if col == 'category':
+                cat_name = raw
+                continue
+            if col not in _SPEND_UPD_COLS:
+                raise ValueError(f"수정 불가 컬럼: {col}")
+            if col == 'scope' and raw not in _SPEND_UPD_VALID_SCOPE:
+                raise ValueError(f"scope 값 오류: {raw} (personal/business/unknown)")
+            if col == 'source' and raw not in _SPEND_UPD_VALID_SOURCE:
+                raise ValueError(f"source 값 오류: {raw}")
+            conv = _SPEND_UPD_COLS[col]
+            sets.append(f"{col}=?")
+            vals.append(conv(raw))
+        if cat_name is not None:
+            cid = spend_category_get_or_create(conn, cat_name)
+            sets.append("category_id=?")
+            vals.append(cid)
+        if not sets:
+            raise ValueError("갱신할 필드가 없음")
+        vals.append(int(sid))
+        cur = conn.execute(
+            f"UPDATE spend_entry SET {', '.join(sets)} WHERE id=?;", vals)
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+        return conn.execute(
+            "SELECT e.id, e.name, e.amount, COALESCE(c.name,'') "
+            "FROM spend_entry e "
+            "LEFT JOIN spend_category c ON c.id = e.category_id "
+            "WHERE e.id=?;", (int(sid),)).fetchone()
+    finally:
+        if own:
+            conn.close()
+
+
+def spend_week(monday, scope_filter='personal', include_all=False, conn=None):
+    """주간 집계 dict (총액/카테고리별/건수/전주대비). monday=월요일 YYYY-MM-DD.
+
+    scope_filter='personal' (기본). include_all=True -> 전 scope."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        nxt = _shift_date(monday, 7)
+        prev = _shift_date(monday, -7)
+        sun = _shift_date(monday, 6)
+
+        scope_clause = "" if include_all else f"AND e.scope='{scope_filter}'"
+
+        # Current week totals
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause};",
+            (monday, nxt)).fetchone()
+        total, count = row
+
+        # Previous week totals
+        prev_row = conn.execute(
+            f"SELECT COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause};",
+            (prev, monday)).fetchone()
+        prev_total, prev_count = prev_row
+
+        # Category breakdown (current week)
+        cat_rows = conn.execute(
+            f"SELECT COALESCE(c.name,'기타'), COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e "
+            f"LEFT JOIN spend_category c ON c.id = e.category_id "
+            f"WHERE e.date >= ? AND e.date < ? {scope_clause} "
+            f"GROUP BY e.category_id ORDER BY SUM(e.amount) DESC;",
+            (monday, nxt)).fetchall()
+
+        return {
+            'monday': monday, 'sunday': sun,
+            'total': total, 'count': count,
+            'prev_total': prev_total, 'prev_count': prev_count,
+            'diff_total': total - prev_total,
+            'categories': [{'name': r[0], 'amount': r[1], 'count': r[2]}
+                           for r in cat_rows],
+        }
+    finally:
+        if own:
+            conn.close()
+
+
+def spend_month(ym, scope_filter='personal', include_all=False, conn=None):
+    """월간 집계 dict (총액/고정-변동/카테고리/method별/전월대비). ym='YYYY-MM'."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        import calendar
+        year, month = int(ym[:4]), int(ym[5:7])
+        _, last_day = calendar.monthrange(year, month)
+        start = f"{ym}-01"
+        end_excl = f"{ym}-{last_day + 1:02d}"  # exclusive upper bound
+        # Compute actual next-month first day for clean half-open
+        if month == 12:
+            end_excl = f"{year + 1}-01-01"
+        else:
+            end_excl = f"{year}-{month + 1:02d}-01"
+
+        scope_clause = "" if include_all else f"AND e.scope='{scope_filter}'"
+
+        # Previous month bounds
+        if month == 1:
+            prev_ym = f"{year - 1}-12"
+            prev_start = f"{year - 1}-12-01"
+            prev_end_excl = f"{year}-01-01"
+        else:
+            prev_ym = f"{year}-{month - 1:02d}"
+            prev_start = f"{year}-{month - 1:02d}-01"
+            prev_end_excl = start
+
+        # Total
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause};",
+            (start, end_excl)).fetchone()
+        total, count = row
+
+        # Fixed vs variable
+        fv = conn.execute(
+            f"SELECT e.is_fixed, COALESCE(SUM(e.amount),0) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause} "
+            f"GROUP BY e.is_fixed;",
+            (start, end_excl)).fetchall()
+        fixed_total = sum(r[1] for r in fv if r[0] == 1)
+        variable_total = sum(r[1] for r in fv if r[0] == 0)
+
+        # Category breakdown (all categories)
+        cat_rows = conn.execute(
+            f"SELECT COALESCE(c.name,'기타'), COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e "
+            f"LEFT JOIN spend_category c ON c.id = e.category_id "
+            f"WHERE e.date >= ? AND e.date < ? {scope_clause} "
+            f"GROUP BY e.category_id ORDER BY SUM(e.amount) DESC;",
+            (start, end_excl)).fetchall()
+
+        # Method breakdown (spend-month only, grill r1 m4)
+        method_rows = conn.execute(
+            f"SELECT COALESCE(e.method,'(없음)'), COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause} "
+            f"GROUP BY e.method ORDER BY SUM(e.amount) DESC;",
+            (start, end_excl)).fetchall()
+
+        # Previous month total
+        prev_row = conn.execute(
+            f"SELECT COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"FROM spend_entry e WHERE e.date >= ? AND e.date < ? {scope_clause};",
+            (prev_start, prev_end_excl)).fetchone()
+        prev_total, prev_count = prev_row
+
+        return {
+            'ym': ym, 'start': start, 'end_excl': end_excl,
+            'total': total, 'count': count,
+            'fixed_total': fixed_total, 'variable_total': variable_total,
+            'prev_ym': prev_ym, 'prev_total': prev_total, 'prev_count': prev_count,
+            'diff_total': total - prev_total,
+            'categories': [{'name': r[0], 'amount': r[1], 'count': r[2]}
+                           for r in cat_rows],
+            'methods': [{'method': r[0], 'amount': r[1], 'count': r[2]}
+                        for r in method_rows],
+        }
+    finally:
+        if own:
+            conn.close()
+
+
 # ── 약속 / 사람 CRUD ───────────────────────────────────────
 # 약속(appointments)과 사람(persons)은 appointment_persons로 N:M 연결.
 # 사람은 본명(name) 외에 별명(aliases, 콤마조인)으로도 찾는다.
@@ -6113,6 +6404,178 @@ def cli_travel_refresh(argv):
         conn.close()
 
 
+# ── 소비 CLI (DGN-553 J1) ────────────────────────────────────
+
+_SPEND_VALID_SCOPE = {'personal', 'business', 'unknown'}
+_SPEND_VALID_SOURCE = {'chat', 'batch', 'import', 'receipt'}
+
+
+def cli_spend_add(argv):
+    # spend-add <date> <amount> <name> [category] [method] [scope] [note]
+    #           [--fixed 0|1] [--new] [--source chat|batch]
+    # is_fixed omitted -> inherit category is_fixed_default.
+    argv, force_new = _pop_flag(argv, '--new')
+    argv, fixed_val = _pop_opt(argv, '--fixed')
+    argv, source_val = _pop_opt(argv, '--source')
+    _u = ("사용법: lifekit.sh spend-add <date> <amount> <name> "
+          "[category] [method] [scope] [note] [--fixed 0|1] [--new] "
+          "[--source chat|batch]")
+    if len(argv) < 3 or not argv[0] or not argv[1] or not argv[2]:
+        _err(_u)
+    date, amount_str, name = argv[0], argv[1], argv[2]
+    try:
+        amount = int(amount_str)
+    except ValueError:
+        _err(f"amount는 정수(KRW)여야 함: {amount_str}")
+    g = lambda i: argv[i] if i < len(argv) else None
+    category = g(3)
+    method = g(4)
+    scope = g(5) or 'personal'
+    note = g(6)
+    if scope not in _SPEND_VALID_SCOPE:
+        _err(f"scope 값 오류: {scope} (personal/business/unknown)")
+    is_fixed = None
+    if fixed_val is not None:
+        if fixed_val not in ('0', '1'):
+            _err("--fixed 값은 0 또는 1이어야 함")
+        is_fixed = int(fixed_val)
+    source = source_val or 'chat'
+    if source not in _SPEND_VALID_SOURCE:
+        _err(f"source 값 오류: {source}")
+    conn = get_conn()
+    try:
+        if not force_new:
+            # DGN-231 reconcile-before-write: match key = (date, amount).
+            matches = conn.execute(
+                "SELECT e.id, e.name, e.amount, COALESCE(c.name,'') "
+                "FROM spend_entry e "
+                "LEFT JOIN spend_category c ON c.id = e.category_id "
+                "WHERE e.date=? AND e.amount=?;",
+                (date, amount)).fetchall()
+            if matches:
+                print(f"EXISTS {len(matches)}")
+                for eid, ename, eamt, ecat in matches:
+                    print(f"{eid}\t{ename}\t{eamt}\t{ecat}")
+                sys.exit(EXISTS_CODE)
+        nid = spend_add(date, amount, name, category=category, method=method,
+                        scope=scope, note=note, is_fixed=is_fixed,
+                        source=source, conn=conn)
+        row = conn.execute(
+            "SELECT e.id, e.name, e.amount, COALESCE(c.name,'') "
+            "FROM spend_entry e "
+            "LEFT JOIN spend_category c ON c.id = e.category_id "
+            "WHERE e.id=?;", (nid,)).fetchone()
+        print(f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]}")
+    finally:
+        conn.close()
+
+
+def cli_spend_find(argv):
+    # spend-find <date> [--all]
+    argv, include_all = _pop_flag(argv, '--all')
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh spend-find <date> [--all]")
+    for eid, name, amount, cat, method, scope in spend_find(
+            argv[0], include_all=include_all):
+        print(f"{eid}\t{name}\t{amount}\t{cat}\t{method}\t{scope}")
+
+
+def cli_spend_day(argv):
+    # spend-day <date> [--all]
+    argv, include_all = _pop_flag(argv, '--all')
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh spend-day <date> [--all]")
+    date = argv[0]
+    rows = spend_find(date, include_all=include_all)
+    if not rows:
+        print(f"{date} 지출 없음")
+        return
+    total = sum(r[2] for r in rows)
+    print(f"[{date}] 지출 {len(rows)}건 합계 {total:,}원")
+    for eid, name, amount, cat, method, scope in rows:
+        cat_str = f"[{cat}]" if cat else ""
+        method_str = f" ({method})" if method else ""
+        scope_str = f" scope={scope}" if scope != 'personal' else ""
+        sign = "" if amount >= 0 else ""  # negative shows minus naturally
+        print(f"  {eid}. {name} {amount:,}원 {cat_str}{method_str}{scope_str}")
+
+
+def cli_spend_del(argv):
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh spend-del <id>")
+    if not str(argv[0]).isdigit():
+        _err(f"id는 숫자여야 함: {argv[0]}")
+    spend_del(argv[0])
+    print(f"deleted spend {argv[0]}")
+
+
+def cli_spend_upd(argv):
+    # spend-upd <id> field=value [field=value ...]
+    # fields: date name amount method note is_fixed scope source category
+    _u = ("사용법: lifekit.sh spend-upd <id> field=value [field=value ...]\n"
+          "  field: date name amount method note is_fixed scope source category\n"
+          "  지정한 필드만 바뀐다(부분 수정).")
+    if len(argv) < 2 or not str(argv[0]).isdigit():
+        _err(_u)
+    fields = {}
+    for tok in argv[1:]:
+        if '=' not in tok:
+            _err(f"field=value 형식이 아님: {tok}\n{_u}")
+        col, val = tok.split('=', 1)
+        col = col.strip()
+        if col not in _SPEND_UPD_COLS:
+            _err(f"수정 불가 컬럼: {col}\n{_u}")
+        fields[col] = val
+    if not fields:
+        _err(_u)
+    try:
+        row = spend_upd(argv[0], fields)
+    except ValueError as e:
+        _err(str(e))
+    if row is None:
+        _err(f"해당 id 지출 없음: {argv[0]}")
+    print(f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]}")
+
+
+def cli_spend_week(argv):
+    # spend-week <monday_date> [--all]
+    argv, include_all = _pop_flag(argv, '--all')
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh spend-week <월요일date> [--all]")
+    w = spend_week(argv[0], include_all=include_all)
+    diff_sign = '+' if w['diff_total'] >= 0 else ''
+    print(f"week={w['monday']}~{w['sunday']}")
+    print(f"total={w['total']:,}원 ({w['count']}건)")
+    print(f"prev_total={w['prev_total']:,}원 ({w['prev_count']}건)")
+    print(f"diff_total={diff_sign}{w['diff_total']:,}원")
+    print("--- 카테고리별 ---")
+    for cat in w['categories']:
+        print(f"  {cat['name']}: {cat['amount']:,}원 ({cat['count']}건)")
+
+
+def cli_spend_month(argv):
+    # spend-month <YYYY-MM> [--all]
+    argv, include_all = _pop_flag(argv, '--all')
+    if not argv or not argv[0]:
+        _err("사용법: lifekit.sh spend-month <YYYY-MM> [--all]")
+    ym = argv[0]
+    if len(ym) != 7 or ym[4] != '-':
+        _err(f"YYYY-MM 형식이어야 함: {ym}")
+    m = spend_month(ym, include_all=include_all)
+    diff_sign = '+' if m['diff_total'] >= 0 else ''
+    print(f"month={m['ym']}")
+    print(f"total={m['total']:,}원 ({m['count']}건)")
+    print(f"fixed={m['fixed_total']:,}원  variable={m['variable_total']:,}원")
+    print(f"prev_month={m['prev_ym']} total={m['prev_total']:,}원")
+    print(f"diff_total={diff_sign}{m['diff_total']:,}원")
+    print("--- 카테고리 전체 ---")
+    for cat in m['categories']:
+        print(f"  {cat['name']}: {cat['amount']:,}원 ({cat['count']}건)")
+    print("--- 결제수단별 ---")
+    for mth in m['methods']:
+        print(f"  {mth['method']}: {mth['amount']:,}원 ({mth['count']}건)")
+
+
 _DISPATCH = {
     'meal-add': cli_meal_add,
     'meal-find': cli_meal_find,
@@ -6161,6 +6624,14 @@ _DISPATCH = {
     'travel-move': cli_travel_move,
     'travel-skip': cli_travel_skip,
     'travel-refresh': cli_travel_refresh,
+    # DGN-553 J1: spend verbs
+    'spend-add': cli_spend_add,
+    'spend-find': cli_spend_find,
+    'spend-day': cli_spend_day,
+    'spend-del': cli_spend_del,
+    'spend-upd': cli_spend_upd,
+    'spend-week': cli_spend_week,
+    'spend-month': cli_spend_month,
 }
 
 
@@ -6173,7 +6644,9 @@ def main(argv=None):
     if fn is None:
         print(f"알 수 없는 명령: {cmd}", file=sys.stderr)
         print("(meal-add|meal-find|meal-day|meal-del|meal-upd|workout-add|"
-              "workout-find|workout-del|agg-day|agg-week)", file=sys.stderr)
+              "workout-find|workout-del|agg-day|agg-week|"
+              "spend-add|spend-find|spend-day|spend-del|spend-upd|"
+              "spend-week|spend-month)", file=sys.stderr)
         sys.exit(1)
     fn(rest)
 
