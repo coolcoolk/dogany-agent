@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DGN-553 J2: formal test suite for the J1 spend verb implementation.
+"""DGN-553 J2 + grill fix: formal test suite for the spend verb implementation.
 
 Covers: all 7 spend verbs (happy path); DGN-231 dup gate (exit 3 + --new bypass);
 is_fixed_default inheritance + --fixed override; category auto-register; scope
@@ -9,6 +9,12 @@ on each field; week/month aggregation math incl. fixed/variable split, method
 subtotals (month only), prev-period compare; boundary dates (week spanning month
 edge, month with no prev data); empty-DB edges; seed integrity (12 rows, 3 fixed
 defaults); and the J1 informal-check case (719,500 personal vs 769,500 --all).
+
+Grill-fix additions (DGN-553): unknown excluded from personal week/month totals
+(scope filter mutation pin); --source end-to-end (chat/batch accepted, junk
+rejected); adversarial spend-upd inputs (amount=abc/99.9, is_fixed=2/abc ->
+clean rc!=0, row unchanged); spend-unknown happy + empty + post-reclassify-empty;
+top-5 remainder line; '(미분류)' rendering.
 
 Harness: temp copy of lifekit.py + temp lifekit.db from schema.sql (v9).
 Never touches any live DB. Exit 0 = ALL PASS.
@@ -806,6 +812,309 @@ def test_scope_unknown():
         _check("after sweep row in personal find", len(lines2) == 1, out_pp)
 
 
+# ── 22. unknown excluded from personal week AND month totals ─────────────────
+# Mutation pin: proves scope filter uses == 'personal', not != 'business'.
+# An unknown row must not bleed into personal week/month totals.
+
+
+def test_unknown_excluded_from_personal_aggregates():
+    """scope='unknown' rows must be excluded from personal week and month totals.
+
+    This pins the scope filter against the `!= 'business'` mutation: if the
+    filter were changed to `!= 'business'`, unknown rows would leak into
+    personal totals and these checks would fail."""
+    print("unknown excluded from personal week+month (scope filter mutation pin):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+        # personal: 10000 on Monday 2026-07-21
+        _run(cli, "spend-add", "2026-07-21", "10000", "개인지출", "식비",
+             "", "personal")
+        # unknown: 99000 same day -- must NOT appear in personal totals
+        _run(cli, "spend-add", "2026-07-21", "99000", "미분류지출", "식비",
+             "", "unknown", "--new")
+        # business: 50000 same day -- already tested; also must not appear
+        _run(cli, "spend-add", "2026-07-21", "50000", "사업지출", "식비",
+             "", "business", "--new")
+
+        # personal week total must be exactly 10000 (not 109000 or 159000)
+        rc, out_w, _ = _run(cli, "spend-week", "2026-07-21")
+        _check("week personal total=10000 (unknown excluded)",
+               "10,000" in out_w or "10000" in out_w, out_w)
+        _check("week personal does NOT include unknown amount",
+               "99,000" not in out_w and "99000" not in out_w, out_w)
+        _check("week personal does NOT include combined 109000",
+               "109,000" not in out_w and "109000" not in out_w, out_w)
+
+        # personal month total must be exactly 10000
+        rc, out_m, _ = _run(cli, "spend-month", "2026-07")
+        _check("month personal total=10000 (unknown excluded)",
+               "10,000" in out_m or "10000" in out_m, out_m)
+        _check("month personal does NOT include unknown amount",
+               "99,000" not in out_m and "99000" not in out_m, out_m)
+
+
+# ── 23. --source end-to-end ──────────────────────────────────────────────────
+
+
+def test_source_enforcement():
+    """--source chat and batch are accepted+stored; any other value is rejected."""
+    print("--source enforcement (m-2 grill fix):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+
+        # 'chat' accepted (it is the default, but also works explicitly)
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "5000", "커피채팅",
+                            "카페/간식", "", "personal", "", "--source", "chat")
+        _check("--source chat rc0", rc == 0, f"rc={rc} err={err}")
+        conn = _db(cli)
+        eid = int(out.strip().split("\t")[0])
+        r = conn.execute(
+            "SELECT source FROM spend_entry WHERE id=?;", (eid,)).fetchone()
+        _check("chat stored in DB", r[0] == "chat", str(r))
+
+        # 'batch' accepted
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "8000", "배치입력",
+                            "식비", "", "personal", "", "--source", "batch", "--new")
+        _check("--source batch rc0", rc == 0, f"rc={rc} err={err}")
+        eid2 = int(out.strip().split("\t")[0])
+        r2 = conn.execute(
+            "SELECT source FROM spend_entry WHERE id=?;", (eid2,)).fetchone()
+        _check("batch stored in DB", r2[0] == "batch", str(r2))
+
+        # 'import' rejected (was allowed in J1, now spec-corrected)
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "7000", "임포트",
+                            "식비", "", "personal", "", "--source", "import", "--new")
+        _check("--source import rejected rc!=0", rc != 0, f"rc={rc}")
+
+        # 'receipt' rejected
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "6000", "영수증",
+                            "식비", "", "personal", "", "--source", "receipt", "--new")
+        _check("--source receipt rejected rc!=0", rc != 0, f"rc={rc}")
+
+        # 'junk' rejected
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "3000", "쓰레기",
+                            "", "", "personal", "", "--source", "junk", "--new")
+        _check("--source junk rejected rc!=0", rc != 0, f"rc={rc}")
+
+        # spend-upd source=batch accepted
+        rc, out, err = _run(cli, "spend-upd", str(eid), "source=batch")
+        _check("spend-upd source=batch rc0", rc == 0, f"rc={rc} err={err}")
+
+        # spend-upd source=import rejected
+        rc, out, err = _run(cli, "spend-upd", str(eid), "source=import")
+        _check("spend-upd source=import rejected rc!=0", rc != 0, f"rc={rc}")
+
+        conn.close()
+
+
+# ── 24. adversarial spend-upd inputs (M-1 grill fix) ────────────────────────
+
+
+def test_spend_upd_adversarial():
+    """amount=abc/99.9 and is_fixed=2/abc must exit rc!=0, row unchanged."""
+    print("adversarial spend-upd inputs (M-1 grill fix):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+        rc, out, _ = _run(cli, "spend-add", "2026-07-20", "12000", "치킨", "식비")
+        eid = out.strip().split("\t")[0]
+        conn = _db(cli)
+
+        # amount=abc: must fail, not silently write 0
+        rc, out, err = _run(cli, "spend-upd", eid, "amount=abc")
+        _check("upd amount=abc rc!=0", rc != 0, f"rc={rc}")
+        r = conn.execute(
+            "SELECT amount FROM spend_entry WHERE id=?;", (int(eid),)).fetchone()
+        _check("amount=abc: DB row unchanged (still 12000)", r[0] == 12000, str(r))
+
+        # amount=99.9: must fail (float not accepted as integer amount)
+        rc, out, err = _run(cli, "spend-upd", eid, "amount=99.9")
+        _check("upd amount=99.9 rc!=0", rc != 0, f"rc={rc}")
+        r = conn.execute(
+            "SELECT amount FROM spend_entry WHERE id=?;", (int(eid),)).fetchone()
+        _check("amount=99.9: DB row unchanged (still 12000)", r[0] == 12000, str(r))
+
+        # is_fixed=2: out of range
+        rc, out, err = _run(cli, "spend-upd", eid, "is_fixed=2")
+        _check("upd is_fixed=2 rc!=0", rc != 0, f"rc={rc}")
+
+        # is_fixed=abc: non-numeric
+        rc, out, err = _run(cli, "spend-upd", eid, "is_fixed=abc")
+        _check("upd is_fixed=abc rc!=0", rc != 0, f"rc={rc}")
+
+        conn.close()
+
+
+# ── 25. spend-unknown (M-2 grill fix) ───────────────────────────────────────
+
+
+def test_spend_unknown():
+    """spend-unknown lists all scope='unknown' entries; post-reclassify returns empty."""
+    print("spend-unknown (M-2 grill fix):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+
+        # empty case first
+        rc, out, err = _run(cli, "spend-unknown")
+        _check("spend-unknown empty rc0", rc == 0, f"rc={rc} err={err}")
+        _check("spend-unknown empty message", "없음" in out, out)
+
+        # add unknown rows on different dates (oldest first order check)
+        _run(cli, "spend-add", "2026-07-10", "5000", "옛날미분류", "식비",
+             "", "unknown")
+        _run(cli, "spend-add", "2026-07-20", "8000", "최근미분류", "카페/간식",
+             "", "unknown", "--new")
+        # personal row (must NOT appear in spend-unknown)
+        _run(cli, "spend-add", "2026-07-15", "3000", "개인지출", "식비",
+             "", "personal", "--new")
+
+        rc, out, err = _run(cli, "spend-unknown")
+        _check("spend-unknown happy rc0", rc == 0, f"rc={rc} err={err}")
+        lines = [l for l in out.splitlines() if l]
+        # 2 unknown data rows + 1 footer line
+        data_lines = [l for l in lines if not l.startswith("---")]
+        _check("spend-unknown shows 2 unknown rows", len(data_lines) == 2,
+               out)
+        # oldest first (2026-07-10 before 2026-07-20)
+        _check("spend-unknown oldest first",
+               data_lines[0].split("\t")[1] == "2026-07-10", data_lines[0])
+        _check("spend-unknown second row is 2026-07-20",
+               data_lines[1].split("\t")[1] == "2026-07-20", data_lines[1])
+        # footer mentions count and total (5000 + 8000 = 13000)
+        footer = [l for l in lines if l.startswith("---")]
+        _check("spend-unknown footer present", len(footer) == 1, out)
+        _check("spend-unknown footer has count 2",
+               "2건" in footer[0], footer[0])
+        _check("spend-unknown footer total=13000",
+               "13,000" in footer[0] or "13000" in footer[0], footer[0])
+        # personal row not shown
+        _check("spend-unknown excludes personal rows",
+               "개인지출" not in out, out)
+
+        # post-reclassify: update both unknown rows to personal -> empty
+        for dl in data_lines:
+            eid = dl.split("\t")[0]
+            _run(cli, "spend-upd", eid, "scope=personal")
+        rc, out, err = _run(cli, "spend-unknown")
+        _check("spend-unknown post-reclassify empty rc0", rc == 0, f"rc={rc}")
+        _check("spend-unknown post-reclassify says 없음", "없음" in out, out)
+
+
+# ── 26. top-5 remainder line (m-6 grill fix) ─────────────────────────────────
+
+
+def test_spend_month_top5():
+    """spend-month category breakdown shows top 5 + remainder line when >5 categories."""
+    print("spend-month top-5 remainder (m-6 grill fix):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+        # Insert 7 distinct categories with distinct amounts so ordering is deterministic.
+        # Category amounts (descending): 70000, 60000, 50000, 40000, 30000, 20000, 10000
+        entries = [
+            ("2026-07-01", "70000", "식비입력", "식비"),
+            ("2026-07-02", "60000", "교통입력", "교통"),
+            ("2026-07-03", "50000", "주거입력", "주거/공과금"),
+            ("2026-07-04", "40000", "구독입력", "구독"),
+            ("2026-07-05", "30000", "통신입력", "통신"),
+            ("2026-07-06", "20000", "생활입력", "생활용품"),
+            ("2026-07-07", "10000", "의류입력", "의류/미용"),
+        ]
+        for date, amt, name, cat in entries:
+            _run(cli, "spend-add", date, amt, name, cat, "", "personal", "--new")
+
+        rc, out, err = _run(cli, "spend-month", "2026-07")
+        _check("top5 month rc0", rc == 0, f"rc={rc} err={err}")
+
+        lines = out.splitlines()
+        # Find the category section
+        cat_start = None
+        for i, l in enumerate(lines):
+            if "카테고리 top5" in l:
+                cat_start = i
+                break
+        _check("카테고리 top5 header present", cat_start is not None, out)
+
+        if cat_start is not None:
+            # Collect category lines (until next --- section)
+            cat_lines = []
+            for l in lines[cat_start + 1:]:
+                if l.startswith("---"):
+                    break
+                if l.strip():
+                    cat_lines.append(l.strip())
+            _check("exactly 6 lines under top5 (5 cats + 1 remainder)",
+                   len(cat_lines) == 6, str(cat_lines))
+            # Top entry should be 식비 (70000)
+            _check("top5 first entry is 식비", "식비" in cat_lines[0], cat_lines[0])
+            # Last line is the remainder (covers 생활용품 20000 + 의류/미용 10000 = 30000)
+            _check("remainder line contains '그 외'", "그 외" in cat_lines[-1],
+                   cat_lines[-1])
+            _check("remainder line shows 2건", "2건" in cat_lines[-1], cat_lines[-1])
+            _check("remainder total=30000",
+                   "30,000" in cat_lines[-1] or "30000" in cat_lines[-1],
+                   cat_lines[-1])
+
+        # When 5 or fewer categories: no remainder line
+        with tempfile.TemporaryDirectory() as tmp2:
+            cli2 = _build_instance(tmp2)
+            few_entries = [
+                ("2026-07-01", "5000", "a", "식비"),
+                ("2026-07-02", "4000", "b", "교통"),
+                ("2026-07-03", "3000", "c", "구독"),
+            ]
+            for date, amt, name, cat in few_entries:
+                _run(cli2, "spend-add", date, amt, name, cat, "", "personal", "--new")
+            rc2, out2, _ = _run(cli2, "spend-month", "2026-07")
+            _check("no remainder when <=5 cats", "그 외" not in out2, out2)
+
+
+# ── 27. '(미분류)' rendering (m-3 grill fix) ─────────────────────────────────
+
+
+def test_null_category_renders_as_mibullyu():
+    """NULL category_id renders as '(미분류)', not '기타', in all outputs."""
+    print("'(미분류)' rendering (m-3 grill fix):")
+    with tempfile.TemporaryDirectory() as tmp:
+        cli = _build_instance(tmp)
+        # spend-add without category -> category_id = NULL
+        rc, out, err = _run(cli, "spend-add", "2026-07-10", "9000", "카테고리없음")
+        _check("no-category add rc0", rc == 0, f"rc={rc} err={err}")
+        # Confirm category_id is NULL in DB
+        conn = _db(cli)
+        eid = int(out.strip().split("\t")[0])
+        r = conn.execute(
+            "SELECT category_id FROM spend_entry WHERE id=?;", (eid,)).fetchone()
+        _check("category_id is NULL in DB", r[0] is None, str(r))
+        conn.close()
+
+        # spend-find: NULL category must render as '(미분류)', not '기타' or ''
+        rc, out_f, _ = _run(cli, "spend-find", "2026-07-10", "--all")
+        lines = [l for l in out_f.splitlines() if l]
+        _check("find returns 1 row", len(lines) == 1, out_f)
+        cols = lines[0].split("\t")
+        _check("find NULL category renders as (미분류)",
+               cols[3] == "(미분류)", f"got '{cols[3]}'")
+        _check("find NULL category does NOT render as 기타",
+               cols[3] != "기타", f"got '{cols[3]}'")
+
+        # spend-week: category breakdown must show '(미분류)'
+        rc, out_w, _ = _run(cli, "spend-week", "2026-07-06")  # monday before 07-10
+        _check("week renders (미분류)", "(미분류)" in out_w, out_w)
+        _check("week does NOT render 기타 for NULL cat",
+               "기타" not in out_w, out_w)
+
+        # spend-month: category breakdown must show '(미분류)'
+        rc, out_m, _ = _run(cli, "spend-month", "2026-07")
+        _check("month renders (미분류)", "(미분류)" in out_m, out_m)
+        _check("month does NOT render 기타 for NULL cat",
+               "기타" not in out_m, out_m)
+
+        # spend-unknown: NULL category in unknown row also renders as '(미분류)'
+        _run(cli, "spend-add", "2026-07-12", "3000", "미분류unknown",
+             "", "", "unknown", "--new")
+        rc, out_u, _ = _run(cli, "spend-unknown")
+        _check("spend-unknown NULL cat renders (미분류)", "(미분류)" in out_u, out_u)
+
+
 # ── main ─────────────────────────────────────────────────────
 
 
@@ -832,6 +1141,13 @@ def main():
         test_prev_period_compare,
         test_spend_upd_missing_id,
         test_scope_unknown,
+        # DGN-553 grill fix additions
+        test_unknown_excluded_from_personal_aggregates,
+        test_source_enforcement,
+        test_spend_upd_adversarial,
+        test_spend_unknown,
+        test_spend_month_top5,
+        test_null_category_renders_as_mibullyu,
     ]
     for t in tests:
         t()
