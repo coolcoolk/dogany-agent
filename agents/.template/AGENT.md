@@ -226,5 +226,15 @@ Framework-wide behavior belongs in RULES, not here. -->
   `__PROJECT_ROOT__/bridge/self_restart.sh --reason "<why>"` ; framework
   update = `__PROJECT_ROOT__/routines/self-update.sh` (never a release: no
   VERSION bump, no tag).
+- Restart trigger (DGN-546): explicit owner restart command -> `--trigger user`
+  (idle guard bypassed, immediate). Autonomous/self restart -> `--trigger auto`
+  (default; idle guard applies; on refusal silently defer to next natural
+  restart -- no menu). `--force` is a bypass alias with the same effect as
+  trigger=user.
+- Usage window (DGN-546): PreToolUse hook (`routines/usage-gate.py`) gates
+  heavy dispatches (Workflow/Agent/Task/deep-research) against plan-specific
+  5h/7d utilization thresholds (plan slug in `config/agent.conf` PLAN=).
+  Denies above threshold; fully silent below; non-blocking 7d burn-rate hint
+  when pace is high. Owner approval bypasses one-shot.
 - release.sh run / tag / push always stays behind user approval and is
   executed by the main session (full release routing: AGENT-OPS.md).
