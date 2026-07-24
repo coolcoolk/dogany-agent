@@ -65,6 +65,19 @@ The env layer keeps hook-command overrides and test isolation working; the
 conf layer survives framework updates (the .claude/settings.json Stop-hook
 registration is framework-owned and carries no per-instance env).
 
+Rev 10 (DGN-534 T3): the dashboard gains a [언파크 후보] section -- a
+read-only DERIVED view of the unpark-candidate ledger worklog/_UNPARK.md
+(sole writer = the ticket-hygiene gate scan, M4).  Canonical no-op:
+instances WITHOUT the ledger file (no gate-scan machinery, e.g. Ag) render
+zero change.  When the ledger exists, the section header carries the
+last-scan stamp; Rev 8 empty-section suppression applies only while the
+signal is healthy (0 candidates AND fresh scan) -- a stale (>26h) or
+unreadable ledger FORCES the header with a staleness flag so a
+silently-stopped scan stays visible (M5 silent-stop detector).  The length
+cut drops unpark items after 최근 완료 but before the live section, and
+never drops the header.  The FOOTER is unchanged -- unpark candidates ride
+the pinned dashboard only.
+
 Behaviour (rev 6):
   - Not owner session  -> exit 0 (no sidecar written).
   - NO_PUSH sentinel turn -> exit 0 (no sidecar written).
@@ -611,6 +624,17 @@ DASHBOARD_MAX_UNITS = 3800
 # its dumb tail-cut, chopping the last-line freshness stamp.  Decisions are
 # one-line ledger summaries; 300 units is generous.
 DASHBOARD_ITEM_MAX_UNITS = 300
+# Unpark-candidate ledger (DGN-534 T3): worklog/_UNPARK.md is regenerated
+# idempotently by the ticket-hygiene gate scan (its SOLE writer, M4); the
+# dashboard only DERIVES a view from it -- never recomputes gate state and
+# never writes the ledger.  A MISSING ledger means this instance has no
+# gate-scan machinery -> the section is omitted entirely (framework-
+# canonical no-op for instances like Ag).
+UNPARK_FILE = "worklog/_UNPARK.md"
+# Freshness threshold (M5): the gate scan runs daily at 06:00, so a
+# last-scan stamp older than 26h means the scan silently stopped --
+# surface it.
+UNPARK_STALE_SECS = 26 * 3600
 
 # Ticket frontmatter line: "key: value" between the two '---' fences.
 _FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*\S)?\s*$")
@@ -725,19 +749,122 @@ def _collect_recent_done(limit=MAX_DONE_DISPLAY):
     return out
 
 
-def _build_dashboard(decisions, active_agents, recent_done):
+# Ledger stamp line: "last-scan: 2026-07-24 06:00:12 KST".  The trailing
+# zone label is display-only; the stamp is written in local time by the scan
+# on this same machine, so epoch math against time.time() is sound.
+_UNPARK_STAMP_RE = re.compile(
+    r"^last-scan:\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2}))?")
+
+
+def _collect_unpark():
+    """Derived view of the unpark-candidate ledger (DGN-534 T3, read-only).
+
+    Returns None when the ledger file is ABSENT: this instance has no
+    gate-scan machinery, so the dashboard renders no unpark section at all
+    (framework-canonical no-op).
+
+    Otherwise returns (stamp_epoch, stamp_display, items):
+      stamp_epoch   -- last-scan time as epoch seconds, or None if unparsed.
+      stamp_display -- "YYYY-MM-DD HH:MM" string, or None if absent.
+      items         -- candidate lines, whitespace-squeezed, ledger order.
+    An EXISTING but unreadable ledger returns (None, None, []): no stamp ->
+    the section is FORCED with "(스캔 기록 없음)" so a broken ledger is
+    visible, never silent (M5).  Env override DOGANY_UNPARK_FILE mirrors
+    the DOGANY_DECISIONS_FILE test convention.
+    """
+    path = os.environ.get("DOGANY_UNPARK_FILE") or os.path.join(
+        _ROOT_DIR, UNPARK_FILE)
+    stamp_epoch = None
+    stamp_display = None
+    items = []
+    try:
+        fh = open(path, "r", errors="replace")
+    except FileNotFoundError:
+        return None            # no ledger -> no section (canonical no-op)
+    except Exception:
+        return None, None, []  # exists but unreadable -> forced visibility
+    try:
+        with fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                m = _UNPARK_STAMP_RE.match(line)
+                if m:
+                    stamp_display = "%s %s" % (m.group(1), m.group(2))
+                    try:
+                        stamp_epoch = time.mktime(time.strptime(
+                            "%s %s:%s" % (m.group(1), m.group(2),
+                                          m.group(3) or "00"),
+                            "%Y-%m-%d %H:%M:%S"))
+                    except Exception:
+                        stamp_epoch = None
+                    continue
+                if line.startswith("candidates:"):
+                    continue  # count header; the item list speaks for itself
+                items.append(re.sub(r"\s+", " ", line))
+    except Exception:
+        return None, None, []
+    return stamp_epoch, stamp_display, items
+
+
+def _unpark_fresh(stamp_epoch):
+    """True iff the last-scan stamp parsed AND is within UNPARK_STALE_SECS.
+
+    An unparseable stamp counts as NOT fresh: a stamp we cannot verify gets
+    the same forced visibility as a stale one (safe direction, M5).
+    """
+    return (stamp_epoch is not None
+            and (time.time() - stamp_epoch) <= UNPARK_STALE_SECS)
+
+
+def _unpark_visible(unpark):
+    """Whether the unpark section renders at all (Rev 8 reconcile).
+
+    None (ledger absent) -> never (canonical no-op).  Candidates present ->
+    always.  Zero candidates: suppressed while the scan is FRESH (Rev 8
+    empty-section suppression, owner spec) but FORCED when stale/unreadable
+    so the silent-stop signal survives suppression (M5).
+    """
+    if unpark is None:
+        return False
+    stamp_epoch, _stamp_display, items = unpark
+    return bool(items) or not _unpark_fresh(stamp_epoch)
+
+
+def _unpark_header(stamp_epoch, stamp_display):
+    """Section header carrying the scan freshness (M5).
+
+    The header is never dropped by the length cut, so freshness stays
+    visible even when every candidate item has been cut.  Not fresh ->
+    explicit staleness flag (silent-stop detector).
+    """
+    if not stamp_display:
+        return "[언파크 후보] (스캔 기록 없음)"
+    if not _unpark_fresh(stamp_epoch):
+        return "[언파크 후보] (스캔 %s -- 오래됨)" % stamp_display
+    return "[언파크 후보] (스캔 %s)" % stamp_display
+
+
+def _build_dashboard(decisions, active_agents, recent_done, unpark=None):
     """Assemble the dashboard.md content string.
 
     Header: BOARD_TITLE line -- fixed name "작업대" (owner naming 2026-07-24;
     renamed from 상황판) with an optional per-instance emoji prefix (Rev 9).
-    Sections: 결정대기 / <live label> / 최근 완료.  The live section title
-    comes from LIVE_LABEL (DGN-541 S2/S3: short form, per-instance via
-    config/env, neutral default).
+    Sections: 결정대기 / <live label> / 언파크 후보 / 최근 완료.  The live
+    section title comes from LIVE_LABEL (DGN-541 S2/S3: short form,
+    per-instance via config/env, neutral default).  `unpark` is None (ledger
+    absent -> no section) or the (stamp_epoch, stamp_display, items) triple
+    from _collect_unpark(); visibility follows _unpark_visible (Rev 8
+    empty-suppression + M5 forced staleness).
     Last line is the freshness
     stamp "갱신 HH:MM" -- written by the GENERATOR only; the bridge never
     touches it, so a dead generator shows up as a visibly stale timestamp.
-    Length cut: drop tail items lowest-priority-first (최근 완료 -> 진행
-    갈래 -> 결정대기) until the text fits DASHBOARD_MAX_UNITS.
+    Length cut: drop tail items lowest-priority-first (최근 완료 -> 언파크
+    후보 items -> live -> 결정대기) until the text fits DASHBOARD_MAX_UNITS.
+    The unpark HEADER is never dropped: the ledger keeps the full candidate
+    list (only the view shrinks) and the freshness stamp must stay visible
+    (DGN-534 T3).
     """
     # Cap every decision item: the section cut never drops the last decision,
     # so an uncapped runaway line would break the 3800-unit contract and let
@@ -745,6 +872,15 @@ def _build_dashboard(decisions, active_agents, recent_done):
     decisions = [_cap_item(d) for d in decisions]
     live = list(active_agents)
     done = list(recent_done)[:MAX_DONE_DISPLAY]
+    unpark_show = _unpark_visible(unpark)
+    unpark_items = []
+    unpark_title = ""
+    if unpark_show:
+        stamp_epoch, stamp_display, unpark_items = unpark
+        # Per-item cap: a runaway gate-prose line must not blow the size
+        # budget in one item (same rationale as the decision-item cap).
+        unpark_items = [_cap_item(x) for x in unpark_items]
+        unpark_title = _unpark_header(stamp_epoch, stamp_display)
     stamp = "갱신 " + time.strftime("%H:%M")
 
     def _sec(title, items):
@@ -756,9 +892,14 @@ def _build_dashboard(decisions, active_agents, recent_done):
         return [title] + ["- " + x for x in items]
 
     def _render():
+        # The unpark block bypasses _sec: when shown, the header stands even
+        # with zero items (forced staleness case, or all items length-cut).
+        unpark_block = ([unpark_title] + ["- " + x for x in unpark_items]
+                        if unpark_show else [])
         lines = [BOARD_TITLE, ""]
         for block in (_sec("[결정대기]", decisions),
                       _sec("[%s]" % LIVE_LABEL, live),
+                      unpark_block,
                       _sec("[최근 완료]", done)):
             if block:
                 lines += block
@@ -770,6 +911,8 @@ def _build_dashboard(decisions, active_agents, recent_done):
     while _u16len(text) > DASHBOARD_MAX_UNITS:
         if done:
             done.pop()
+        elif unpark_items:
+            unpark_items.pop()
         elif live:
             live.pop()
         elif len(decisions) > 1:
@@ -796,11 +939,12 @@ def _write_dashboard_text(text):
     os.replace(tmp, path)
 
 
-def _write_dashboard(active_agents, decisions):
+def _write_dashboard(active_agents, decisions, unpark=None):
     """Regenerate <BOT_DATA_DIR>/dashboard.md.  Caller has already passed the
     ownership gate -- this function does no gating of its own."""
     _write_dashboard_text(
-        _build_dashboard(decisions, active_agents, _collect_recent_done()))
+        _build_dashboard(decisions, active_agents, _collect_recent_done(),
+                         unpark))
 
 
 # ---------------------------------------------------------------------------
@@ -1122,6 +1266,10 @@ def main():
             transcript_agents = _collect_active_subagents(transcript_path)
             ledger_agents = _collect_ledger_running()
             raw_decisions = _collect_decisions()
+            # Unpark collector has NO failure state (absent ledger = canonical
+            # no-op, unreadable ledger = forced-visible section), so it does
+            # not participate in collect_ok.
+            unpark = _collect_unpark()
             collect_ok = (
                 transcript_agents is not None
                 and ledger_agents is not None
@@ -1130,12 +1278,15 @@ def main():
             active_agents = (transcript_agents or []) + (ledger_agents or [])
             decisions = raw_decisions or []
             try:
-                if active_agents or decisions:
-                    # Display trigger (DGN-541 S1): >=1 pending decision OR
-                    # >=1 working subagent -> fill the board.  Recent-completed
-                    # history is extra info only, never a standalone trigger
-                    # (D2).
-                    _write_dashboard(active_agents, decisions)
+                if active_agents or decisions or _unpark_visible(unpark):
+                    # Display trigger (DGN-541 S1 + DGN-534 T3): >=1 pending
+                    # decision OR >=1 working subagent OR a visible unpark
+                    # section -> fill the board.  Unpark candidates awaiting
+                    # promotion are actionable, and a stale scan is a health
+                    # signal that must not vanish with the board (M4/M5);
+                    # recent-completed history stays extra info only, never a
+                    # standalone trigger (D2).
+                    _write_dashboard(active_agents, decisions, unpark)
                 elif collect_ok:
                     # CONFIRMED empty board -> empty write; the bridge's
                     # debounced delete state machine unpins the message.
