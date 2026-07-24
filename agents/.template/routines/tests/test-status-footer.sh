@@ -29,6 +29,20 @@
 #   8. config/agent.conf fallback -> conf label + conf emoji title; env still
 #      beats conf when both are set.
 #
+# DGN-534 T3 ([언파크 후보] derived view, worklog/_UNPARK.md read-only):
+#   t3-a. fresh ledger with candidates (no other trigger) -> board filled,
+#         section + stamp + items, no staleness flag.
+#   t3-b. zero candidates + fresh scan + live agent -> section suppressed
+#         (Rev 8 empty-section suppression).
+#   t3-c. zero candidates + fresh scan, no other trigger -> confirmed-empty
+#         write (a suppressed section is not a display trigger).
+#   t3-d. ledger ABSENT + live agent -> zero change (canonical no-op).
+#   t3-e. zero candidates + STALE scan (>26h), no other trigger -> section
+#         FORCED with 오래됨 flag (M5 silent-stop detector).
+#   t3-f. ledger exists but unreadable -> forced "(스캔 기록 없음)".
+#   t3-g. length-cut drop priority: done -> unpark items -> live; unpark
+#         header (freshness) never dropped.
+#
 # Run:  bash routines/tests/test-status-footer.sh
 # Exit: 0 all pass, nonzero any fail.
 
@@ -96,6 +110,11 @@ export DOGANY_DECISIONS_FILE="$WORK/decisions.md"
 # CONFIRMED-empty case (no auto-loop fleet), keeping the empty-write
 # scenario deterministic.
 export DOGANY_LEDGER_FILE="$WORK/no-ledger.md"
+
+# Isolate the unpark ledger (DGN-534 T3): a MISSING ledger is the canonical
+# no-op (instances without gate-scan machinery render no section), keeping
+# every pre-T3 scenario byte-identical.
+export DOGANY_UNPARK_FILE="$WORK/unpark-missing.md"
 
 # Display tokens: scenarios assert the neutral defaults unless overridden,
 # so the caller's environment must not leak any in.  The conf layer is
@@ -271,6 +290,151 @@ content="$(cat "$DASHBOARD" 2>/dev/null)"
 assert_contains "env beats conf for the live label" "$content" '[ENV-LIVE-LABEL]'
 : > "$WORK/agent.conf"
 echo ""
+
+# ===========================================================================
+# DGN-534 T3: dashboard [언파크 후보] derived view (ledger read-only)
+# ===========================================================================
+echo "=== DGN-534 T3: dashboard unpark-candidate section ==="
+echo ""
+
+UNPARK="$WORK/unpark.md"
+NOW_STAMP="$(date "+%Y-%m-%d %H:%M:%S")"
+
+# t3-a: fresh ledger with candidates, NO agents/decisions -> the section
+#        alone fills the board (M4 resident signal) and renders the items.
+echo "--- t3-a: fresh ledger, 2 candidates, no other trigger -> board + section ---"
+cat > "$UNPARK" << EOF
+# _UNPARK -- test ledger
+last-scan: $NOW_STAMP KST
+candidates: 2
+
+DGN-294-big-rock  P1  UNPARK  gate: DGN-100 done
+DGN-201-old-idea  P2  COND    gate: deps done, cond remains
+EOF
+export DOGANY_UNPARK_FILE="$UNPARK"
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "section header present (unpark = display trigger)" "$dash" '[언파크 후보]'
+assert_contains "scan stamp in header" "$dash" "(스캔 ${NOW_STAMP%:*}"
+assert_contains "candidate 1 rendered (whitespace squeezed)" "$dash" 'DGN-294-big-rock P1 UNPARK gate: DGN-100 done'
+assert_contains "candidate 2 rendered" "$dash" 'DGN-201-old-idea P2 COND'
+if [[ "$dash" == *"오래됨"* ]]; then fail "fresh stamp wrongly flagged stale"; else ok "fresh stamp not flagged stale"; fi
+echo ""
+
+# t3-b: zero candidates + fresh scan + live agent -> board up (live), but
+#        the unpark section is SUPPRESSED (Rev 8 empty-section suppression).
+echo "--- t3-b: empty + fresh + live agent -> section suppressed ---"
+cat > "$UNPARK" << EOF
+last-scan: $NOW_STAMP KST
+candidates: 0
+EOF
+{ launch_line aaa0000111; echo; } > "$TRANSCRIPT"
+freshen
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "board filled by live agent" "$dash" '[서브에이전트 작업 중]'
+if [[ "$dash" == *"언파크"* ]]; then
+  fail "empty+fresh section not suppressed"
+else
+  ok "empty+fresh section suppressed (Rev 8)"
+fi
+echo ""
+
+# t3-c: zero candidates + fresh scan, no other trigger -> confirmed-empty
+#        write (a suppressed section must not hold the board up).
+echo "--- t3-c: empty + fresh, no other trigger -> empty dashboard write ---"
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+if [[ -f "$DASHBOARD" && ! -s "$DASHBOARD" ]]; then
+  ok "suppressed section is not a display trigger (empty write)"
+else
+  fail "board held up by suppressed section -- got: $(head -3 "$DASHBOARD" 2>/dev/null)"
+fi
+echo ""
+
+# t3-d: ledger ABSENT + live agent -> canonical no-op (zero change for
+#        instances without gate-scan machinery).
+echo "--- t3-d: ledger absent -> no section (canonical no-op) ---"
+export DOGANY_UNPARK_FILE="$WORK/unpark-missing.md"
+{ launch_line aaa0000111; echo; } > "$TRANSCRIPT"
+freshen
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "board filled by live agent" "$dash" '[서브에이전트 작업 중]'
+if [[ "$dash" == *"언파크"* ]]; then
+  fail "absent ledger still rendered a section"
+else
+  ok "absent ledger renders no section"
+fi
+echo ""
+
+# t3-e: zero candidates + STALE scan (>26h), no other trigger -> section
+#        FORCED with staleness flag (M5 silent-stop detector survives Rev 8).
+echo "--- t3-e: empty + stale scan -> forced section with 오래됨 flag ---"
+OLD_STAMP="$(date -v-30H "+%Y-%m-%d %H:%M:%S" 2>/dev/null || date -d '30 hours ago' "+%Y-%m-%d %H:%M:%S")"
+cat > "$UNPARK" << EOF
+last-scan: $OLD_STAMP KST
+candidates: 0
+EOF
+export DOGANY_UNPARK_FILE="$UNPARK"
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "stale scan forces the section + flag" "$dash" "[언파크 후보] (스캔 ${OLD_STAMP%:*}"
+assert_contains "staleness flag present" "$dash" '오래됨'
+echo ""
+
+# t3-f: ledger exists but unreadable (directory) -> forced visibility with
+#        "(스캔 기록 없음)" -- a broken ledger is never silent (M5).
+echo "--- t3-f: unreadable ledger -> forced 스캔 기록 없음 ---"
+mkdir -p "$WORK/unpark-as-dir"
+export DOGANY_UNPARK_FILE="$WORK/unpark-as-dir"
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "unreadable ledger surfaces" "$dash" '[언파크 후보] (스캔 기록 없음)'
+echo ""
+
+# t3-g: length-cut drop priority -- done first, then unpark items, live kept;
+#        unpark header (freshness) survives even when all its items are cut.
+echo "--- t3-g: drop priority done -> unpark -> live; header never dropped ---"
+out="$("$PYTHON" - "$FOOTER_PY" <<'PY'
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("sf", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+big = "x" * 250  # under the per-item cap so items shrink only by dropping
+done = [big] * 3  # capped to MAX_DONE_DISPLAY internally
+live = [big] * 3
+unpark = (time.time(), "2026-07-24 06:00", [big] * 15)  # fresh stamp
+text = m._build_dashboard(["small decision"], live, done, unpark)
+assert m._u16len(text) <= m.DASHBOARD_MAX_UNITS, "over budget"
+n_done = text.split("[최근 완료]")[1].count(big) if "[최근 완료]" in text else 0
+n_unpark = text.split("[언파크 후보")[1].split("[최근 완료]")[0].count(big)
+n_live = text.split("[%s]" % m.LIVE_LABEL)[1].split("[언파크 후보")[0].count(big)
+assert n_done == 0, "done not dropped first: %d" % n_done
+assert n_live == 3, "live dropped before unpark: %d" % n_live
+assert 0 < n_unpark < 15, "unpark cut wrong: %d" % n_unpark
+assert "[언파크 후보] (스캔 2026-07-24 06:00)" in text, "header lost"
+# Tiny budget: every unpark ITEM is cut but the header must survive (a
+# live-item tail may legitimately remain -- live pops AFTER unpark).
+m.DASHBOARD_MAX_UNITS = 400
+text2 = m._build_dashboard(["small decision"], live, done, unpark)
+assert "[언파크 후보] (스캔 2026-07-24 06:00)" in text2, "header dropped"
+useg2 = text2.split("[언파크 후보")[1].split("[최근 완료]")[0]
+assert useg2.count(big) == 0, "unpark items survived a full cut"
+print("DROPTEST-OK done=%d unpark=%d live=%d header-survives-full-cut" % (
+    n_done, n_unpark, n_live))
+PY
+)" && rc=0 || rc=$?
+assert_eq "drop-priority unit exit 0" "$rc" "0"
+assert_contains "drop order verified" "$out" 'DROPTEST-OK'
+echo "  $out"
+echo ""
+
+# restore default isolation for any later additions
+export DOGANY_UNPARK_FILE="$WORK/unpark-missing.md"
 
 echo "==========================="
 printf "Results: %d passed, %d failed, %d skipped\n" "$PASS" "$FAIL" "$SKIP"
