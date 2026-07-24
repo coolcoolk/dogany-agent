@@ -19,6 +19,16 @@
         ]
       },
       {
+        "matcher": "Skill|Workflow|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/usage-gate.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
