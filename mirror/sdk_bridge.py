@@ -20,10 +20,10 @@ if _DB_DIR not in sys.path:
 
 import lifekit as ec  # noqa: E402  (adapter reaches ec.* through this alias)
 
-ALLOWED_USER_VERSIONS = (7, 8)  # 008 rollout window (DGN-274 5.5 lockstep:
-                                 # (7,) solo pin precedes 008 landing; pin
-                                 # to (8,) after settling. Omission = mirror
-                                 # full stop, grill-2 M-A)
+ALLOWED_USER_VERSIONS = (8, 9)  # 009 rollout window (DGN-553 M1 lockstep:
+                                 # (8,) window precedes 009 live landing; pin
+                                 # to (9,) after settling (M2). Omission =
+                                 # mirror full stop, grill-2 M-A)
 
 
 def get_conn(db_path=None):

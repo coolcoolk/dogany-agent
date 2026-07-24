@@ -96,10 +96,10 @@ def _apply_pending_migrations(dbpath):
 
 
 def test_migration():
-    """007+008 apply in order on a v6-shaped DB, stamp version 8, leave
+    """007+008+009 apply in order on a v6-shaped DB, stamp version 9, leave
     existing rows at NULL (= default behavior), and the update.sh guard loop
     is idempotent (second pass applies nothing)."""
-    print("migration 007+008:")
+    print("migration 007+008+009:")
     with tempfile.TemporaryDirectory() as tmp:
         dbpath = os.path.join(tmp, "lifekit.db")
         conn = sqlite3.connect(dbpath)
@@ -124,12 +124,17 @@ def test_migration():
         conn.close()
 
         applied = _apply_pending_migrations(dbpath)
-        _check("first pass applies exactly 007 then 008",
+        _check("first pass applies exactly 007 then 008 then 009",
                applied == ["007_notify_policy.sql",
-                           "008_travel_blocks.sql"], str(applied))
+                           "008_travel_blocks.sql",
+                           "009_spend_tables.sql"], str(applied))
         conn = sqlite3.connect(dbpath)
         ver = conn.execute("PRAGMA user_version;").fetchone()[0]
-        _check("user_version stamped 8", ver == 8, f"ver={ver}")
+        _check("user_version stamped 9", ver == 9, f"ver={ver}")
+        seed_n = conn.execute(
+            "SELECT COUNT(*) FROM spend_category;").fetchone()[0]
+        _check("009 spend_category seed = 12 rows", seed_n == 12,
+               f"n={seed_n}")
         ecols = {r[1] for r in conn.execute("PRAGMA table_info(event);")}
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(routine_def);")}
         _check("event notify columns added",
@@ -145,7 +150,7 @@ def test_migration():
         _check("second pass is a no-op (guard idempotence)",
                applied2 == [], str(applied2))
 
-    # fresh schema.sql DB is born at 8 -> the loop must apply nothing.
+    # fresh schema.sql DB is born at 9 -> the loop must apply nothing.
     with tempfile.TemporaryDirectory() as tmp:
         dbdir = _build_instance(tmp)
         applied = _apply_pending_migrations(os.path.join(dbdir, "lifekit.db"))

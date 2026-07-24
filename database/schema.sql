@@ -1,4 +1,4 @@
-PRAGMA user_version = 8;
+PRAGMA user_version = 9;
 CREATE TABLE areas (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,               -- 영역이름 (신체건강, 식습관…)
@@ -553,3 +553,54 @@ CREATE TABLE IF NOT EXISTS place (
     CHECK (from_min IS NULL OR from_min % 15 = 0),
     CHECK (prep_min IS NULL OR (prep_min >= 0 AND prep_min % 15 = 0))
 );
+
+-- ===========================================================================
+-- DGN-553 consumption module v1 (folded migration 009; spec section 3.1).
+-- spend_category / spend_entry tables + indexes are identical to
+-- migrations/009_spend_tables.sql (IF NOT EXISTS -> idempotent). The 12-row
+-- category seed is folded too (INSERT OR IGNORE on the UNIQUE name ->
+-- idempotent): a fresh DB born at user_version 9 must be content-identical
+-- to a v8+009 migrated DB (fixed-cost defaults ride the seed rows).
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS spend_category (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,   -- Korean label (user-facing)
+    is_fixed_default INTEGER NOT NULL DEFAULT 0,
+                     -- category-level fixed-cost default; spend-add copies it
+                     -- onto the row unless caller overrides (grill r1 M2)
+    sort             INTEGER NOT NULL DEFAULT 0,
+    active           INTEGER NOT NULL DEFAULT 1,
+    CHECK (is_fixed_default IN (0,1))
+);
+-- seed: names + is_fixed_default assignments owner-confirmed (OQ 5, dec-096)
+INSERT OR IGNORE INTO spend_category (name, is_fixed_default, sort) VALUES
+  ('식비',0,10),('카페/간식',0,11),('교통',0,20),('주거/공과금',1,30),
+  ('구독',1,31),('통신',1,32),('생활용품',0,40),('의류/미용',0,41),
+  ('문화/여가',0,50),('건강/의료',0,60),('경조/선물',0,70),('기타',0,99);
+
+CREATE TABLE IF NOT EXISTS spend_entry (
+    id          INTEGER PRIMARY KEY,
+    date        TEXT NOT NULL,          -- YYYY-MM-DD (KST), lifekit convention
+    amount      INTEGER NOT NULL,       -- KRW; expense > 0, refund/cancel < 0
+    name        TEXT NOT NULL,          -- item description, user language
+    category_id INTEGER REFERENCES spend_category(id),
+    method      TEXT,                   -- free text v1: card/account/cash label
+    is_fixed    INTEGER NOT NULL DEFAULT 0,  -- row value; default copied from
+                                             -- category is_fixed_default
+    scope       TEXT NOT NULL DEFAULT 'personal',
+                -- 'personal' | 'business' | 'unknown'
+                -- business rows: recorded, EXCLUDED from personal reports,
+                -- exportable when bizkit (DGN-464) lands (boundary = OQ 1).
+                -- 'unknown' rows are swept at every C2 session (3.4).
+    source      TEXT NOT NULL DEFAULT 'chat',
+                -- v1 values: 'chat' | 'batch'. NO CHECK by design: sqlite
+                -- cannot ALTER a CHECK, and v2 adapters add 'import'/'receipt'
+                -- without a table rebuild. SDK/verb layer enforces the value
+                -- set (007/008 "SDK enforces" precedent). (grill r1 m3)
+    note        TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    CHECK (scope IN ('personal','business','unknown')),
+    CHECK (is_fixed IN (0,1))
+);
+CREATE INDEX IF NOT EXISTS idx_spend_date ON spend_entry(date);
+CREATE INDEX IF NOT EXISTS idx_spend_cat  ON spend_entry(category_id);
