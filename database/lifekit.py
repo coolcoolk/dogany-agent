@@ -611,16 +611,18 @@ def spend_find(date, scope_filter='personal', include_all=False, conn=None):
     if own:
         conn = get_conn()
     try:
+        # m-3 (grill fix): NULL category_id renders as '(미분류)' to avoid
+        # colliding with the real seeded '기타' category.
         if include_all:
             return conn.execute(
                 "SELECT e.id, e.name, e.amount, "
-                "COALESCE(c.name,''), COALESCE(e.method,''), e.scope "
+                "COALESCE(c.name,'(미분류)'), COALESCE(e.method,''), e.scope "
                 "FROM spend_entry e "
                 "LEFT JOIN spend_category c ON c.id = e.category_id "
                 "WHERE e.date=? ORDER BY e.id;", (date,)).fetchall()
         return conn.execute(
             "SELECT e.id, e.name, e.amount, "
-            "COALESCE(c.name,''), COALESCE(e.method,''), e.scope "
+            "COALESCE(c.name,'(미분류)'), COALESCE(e.method,''), e.scope "
             "FROM spend_entry e "
             "LEFT JOIN spend_category c ON c.id = e.category_id "
             "WHERE e.date=? AND e.scope=? ORDER BY e.id;",
@@ -644,14 +646,38 @@ def spend_del(sid, conn=None):
 
 
 # Updatable columns for spend-upd (amount is INTEGER, others text/int).
+# M-1 (grill fix): amount and is_fixed use strict int(), not _num() fallback.
+# Callers that pass a non-integer string (e.g. "abc", "99.9") get ValueError,
+# which cli_spend_upd catches and routes to a clean rc=1 error message.
+def _strict_amount(v):
+    """Strict integer converter for spend amount. Rejects floats and non-numeric strings."""
+    try:
+        return int(str(v))
+    except (ValueError, TypeError):
+        raise ValueError(f"amount는 정수(KRW)여야 함: {v}")
+
+
+def _strict_is_fixed(v):
+    """Strict 0/1 converter for is_fixed. Rejects anything outside {0, 1}."""
+    try:
+        iv = int(str(v))
+    except (ValueError, TypeError):
+        raise ValueError(f"is_fixed 값 오류: {v} (0 또는 1이어야 함)")
+    if iv not in (0, 1):
+        raise ValueError(f"is_fixed 값 오류: {v} (0 또는 1이어야 함)")
+    return iv
+
+
 _SPEND_UPD_COLS = {
     'date': _txt, 'name': _txt, 'method': _txt, 'note': _txt,
-    'amount': lambda v: int(_num(v)),
-    'is_fixed': lambda v: int(_num(v)),
+    'amount': _strict_amount,
+    'is_fixed': _strict_is_fixed,
     'scope': _txt, 'source': _txt, 'category': None,  # handled specially
 }
 _SPEND_UPD_VALID_SCOPE = {'personal', 'business', 'unknown'}
-_SPEND_UPD_VALID_SOURCE = {'chat', 'batch', 'import', 'receipt'}
+# m-2 (grill fix): enforce spec 3.1 v1 value set: 'chat' | 'batch' only.
+# 'import' and 'receipt' are v2+ adapter values; SDK layer enforces, no DB CHECK.
+_SPEND_UPD_VALID_SOURCE = {'chat', 'batch'}
 
 
 def spend_upd(sid, fields, conn=None):
@@ -725,9 +751,10 @@ def spend_week(monday, scope_filter='personal', include_all=False, conn=None):
             (prev, monday)).fetchone()
         prev_total, prev_count = prev_row
 
-        # Category breakdown (current week)
+        # Category breakdown (current week).
+        # m-3 (grill fix): NULL category_id renders as '(미분류)', not '기타'.
         cat_rows = conn.execute(
-            f"SELECT COALESCE(c.name,'기타'), COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"SELECT COALESCE(c.name,'(미분류)'), COALESCE(SUM(e.amount),0), COUNT(*) "
             f"FROM spend_entry e "
             f"LEFT JOIN spend_category c ON c.id = e.category_id "
             f"WHERE e.date >= ? AND e.date < ? {scope_clause} "
@@ -792,9 +819,10 @@ def spend_month(ym, scope_filter='personal', include_all=False, conn=None):
         fixed_total = sum(r[1] for r in fv if r[0] == 1)
         variable_total = sum(r[1] for r in fv if r[0] == 0)
 
-        # Category breakdown (all categories)
+        # Category breakdown (all categories, ordered by amount desc).
+        # m-3 (grill fix): NULL category_id renders as '(미분류)', not '기타'.
         cat_rows = conn.execute(
-            f"SELECT COALESCE(c.name,'기타'), COALESCE(SUM(e.amount),0), COUNT(*) "
+            f"SELECT COALESCE(c.name,'(미분류)'), COALESCE(SUM(e.amount),0), COUNT(*) "
             f"FROM spend_entry e "
             f"LEFT JOIN spend_category c ON c.id = e.category_id "
             f"WHERE e.date >= ? AND e.date < ? {scope_clause} "
@@ -826,6 +854,27 @@ def spend_month(ym, scope_filter='personal', include_all=False, conn=None):
             'methods': [{'method': r[0], 'amount': r[1], 'count': r[2]}
                         for r in method_rows],
         }
+    finally:
+        if own:
+            conn.close()
+
+
+def spend_unknown(conn=None):
+    """M-2 (grill fix): list ALL scope='unknown' entries across all dates.
+
+    Returns list of (id, date, name, amount, category, method) tuples,
+    oldest first. This is the C2 sweep surface; reclassify via spend-upd scope=."""
+    own = conn is None
+    if own:
+        conn = get_conn()
+    try:
+        return conn.execute(
+            "SELECT e.id, e.date, e.name, e.amount, "
+            "COALESCE(c.name,'(미분류)'), COALESCE(e.method,'') "
+            "FROM spend_entry e "
+            "LEFT JOIN spend_category c ON c.id = e.category_id "
+            "WHERE e.scope='unknown' "
+            "ORDER BY e.date ASC, e.id ASC;").fetchall()
     finally:
         if own:
             conn.close()
@@ -6407,7 +6456,9 @@ def cli_travel_refresh(argv):
 # ── 소비 CLI (DGN-553 J1) ────────────────────────────────────
 
 _SPEND_VALID_SCOPE = {'personal', 'business', 'unknown'}
-_SPEND_VALID_SOURCE = {'chat', 'batch', 'import', 'receipt'}
+# m-2 (grill fix): enforce spec 3.1 v1 value set: 'chat' | 'batch' only.
+# 'import' and 'receipt' are v2+ adapter values, not valid in v1.
+_SPEND_VALID_SOURCE = {'chat', 'batch'}
 
 
 def cli_spend_add(argv):
@@ -6568,12 +6619,36 @@ def cli_spend_month(argv):
     print(f"fixed={m['fixed_total']:,}원  variable={m['variable_total']:,}원")
     print(f"prev_month={m['prev_ym']} total={m['prev_total']:,}원")
     print(f"diff_total={diff_sign}{m['diff_total']:,}원")
-    print("--- 카테고리 전체 ---")
-    for cat in m['categories']:
+    # m-6 (grill fix): category breakdown = top 5 by amount (spec 3.5).
+    # When more than 5 categories, a remainder line "그 외 N건: X원" is appended.
+    cats = m['categories']
+    print("--- 카테고리 top5 ---")
+    top = cats[:5]
+    rest = cats[5:]
+    for cat in top:
         print(f"  {cat['name']}: {cat['amount']:,}원 ({cat['count']}건)")
+    if rest:
+        rest_count = sum(c['count'] for c in rest)
+        rest_amount = sum(c['amount'] for c in rest)
+        print(f"  그 외 {rest_count}건: {rest_amount:,}원")
     print("--- 결제수단별 ---")
     for mth in m['methods']:
         print(f"  {mth['method']}: {mth['amount']:,}원 ({mth['count']}건)")
+
+
+def cli_spend_unknown(argv):
+    # spend-unknown: list ALL scope='unknown' entries across all dates.
+    # M-2 (grill fix, spec v1.1 amendment): C2 sweep surface.
+    # Output per row: id<TAB>date<TAB>name<TAB>amount<TAB>category<TAB>method
+    # Footer: count + total, or "미분류(unknown) 지출 없음" when empty.
+    rows = spend_unknown()
+    if not rows:
+        print("미분류(unknown) 지출 없음")
+        return
+    for eid, date, name, amount, cat, method in rows:
+        print(f"{eid}\t{date}\t{name}\t{amount}\t{cat}\t{method}")
+    total = sum(r[3] for r in rows)
+    print(f"--- unknown {len(rows)}건 합계 {total:,}원 ---")
 
 
 _DISPATCH = {
@@ -6632,6 +6707,8 @@ _DISPATCH = {
     'spend-upd': cli_spend_upd,
     'spend-week': cli_spend_week,
     'spend-month': cli_spend_month,
+    # DGN-553 grill fix M-2: C2 sweep surface
+    'spend-unknown': cli_spend_unknown,
 }
 
 
@@ -6646,7 +6723,7 @@ def main(argv=None):
         print("(meal-add|meal-find|meal-day|meal-del|meal-upd|workout-add|"
               "workout-find|workout-del|agg-day|agg-week|"
               "spend-add|spend-find|spend-day|spend-del|spend-upd|"
-              "spend-week|spend-month)", file=sys.stderr)
+              "spend-week|spend-month|spend-unknown)", file=sys.stderr)
         sys.exit(1)
     fn(rest)
 
