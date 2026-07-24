@@ -258,6 +258,18 @@ BRIDGE_REGISTER_GUARD = os.getenv("BRIDGE_REGISTER_GUARD", "1").strip().lower() 
 CLAUDE_CLI_PATH = os.getenv("CLAUDE_CLI_PATH") or (
     str(config.claude_cli_path) if config.claude_cli_path else None
 )
+# DGN-555: selective reply-linking. The FINAL response of a turn is sent as a
+# Telegram reply to its triggering user message ONLY when newer user messages
+# interleaved before the send, or the response fires later than
+# REPLY_LINK_LATENCY_S after the trigger arrived (policy in bot.py). Default on.
+REPLY_LINK_ENABLED = os.getenv("REPLY_LINK_ENABLED", "1").strip().lower() not in (
+    "0",
+    "false",
+    "off",
+    "no",
+    "",
+)
+REPLY_LINK_LATENCY_S = int(os.getenv("REPLY_LINK_LATENCY_S", "300") or "300")
 
 
 def setup_logging() -> None:

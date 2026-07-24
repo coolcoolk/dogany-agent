@@ -11,8 +11,9 @@ This `bridge/` directory is a VENDORED (in-tree) copy of the standalone Telegram
   16MB, fixes 1MB SDK transport buffer crash on large tool results; pushed
   OSS 01764ee),
   DGN-541 (dashboard.py debounced empty-delete pin state machine; OSS commit
-  883841f, local -- OSS push pending owner approval). Base pin held
-  (pre-existing STREAM_INTERIM drift vs OSS HEAD).
+  883841f, local -- OSS push pending owner approval),
+  DGN-555 (selective reply-linking, local -- OSS push pending owner approval).
+  Base pin held (pre-existing STREAM_INTERIM drift vs OSS HEAD).
 
 ## Why vendored instead of a git submodule
 
