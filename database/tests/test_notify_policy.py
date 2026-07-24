@@ -96,10 +96,10 @@ def _apply_pending_migrations(dbpath):
 
 
 def test_migration():
-    """007 applies on a v6-shaped DB, stamps version 7, leaves existing rows
-    at NULL (= default behavior), and the update.sh guard loop is idempotent
-    (second pass applies nothing)."""
-    print("migration 007:")
+    """007+008 apply in order on a v6-shaped DB, stamp version 8, leave
+    existing rows at NULL (= default behavior), and the update.sh guard loop
+    is idempotent (second pass applies nothing)."""
+    print("migration 007+008:")
     with tempfile.TemporaryDirectory() as tmp:
         dbpath = os.path.join(tmp, "lifekit.db")
         conn = sqlite3.connect(dbpath)
@@ -124,11 +124,12 @@ def test_migration():
         conn.close()
 
         applied = _apply_pending_migrations(dbpath)
-        _check("first pass applies exactly 007",
-               applied == ["007_notify_policy.sql"], str(applied))
+        _check("first pass applies exactly 007 then 008",
+               applied == ["007_notify_policy.sql",
+                           "008_travel_blocks.sql"], str(applied))
         conn = sqlite3.connect(dbpath)
         ver = conn.execute("PRAGMA user_version;").fetchone()[0]
-        _check("user_version stamped 7", ver == 7, f"ver={ver}")
+        _check("user_version stamped 8", ver == 8, f"ver={ver}")
         ecols = {r[1] for r in conn.execute("PRAGMA table_info(event);")}
         rcols = {r[1] for r in conn.execute("PRAGMA table_info(routine_def);")}
         _check("event notify columns added",
@@ -144,7 +145,7 @@ def test_migration():
         _check("second pass is a no-op (guard idempotence)",
                applied2 == [], str(applied2))
 
-    # fresh schema.sql DB is born at 7 -> the loop must apply nothing.
+    # fresh schema.sql DB is born at 8 -> the loop must apply nothing.
     with tempfile.TemporaryDirectory() as tmp:
         dbdir = _build_instance(tmp)
         applied = _apply_pending_migrations(os.path.join(dbdir, "lifekit.db"))

@@ -72,6 +72,19 @@ def _has_notify_cols(conn):
     return "notify_policy" in cols
 
 
+def _get_participants(conn, event_id):
+    """Return comma-joined participant names for an event (empty string if none)."""
+    try:
+        rows = conn.execute(
+            "SELECT p.name FROM persons p "
+            "JOIN event_persons ep ON ep.person_id = p.id "
+            "WHERE ep.event_id = ? ORDER BY p.name;",
+            (event_id,)).fetchall()
+        return ", ".join(r[0] for r in rows)
+    except Exception:
+        return ""
+
+
 def select_alerts(conn, now_ts):
     """All due alerts at `now_ts` (epoch seconds). Returns a list of dicts:
     {key, kind, alert, lead_min, hhmm, title, location, purpose}. Pure read;
@@ -100,6 +113,9 @@ def select_alerts(conn, now_ts):
                     .replace(tzinfo=timezone.utc))
         start_ts = int(start_dt.timestamp())
         local = start_dt.astimezone(ZoneInfo(tz or "Asia/Seoul"))
+        persons = ""
+        if kind == "appointment":
+            persons = _get_participants(conn, eid)
         for alert, lead_min in policy_alerts(kind, np, nl):
             alert_ts = start_ts - lead_min * 60
             if not (now_ts - SLACK_SEC <= alert_ts <= now_ts + SLACK_SEC):
@@ -116,6 +132,7 @@ def select_alerts(conn, now_ts):
                 "lead_min": lead_min, "hhmm": local.strftime("%H:%M"),
                 "title": title, "location": loc or "",
                 "purpose": purpose or "",
+                "persons": persons,
             })
     return out
 
@@ -145,9 +162,10 @@ def main(argv=None):
     try:
         for a in select_alerts(conn, now_ts):
             sys.stdout.write(
-                "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+                "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
                 % (a["key"], a["kind"], a["alert"], a["lead_min"],
-                   a["hhmm"], a["title"], a["location"], a["purpose"]))
+                   a["hhmm"], a["title"], a["location"], a["purpose"],
+                   a.get("persons", "")))
     finally:
         conn.close()
     return 0
