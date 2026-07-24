@@ -1073,7 +1073,7 @@ def load_card_data(iso_date, conn=None):
 # facade time parser). datetime/timezone are already imported at file top.
 from zoneinfo import ZoneInfo
 
-EXPECTED_USER_VERSION = 7  # 007_notify_policy (DGN-273)
+EXPECTED_USER_VERSION = 8  # 008_travel_blocks (DGN-274)
 
 # INF sentinel string: lexicographically greater than any canonical "...Z"
 # instant. '~' (0x7E) sorts after digits/'Z'/'T'. Used only at compute time;
@@ -1305,8 +1305,20 @@ def new_ulid(ts_ms=None):
 TIME_OCCUPYING_TASK_KINDS = set()  # e.g. {'workout_session', 'focus_block'}
 
 
-def resolve_slot_exclusive(kind, schedule_kind, task_kind=None, day_block=False):
+def resolve_slot_exclusive(kind, schedule_kind, task_kind=None, day_block=False,
+                           block_class=None, exclusive_override=None):
     """Decide slot_exclusive per kind-policy (N5/D8 locus).
+
+    DGN-274 (spec v4 4.2):
+      (a) machine layer: block_class='travel' -> 1 (first occupant of the
+          seat TIME_OCCUPYING_TASK_KINDS reserved; kind-policy decides,
+          never per-write discretion).
+      (c) boundary layer: exclusive_override is the EXPLICIT-parameter lane
+          for a user-ratified override (e.g. online appointment registered
+          exclusive=0 after the one registration-turn question). It is
+          NEVER model discretion: only a verb that carries the user's
+          ratified answer may pass it. It does not apply to travel blocks
+          (travel branch evaluated first).
 
     F-1 (grill-1 FATAL, spec v2): the all_day branch is evaluated BEFORE the
     appointment-kind branch. all_day is a CONTAINING context (trip/travel):
@@ -1319,6 +1331,10 @@ def resolve_slot_exclusive(kind, schedule_kind, task_kind=None, day_block=False)
       - task with declared time-occupying kind -> 1 (born exclusive).
       - general task (timed/untimed) -> 0.
     """
+    if block_class == "travel":
+        return 1                       # DGN-274 4.2(a) machine layer
+    if exclusive_override is not None:
+        return 1 if int(exclusive_override) else 0   # 4.2(c) explicit param
     if schedule_kind == "all_day":
         return 1 if day_block else 0
     if kind == "appointment":
@@ -1424,7 +1440,8 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
               display_tz="Asia/Seoul", task_kind=None, day_block=False,
               notion_id=None, meta=None,
               recurrence_id=None, rec_date=None, is_routine=0,
-              notify_policy=None, notify_lead_min=None):
+              notify_policy=None, notify_lead_min=None,
+              exclusive_override=None):
     """Insert a new event. For slot_exclusive events with a start instant, the
     insert is atomic INSERT..WHERE NOT EXISTS(overlap): returns event id on win,
     None on slot loss. For non-exclusive/no-start, always inserts (no slot guard).
@@ -1488,7 +1505,9 @@ def event_add(conn, kind, title, schedule_kind, start_at=None, end_at=None,
     # DGN-273: pair coherence (raises ValueError on a bad pair).
     notify_policy, notify_lead_min = validate_notify_policy(
         notify_policy, notify_lead_min)
-    slot_exclusive = resolve_slot_exclusive(kind, schedule_kind, task_kind, day_block)
+    slot_exclusive = resolve_slot_exclusive(
+        kind, schedule_kind, task_kind, day_block,
+        exclusive_override=exclusive_override)
     now = now_utc()
     ulid = new_ulid()
 
@@ -1843,6 +1862,12 @@ def _settle(conn, eid, version, outcome, settled_by, settled_at_ts=None):
         if cur.rowcount == 1:
             _recompute_and_store(conn, eid, now=now)
             conn.commit()
+            # DGN-274 3.2: anchor settle (done AND abandoned alike) tombstones
+            # every unsettled block with start_at > settle instant -- a travel
+            # that has not started will not happen. Started/past blocks stay
+            # (lifelog). The judgment key is block start vs settle instant,
+            # not the settle outcome. No-op for non-anchor rows.
+            _travel_on_anchor_settled(conn, eid, ts)
             return MutationResult.APPLIED
         row = conn.execute("SELECT version, settled_at FROM event WHERE id=?;",
                           (eid,)).fetchone()
@@ -2001,12 +2026,32 @@ def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
     if found is None:
         return "not_found", None
     eid, version = found
-    rec_row = conn.execute(
-        "SELECT recurrence_id FROM event WHERE id=?;", (eid,)).fetchone()
+    travel_ready = _travel_schema_ready(conn)   # M2: clean degrade on v7
+    if travel_ready:
+        rec_row = conn.execute(
+            "SELECT recurrence_id, block_class, schedule_kind, start_at, "
+            "end_at FROM event WHERE id=?;", (eid,)).fetchone()
+        is_travel_block = rec_row is not None and rec_row[1] == "travel"
+        old_sched = (rec_row[2], rec_row[3], rec_row[4]) if rec_row else None
+    else:
+        rec_row = conn.execute(
+            "SELECT recurrence_id FROM event WHERE id=?;",
+            (eid,)).fetchone()
+        is_travel_block = False
+        old_sched = None
     is_recurrence = rec_row is not None and rec_row[0] is not None
     if is_recurrence and new_schedule_kind == "untimed":
         return "rejected_untimed", None          # M-C: no change, terminal
     stamp_sql = ", rec_exception=1" if is_recurrence else ""
+    # DGN-274 3.3 (V3): inbound schedule edit on a travel block engraves the
+    # pin bit in the SAME txn; derived_delta stays NULL (lazy engrave at
+    # cycle end / nightly pass -- anchor and block may be dragged in the
+    # same poll cycle, so the delta is only correct at the final resting
+    # position). Parallel branch to the rec_exception stamp. CLI lanes that
+    # also pass through bypass are gated upstream for travel rows (4.4/3.2);
+    # if one ever reaches here, engraving the pin is the safe side.
+    if is_travel_block:
+        stamp_sql += ", derived_pinned=1"
     now = now_utc()
 
     def run():
@@ -2031,6 +2076,14 @@ def bypass_schedule_apply(conn, ulid, new_schedule_kind, new_start, new_end):
             raise
 
     res = with_retry(run)
+    # dec-021 (OQ-8): an APPLIED schedule change on a non-block row
+    # supersedes that anchor instance's skip rows (identical-schedule
+    # applies clear nothing). Single hook covers the inbound drag AND the
+    # routine-exception delegate lanes.
+    if (res == "applied" and travel_ready and not is_travel_block
+            and old_sched is not None
+            and old_sched != (new_schedule_kind, new_start, new_end)):
+        _travel_clear_skips(conn, ulid, now=now)
     warning = _mirror_overlap_post_check(conn, eid) if res == "applied" else None
     return res, warning
 
@@ -2266,6 +2319,29 @@ def reschedule_apply(conn, req_ulid):
             conn.commit()
             return "rejected"
         eid, version, slot_ex, sk = ev
+        # DGN-274 3.2 (V9, F-B): the rescheduler drain moves events through
+        # event_move (slot predicate) WITHOUT the pre-clean sequence, so a
+        # rule-bearing anchor would self-deadlock against its own exclusive
+        # block. The fix is a deterministic REJECT (the drain stays thin --
+        # the pre-clean sequence is never duplicated here). The drain report
+        # exposes the reason; re-execution goes through the anchor-moving
+        # verb lane (appt-upd time path, pre-clean built in).
+        t_reason = None
+        if _travel_schema_ready(conn):    # M2: v7 clean degrade
+            trow = conn.execute(
+                "SELECT ulid, block_class, recurrence_id FROM event "
+                "WHERE id=?;", (eid,)).fetchone()
+            if trow[1] is not None:
+                t_reason = "travel_block"   # block moves = travel-move only
+            elif _travel_rule_for_anchor_txn(
+                    conn, trow[0], trow[2]) is not None:
+                t_reason = "travel_anchor"
+        if t_reason is not None:
+            conn.execute(
+                "UPDATE reschedule_requests SET status='rejected', reason=?, "
+                "resolved_at=? WHERE ulid=?;", (t_reason, now_utc(), req_ulid))
+            conn.commit()
+            return "rejected"
         # v5.1: guard if the target is an exclusive blocker with a start instant.
         guard = is_blocker(slot_ex, ps)
         cee = _cand_eff_end(ps, pe, 0)
@@ -2563,20 +2639,41 @@ def routine_retire(conn, def_token, today=None, state_conn=None, now=None,
     return {"result": "applied", "cancelled": n}
 
 
-def routine_exception(conn, event_ulid, schedule=None, content=None):
+def routine_exception(conn, event_ulid, schedule=None, content=None,
+                      state_conn=None):
     """Mode A this-instance-only edit (spec 4.1) -- thin wrapper.
     schedule = (new_schedule_kind, new_start, new_end) -> delegates to
     bypass_schedule_apply (which owns the rec_exception stamp, M-B).
     content = {title/note} -> event_set_meta path (NO stamp; version bump
-    already makes the row regen-untouchable). Returns result string."""
+    already makes the row regen-untouchable). Returns result string.
+
+    DGN-274 (V8):
+      - travel-block gate (4.4, F-B second-write-path seal): blocks carry
+        recurrence_id NULL so they are never a normal target, but a direct
+        ulid hit is possible -- explicit loud gate; time adjustment goes
+        through travel-move.
+      - inline follow (3.2, F-B): routine_exception passes through bypass
+        (no slot predicate -> no self-deadlock -> no pre-clean needed);
+        instead, a successful schedule commit runs travel_refresh(instance)
+        in the SAME process (occurrence time-move is the primary use case;
+        the block must not sit at the old position until nightly)."""
     if schedule is None and not content:
         raise ValueError("routine_exception: nothing to change")
+    travel_ready = _travel_schema_ready(conn)   # M2: v7 clean degrade
+    if travel_ready:
+        brow = conn.execute(
+            "SELECT block_class FROM event WHERE ulid=?;",
+            (event_ulid,)).fetchone()
+        if brow is not None and brow[0] == "travel":
+            return "rejected_travel_block"    # loud gate; use travel-move
     res = "noop"
+    schedule_applied = False
     if schedule is not None:
         sk, ns, ne = schedule
         res, _warn = bypass_schedule_apply(conn, event_ulid, sk, ns, ne)
         if res != "applied":
             return res
+        schedule_applied = True
     if content:
         found = _ulid_lookup(conn, event_ulid)
         if found is None:
@@ -2584,6 +2681,8 @@ def routine_exception(conn, event_ulid, schedule=None, content=None):
         eid, version = found
         mres = event_set_meta(conn, eid, version, dict(content))
         res = mres if isinstance(mres, str) else "applied"
+    if schedule_applied and travel_ready:
+        travel_refresh(conn, state_conn, event_ulid)   # F-B inline follow
     return res
 
 
@@ -2865,6 +2964,1296 @@ def _ulid_for_event_id(conn, eid):
     """Return the ulid for an event integer id, or None."""
     row = conn.execute("SELECT ulid FROM event WHERE id=?;", (eid,)).fetchone()
     return row[0] if row else None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DGN-274 travel blocks (build spec v4) -- deriver + verb family (V2..V9).
+# Protection / refusal / pre-clean / pin / demotion / chain logic ALL lives
+# here in the verb layer (deterministic code, zero model discretion).
+# English/ASCII only.
+# ══════════════════════════════════════════════════════════════════════════
+
+TRAVEL_CHAIN_WINDOW_MIN = 60     # OQA-14 build default. Code constant, single
+                                 # definition; tuning = constant change + doc
+                                 # update, never a rule value.
+TRAVEL_GRID_MIN = 15             # 2.4 rounding grid (ceil, upward-safe)
+TRAVEL_BLOCK_CLASS = "travel"
+TRAVEL_DERIVER_BY = "travel-deriver"
+TRAVEL_REGEN_BY = "travel-regen"
+TRAVEL_SKIP_BY = "travel-skip"
+TRAVEL_EXPIRE_BY = "travel-expire"   # F1: stale started-row resolution
+TRAVEL_SKIP_CLEARED_BY = "travel-skip-cleared"   # dec-021: superseded skip
+TRAVEL_OWNING_AGENT = "ag"
+TRAVEL_DISPLAY_TZ = "Asia/Seoul"          # A2: KST single-tz scope
+
+# user-facing strings live as i18n values (DGN-210); source stays ASCII
+# (ko values unicode-escaped; the ko title shape is pinned by spec 5.1:
+# "<travel>: <anchor title>").
+TRAVEL_TITLE_I18N = {
+    "ko": u"\uc774\ub3d9: %s",
+    "en": u"Travel: %s",
+}
+# DGN-305: prep block title ("\uc900\ube44: <anchor title>").
+TRAVEL_PREP_TITLE_I18N = {
+    "ko": u"\uc900\ube44: %s",
+    "en": u"Prep: %s",
+}
+# DGN-314: after-leg title -- fixed home destination, not the anchor title
+# (ko: "\uc774\ub3d9: \uc9d1" = "\uc774\ub3d9: \uc9d1"; en: "Travel: home").
+TRAVEL_HOME_TITLE_I18N = {
+    "ko": u"\uc774\ub3d9: \uc9d1",
+    "en": u"Travel: home",
+}
+TRAVEL_REMIND_I18N = {
+    # 4.3/V13: prep_eff>0 -> "prep start -- HH:MM departure" (departure time
+    # carried inside the single start_only alert); prep_eff=0 -> departure.
+    # DGN-305: alert now anchors on 'before_prep' block start_at (= prep_start).
+    "prep": {"ko": u"\uc900\ube44 \uc2dc\uc791 -- {hhmm} \ucd9c\ubc1c",
+             "en": u"prep start -- {hhmm} departure"},
+    "depart": {"ko": u"\ucd9c\ubc1c", "en": u"departure"},
+}
+
+
+def _travel_schema_ready(conn):
+    """M2 (grill fix): v8 code must degrade CLEANLY on a v7 DB inside the
+    (7,8) rollout window -- the sdk_bridge/mirror lanes open without the
+    version assert, so every travel touchpoint reachable from those lanes
+    checks column presence first (PRAGMA is an in-memory schema lookup;
+    uncached per the bk_get precedent -- id-keyed caches risk GC reuse).
+    False -> all travel behavior is a no-op (pre-008 semantics)."""
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(event);")}
+    except sqlite3.Error:
+        return False
+    return "block_class" in cols
+
+
+def _travel_title(anchor_title, lang="ko"):
+    return TRAVEL_TITLE_I18N.get(lang, TRAVEL_TITLE_I18N["ko"]) % anchor_title
+
+
+def _travel_prep_title(anchor_title, lang="ko"):
+    # DGN-305: title for the prep block derived from the anchor.
+    return TRAVEL_PREP_TITLE_I18N.get(lang, TRAVEL_PREP_TITLE_I18N["ko"]) % anchor_title
+
+
+def _travel_home_title(lang="ko"):
+    # DGN-314: after-leg always uses a fixed home title (not the anchor title).
+    return TRAVEL_HOME_TITLE_I18N.get(lang, TRAVEL_HOME_TITLE_I18N["ko"])
+
+
+def _ceil_grid(minutes):
+    """15-min grid ceil (2.4): travel under-allocation is the failure mode
+    (late), over-allocation is slack -- ceil is the safe side."""
+    m = int(minutes)
+    if m < 0:
+        raise ValueError("negative minutes refused: %r" % minutes)
+    g = TRAVEL_GRID_MIN
+    return ((m + g - 1) // g) * g
+
+
+def _iso_shift_min(ts, minutes):
+    """Canonical UTC instant shifted by minutes (+/-)."""
+    dt = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+    return (dt + timedelta(minutes=int(minutes))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_diff_min(a, b):
+    """Whole minutes of (a - b) for canonical instants."""
+    da = datetime.datetime.strptime(a, "%Y-%m-%dT%H:%M:%SZ")
+    db = datetime.datetime.strptime(b, "%Y-%m-%dT%H:%M:%SZ")
+    return int((da - db).total_seconds() // 60)
+
+
+def _travel_state_conn(state_conn=None):
+    """Best-effort mirror state db handle (outbox + never-mirrored reads).
+    None on failure -- callers treat that as 'tombstone path, never DELETE'
+    (0.1 pin, safe side)."""
+    if state_conn is not None:
+        return state_conn
+    try:
+        os.makedirs(os.path.dirname(_STATE_DB_PATH), exist_ok=True)
+        sc = sqlite3.connect(_STATE_DB_PATH)
+        sc.execute("PRAGMA journal_mode=WAL")
+        sc.execute("PRAGMA busy_timeout=5000")
+        sc.executescript(_STATE_MIN_DDL)
+        sc.commit()
+        return sc
+    except Exception:
+        return None
+
+
+def _travel_outbox(state_conn, ulid):
+    """Idempotent outbox enqueue on a state handle (adapter semantics)."""
+    if state_conn is None:
+        return False
+    now = now_utc()
+    try:
+        state_conn.execute(
+            "INSERT INTO mirror_outbox(event_ulid, op, status, created_at, "
+            "updated_at) VALUES(?, 'sync', 'queued', ?, ?)", (ulid, now, now))
+        state_conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        state_conn.rollback()
+        return False
+
+
+def _travel_log(conn, category, rule_ulid=None, detail=None, now=None):
+    """Audit line in roller_log (shared table; travel categories are
+    namespaced 'travel_*' and keyed by travel_rule.ulid in the
+    recurrence_id column -- the roller's recurrence_id key is NOT reused,
+    blocks carry recurrence_id NULL (3.1 churn key pin))."""
+    conn.execute(
+        "INSERT INTO roller_log(ts, recurrence_id, category, detail) "
+        "VALUES(?,?,?,?);", (now or now_utc(), rule_ulid, category, detail))
+    conn.commit()
+
+
+def _travel_row(conn, sql, params):
+    old = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        r = conn.execute(sql, params).fetchone()
+        return dict(r) if r is not None else None
+    finally:
+        conn.row_factory = old
+
+
+def _travel_rows(conn, sql, params):
+    old = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    finally:
+        conn.row_factory = old
+
+
+# ── place (6: the home of place knowledge) ────────────────────────────────
+
+def travel_place_get(conn, token):
+    """place row by ulid, integer id, or exact name."""
+    row = _travel_row(conn, "SELECT * FROM place WHERE ulid=? OR name=?;",
+                      (str(token), str(token)))
+    if row is None and str(token).isdigit():
+        row = _travel_row(conn, "SELECT * FROM place WHERE id=?;",
+                          (int(token),))
+    return row
+
+
+def _resolve_location_place(conn, location):
+    """Deterministic location-text -> place resolution: exact canonical name
+    or alias match. Runtime fuzzy matching is forbidden (6); this is the
+    lookup the chain predicate (2.6 external()) uses. Returns place dict or
+    None (= unknown = judgment-impossible = prep included, safe side)."""
+    if not location:
+        return None
+    loc = str(location).strip()
+    row = _travel_row(conn, "SELECT * FROM place WHERE name=?;", (loc,))
+    if row is not None:
+        return row
+    for cand in _travel_rows(conn,
+                             "SELECT * FROM place WHERE aliases IS NOT NULL;",
+                             ()):
+        try:
+            aliases = json.loads(cand["aliases"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(aliases, list) and loc in aliases:
+            return cand
+    return None
+
+
+def travel_place_add(conn, name, aliases=None, to_min=None, from_min=None,
+                     prep_min=None, note=None, now=None):
+    """Register a place (ask-once landing spot). Minute values are grid-
+    ceiled (2.4). Returns the place dict."""
+    if not name or not str(name).strip():
+        raise ValueError("travel_place_add: name required")
+    now = now or now_utc()
+    ulid = new_ulid()
+    vals = {
+        "to_min": _ceil_grid(to_min) if to_min is not None else None,
+        "from_min": _ceil_grid(from_min) if from_min is not None else None,
+        "prep_min": _ceil_grid(prep_min) if prep_min is not None else None,
+    }
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT INTO place(ulid, name, aliases, to_min, from_min, "
+            "prep_min, note, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?);",
+            (ulid, str(name).strip(),
+             json.dumps(aliases) if aliases else None,
+             vals["to_min"], vals["from_min"], vals["prep_min"],
+             note, now, now))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return travel_place_get(conn, ulid)
+
+
+_PLACE_LEG_TO_RULE = {          # 2.3 propagation map: place col -> rule leg
+    "to_min": ("before_min", "before_src"),
+    "from_min": ("after_min", "after_src"),
+    "prep_min": ("prep_min", "prep_src"),
+}
+
+
+def travel_place_upd(conn, place_token, changes, state_conn=None, now=None):
+    """Update a place. src='place' dependent rule legs are updated in the
+    SAME txn (2.3: propagation is verb-layer code, no model discretion);
+    src='explicit' legs are untouched -- the user's explicit declaration
+    wins. Affected active rules are refreshed inline afterwards."""
+    place = travel_place_get(conn, place_token)
+    if place is None:
+        return {"result": "not_found"}
+    now = now or now_utc()
+    allowed = ("name", "aliases", "to_min", "from_min", "prep_min", "note")
+    sets, params = [], []
+    for k, v in changes.items():
+        if k not in allowed:
+            raise ValueError("travel_place_upd: column %r not allowed" % k)
+        if k in ("to_min", "from_min", "prep_min") and v is not None:
+            v = _ceil_grid(v)
+        if k == "aliases" and v is not None and not isinstance(v, str):
+            v = json.dumps(v)
+        sets.append("%s=?" % k)
+        params.append(v)
+    if not sets:
+        raise ValueError("travel_place_upd: nothing to change")
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "UPDATE place SET " + ", ".join(sets) + ", updated_at=? "
+            "WHERE id=?;", params + [now, place["id"]])
+        # same-txn propagation to src='place' rule legs (all three legs).
+        for pcol, (rcol, scol) in _PLACE_LEG_TO_RULE.items():
+            if pcol not in changes:
+                continue
+            newv = changes[pcol]
+            newv = _ceil_grid(newv) if newv is not None else 0
+            conn.execute(
+                "UPDATE travel_rule SET %s=?, version=version+1, updated_at=? "
+                "WHERE place_id=? AND %s='place' AND status != 'retired';"
+                % (rcol, scol), (newv, now, place["id"]))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    # inline refresh of affected active rules (3.1(i)).
+    for rule in _travel_rows(
+            conn, "SELECT * FROM travel_rule WHERE place_id=? "
+            "AND status='active';", (place["id"],)):
+        travel_refresh_rule(conn, state_conn, rule, now=now)
+    return {"result": "applied", "place": travel_place_get(conn, place["id"])}
+
+
+# ── travel_rule (5.1/5.2) ─────────────────────────────────────────────────
+
+def travel_rule_get(conn, token):
+    row = _travel_row(conn, "SELECT * FROM travel_rule WHERE ulid=?;",
+                      (str(token),))
+    if row is None and str(token).isdigit():
+        row = _travel_row(conn, "SELECT * FROM travel_rule WHERE id=?;",
+                          (int(token),))
+    return row
+
+
+def _travel_rule_for_anchor_txn(conn, event_ulid, recurrence_id):
+    """ACTIVE rule governing an anchor INSTANCE, txn-safe (pure SELECT).
+    Resolution (5.1 join-key pin): event-direct rule first; else the def
+    rule via event.recurrence_id = routine_def.recurrence_id ONLY (title /
+    def-id joins forbidden). Returns rule dict or None."""
+    rule = _travel_row(
+        conn, "SELECT * FROM travel_rule WHERE anchor_type='event' "
+        "AND anchor_ulid=? AND status='active';", (event_ulid,))
+    if rule is not None:
+        return rule
+    if recurrence_id:
+        d = conn.execute(
+            "SELECT ulid FROM routine_def WHERE recurrence_id=?;",
+            (recurrence_id,)).fetchone()
+        if d is not None:
+            return _travel_row(
+                conn, "SELECT * FROM travel_rule WHERE anchor_type='def' "
+                "AND anchor_ulid=? AND status='active';", (d[0],))
+    return None
+
+
+def _travel_rule_for_anchor_row(conn, anchor_row):
+    return _travel_rule_for_anchor_txn(
+        conn, anchor_row["ulid"], anchor_row.get("recurrence_id"))
+
+
+def travel_rule_add(conn, anchor_type, anchor_ulid, place_id=None,
+                    before_min=None, after_min=None, prep_min=None,
+                    before_src=None, after_src=None, prep_src=None,
+                    status="active", created_by=None, state_conn=None,
+                    now=None):
+    """Create a travel rule (2.1: derivation is ALWAYS grounded in an
+    explicit rule row; no silent auto-attach). Minute values grid-ceil.
+    place_id + a None leg value = pre-fill from the place (src='place');
+    an explicit value = src='explicit' (2.3/2.5). status='proposed' is the
+    deferred-offer carrier (derives nothing). Active rules derive inline."""
+    if anchor_type not in ("def", "event"):
+        raise ValueError("travel_rule_add: anchor_type must be def|event")
+    if anchor_type == "event":
+        arow = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;",
+                           (anchor_ulid,))
+        if arow is None:
+            raise ValueError("travel_rule_add: anchor event %r not found"
+                             % anchor_ulid)
+        if arow.get("block_class") is not None:
+            raise ValueError(
+                "travel_rule_add: a derived block cannot be an anchor "
+                "(no derivation of derivations, spec 1)")
+    else:
+        d = conn.execute("SELECT 1 FROM routine_def WHERE ulid=?;",
+                         (anchor_ulid,)).fetchone()
+        if d is None:
+            raise ValueError("travel_rule_add: routine_def %r not found"
+                             % anchor_ulid)
+    place = None
+    if place_id is not None:
+        place = travel_place_get(conn, place_id)
+        if place is None:
+            raise ValueError("travel_rule_add: place %r not found" % place_id)
+        place_id = place["id"]
+
+    def leg(value, src, place_col):
+        if value is not None:
+            return _ceil_grid(value), (src or "explicit")
+        if place is not None and place.get(place_col) is not None:
+            return place[place_col], (src or "place")
+        return 0, (src or "explicit")
+
+    b_min, b_src = leg(before_min, before_src, "to_min")
+    a_min, a_src = leg(after_min, after_src, "from_min")
+    p_min, p_src = leg(prep_min, prep_src, "prep_min")
+    now = now or now_utc()
+    ulid = new_ulid()
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT INTO travel_rule(ulid, anchor_type, anchor_ulid, "
+            "place_id, before_min, after_min, prep_min, before_src, "
+            "after_src, prep_src, status, created_by, created_at, "
+            "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?);",
+            (ulid, anchor_type, anchor_ulid, place_id, b_min, a_min, p_min,
+             b_src, a_src, p_src, status,
+             created_by or _facade_agent(), now, now))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    rule = travel_rule_get(conn, ulid)
+    if rule["status"] == "active":
+        travel_refresh_rule(conn, state_conn, rule, now=now)   # 3.1(i) inline
+    return rule
+
+
+_TRAVEL_RULE_UPD_COLS = ("before_min", "after_min", "prep_min",
+                         "before_src", "after_src", "prep_src",
+                         "status", "place_id")
+
+
+def travel_rule_upd(conn, rule_token, changes, state_conn=None, now=None):
+    """Update a rule (proposed->active transition + churn-freeze release +
+    prep handling, 2.5/2.6/3.1). CAS version bump; updated_at refresh is the
+    ONLY freeze release path. retire -> group cleanup rides along."""
+    rule = travel_rule_get(conn, rule_token)
+    if rule is None:
+        return {"result": "not_found"}
+    now = now or now_utc()
+    sets, params = [], []
+    for k, v in changes.items():
+        if k not in _TRAVEL_RULE_UPD_COLS:
+            raise ValueError("travel_rule_upd: column %r not allowed" % k)
+        if k in ("before_min", "after_min", "prep_min") and v is not None:
+            v = _ceil_grid(v)
+        sets.append("%s=?" % k)
+        params.append(v)
+    if not sets:
+        raise ValueError("travel_rule_upd: nothing to change")
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE travel_rule SET " + ", ".join(sets) +
+            ", version=version+1, updated_at=? WHERE id=? AND version=?;",
+            params + [now, rule["id"], rule["version"]])
+        if cur.rowcount != 1:
+            conn.rollback()
+            return {"result": "cas_fail"}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    rule = travel_rule_get(conn, rule["id"])
+    if rule["status"] == "retired":
+        n = _travel_rule_group_cleanup(conn, state_conn, rule, now=now)
+        return {"result": "applied", "rule": rule, "cleaned": n}
+    if rule["status"] == "active":
+        travel_refresh_rule(conn, state_conn, rule, now=now)
+    return {"result": "applied", "rule": rule}
+
+
+def travel_rule_retire(conn, rule_token, state_conn=None, now=None):
+    """Retire a rule (derivation stops) + group cleanup of live future
+    blocks (3.2 / 5.3 rollback step 1-2 shape)."""
+    return travel_rule_upd(conn, rule_token, {"status": "retired"},
+                           state_conn=state_conn, now=now)
+
+
+def _travel_rule_group_cleanup(conn, state_conn, rule, now=None):
+    """Tombstone all live FUTURE blocks of a rule (started/past = lifelog,
+    untouched)."""
+    now = now or now_utc()
+    state_conn = _travel_state_conn(state_conn)
+    n = 0
+    for row in _travel_iter_rule_blocks(conn, rule):
+        if row["start_at"] is not None and row["start_at"] > now:
+            if _travel_tombstone_block(conn, state_conn, row) != "skipped":
+                n += 1
+    return n
+
+
+def _travel_iter_rule_blocks(conn, rule):
+    """Live blocks belonging to a rule (via anchor resolution)."""
+    if rule["anchor_type"] == "event":
+        return _travel_rows(
+            conn, "SELECT * FROM event WHERE block_class='travel' "
+            "AND derived_from=? AND settled_at IS NULL;",
+            (rule["anchor_ulid"],))
+    d = conn.execute("SELECT recurrence_id FROM routine_def WHERE ulid=?;",
+                     (rule["anchor_ulid"],)).fetchone()
+    if d is None:
+        return []
+    return _travel_rows(
+        conn, "SELECT b.* FROM event b JOIN event a ON a.ulid=b.derived_from "
+        "WHERE b.block_class='travel' AND b.settled_at IS NULL "
+        "AND a.recurrence_id=?;", (d[0],))
+
+
+def _travel_rule_anchor_instances(conn, rule):
+    """Anchor instance ulids a rule governs right now: live instances plus
+    any instance that still has live blocks (so tombstones converge)."""
+    if rule["anchor_type"] == "event":
+        return [rule["anchor_ulid"]]
+    d = conn.execute("SELECT recurrence_id FROM routine_def WHERE ulid=?;",
+                     (rule["anchor_ulid"],)).fetchone()
+    if d is None:
+        return []
+    rows = conn.execute(
+        "SELECT ulid FROM event WHERE recurrence_id=? AND settled_at IS NULL "
+        "UNION "
+        "SELECT a.ulid FROM event b JOIN event a ON a.ulid=b.derived_from "
+        "WHERE b.block_class='travel' AND b.settled_at IS NULL "
+        "AND a.recurrence_id=?;", (d[0], d[0])).fetchall()
+    return [r[0] for r in rows]
+
+
+# ── derive(): the pure expected-blocks function (1/2.6/3.6) ───────────────
+
+def _travel_anchor_eligible(anchor):
+    """Anchor eligibility predicate (spec 1, deterministic): timed, has a
+    start, unsettled, and not itself a block (no derivation of
+    derivations). all_day/untimed anchors are structurally out (OQA-13)."""
+    return (anchor.get("schedule_kind") == "timed"
+            and anchor.get("start_at") is not None
+            and anchor.get("settled_at") is None
+            and anchor.get("block_class") is None)
+
+
+def _travel_external(conn, ev):
+    """external(E) of the chain predicate (2.6): E is an instance of an
+    anchor holding an ACTIVE travel_rule (user is out at E's place), OR an
+    appointment whose location resolves to a known place. Judgment-
+    impossible = NOT external = prep included (upward safe side)."""
+    if ev.get("block_class") is not None:
+        return False          # a derived block is never an out-at-place stay
+    if _travel_rule_for_anchor_txn(
+            conn, ev["ulid"], ev.get("recurrence_id")) is not None:
+        return True
+    if ev.get("kind") == "appointment" and ev.get("location"):
+        return _resolve_location_place(conn, ev["location"]) is not None
+    return False
+
+
+def _travel_chain(conn, rule, anchor, departure):
+    """chain(anchor) (2.6, deterministic): EXISTS a live external event
+    ending inside [departure - N, departure], siblings of this rule
+    excluded. True -> prep_eff = 0 (user is already out / just in)."""
+    lo = _iso_shift_min(departure, -TRAVEL_CHAIN_WINDOW_MIN)
+    cands = _travel_rows(
+        conn,
+        "SELECT id, ulid, kind, location, recurrence_id, block_class, "
+        "derived_from FROM event WHERE settled_at IS NULL "
+        "AND end_at IS NOT NULL AND end_at >= ? AND end_at <= ? "
+        "AND id != ? "
+        "AND NOT (block_class IS 'travel' AND derived_from IS ?);",
+        (lo, departure, anchor["id"], anchor["ulid"]))
+    for ev in cands:
+        if _travel_external(conn, ev):
+            return True
+    return False
+
+
+def _travel_expected_exclusive(conn, rule, anchor, bs, be):
+    """Demotion predicate (3.6) as part of the expected value:
+    exclusive = 1 iff NO external live exclusive blocker overlaps the ideal
+    interval [bs, be). Excluded from the blocker set: the anchor itself,
+    sibling blocks of the same anchor, pinned rows (3.3: pins take no part
+    in the predicate), and junior travel blocks per the deterministic
+    seniority tie-break (senior = lexicographically smaller
+    (anchor.start_at, anchor.ulid))."""
+    rows = _travel_rows(
+        conn,
+        "SELECT e.id, e.ulid, e.start_at, e.end_at, e.block_class, "
+        "e.derived_from, e.derived_pinned FROM event e WHERE "
+        + LIVE_FILTER + " AND ? < " + EFF_END_SQL + " AND e.start_at < ? "
+        "AND e.id != ? AND e.derived_pinned = 0 "
+        "AND NOT (e.block_class IS 'travel' AND e.derived_from IS ?);",
+        (bs, be, anchor["id"], anchor["ulid"]))
+    my_key = (anchor["start_at"], anchor["ulid"])
+    for r in rows:
+        if r["block_class"] == "travel":
+            other = _travel_row(conn, "SELECT start_at, ulid FROM event "
+                                "WHERE ulid=?;", (r["derived_from"],))
+            if other is not None and other["start_at"] is not None:
+                their_key = (other["start_at"], other["ulid"])
+                if my_key < their_key:
+                    continue     # I am senior: junior is not my blocker
+            return 0
+        return 0
+    return 1
+
+
+def _travel_after_suppressed(conn, anchor, as_, ae):
+    """DGN-314: after-leg suppression predicate -- deterministic, read-only.
+    Returns True if a live external travel block with derived_role='before'
+    overlaps the ideal after interval [as_, ae) half-open.
+
+    Conditions (all must hold for a suppressing row):
+      block_class = 'travel'
+      settled_at IS NULL
+      derived_from != anchor.ulid   (not a sibling of this anchor)
+      derived_role = 'before'       (next anchor's outbound leg)
+      interval overlap [as_, ae) half-open: start_at < ae AND end_at > as_
+
+    before_prep overlaps do NOT suppress (spec DGN-314 delta item 2)."""
+    rows = _travel_rows(
+        conn,
+        "SELECT 1 FROM event WHERE block_class='travel' "
+        "AND settled_at IS NULL "
+        "AND derived_from IS NOT ? "
+        "AND derived_role='before' "
+        "AND start_at < ? AND end_at > ?;",
+        (anchor["ulid"], ae, as_))
+    return len(rows) > 0
+
+
+def travel_derive(conn, rule, anchor, now=None):
+    """Pure derive(): expected UNPINNED blocks for one anchor instance.
+    {role: {start_at, end_at, exclusive, prep_eff}}. Pin-delta expectation
+    is the reconciler's branch (3.3). Rounding lives at rule/place WRITE
+    time (values are already on the grid).
+
+    DGN-305 split: when prep_eff > 0, two 'before' roles are emitted:
+      'before_prep' : prep_start  -> departure  (notify_policy 'start_only')
+      'before'      : departure   -> anchor.start (notify_policy 'silent')
+    When prep_eff = 0 (chain outing): single 'before' role, unchanged.
+
+    DGN-314: after-leg title is fixed "home" title (not anchor title).
+    after-leg suppression: if a live external 'before' travel block overlaps
+    the ideal after interval [anchor.end, anchor.end + after_min), omit 'after'
+    from the expected dict (the next anchor's before leg covers this move;
+    its own after leg will cover the eventual homeward trip). before_prep
+    overlaps do NOT suppress. Reconcile convergence restores 'after' when the
+    next anchor is removed."""
+    exp = {}
+    if int(rule["before_min"]) > 0:
+        departure = _iso_shift_min(anchor["start_at"], -int(rule["before_min"]))
+        prep_eff = (0 if _travel_chain(conn, rule, anchor, departure)
+                    else int(rule["prep_min"]))
+        if prep_eff > 0:
+            # DGN-305: split into prep block + travel block.
+            prep_start = _iso_shift_min(departure, -prep_eff)
+            exp["before_prep"] = {
+                "start_at": prep_start, "end_at": departure,
+                "prep_eff": prep_eff,
+                "notify_policy": "start_only",
+                "exclusive": _travel_expected_exclusive(
+                    conn, rule, anchor, prep_start, departure),
+            }
+            exp["before"] = {
+                "start_at": departure, "end_at": anchor["start_at"],
+                "prep_eff": 0,
+                "notify_policy": "silent",
+                "exclusive": _travel_expected_exclusive(
+                    conn, rule, anchor, departure, anchor["start_at"]),
+            }
+        else:
+            # Chain case: single travel block, prep_eff=0, unchanged.
+            bs = departure
+            be = anchor["start_at"]
+            exp["before"] = {
+                "start_at": bs, "end_at": be, "prep_eff": 0,
+                "notify_policy": "start_only",
+                "exclusive": _travel_expected_exclusive(
+                    conn, rule, anchor, bs, be),
+            }
+    if int(rule["after_min"]) > 0 and anchor.get("end_at") is not None:
+        as_ = anchor["end_at"]
+        ae = _iso_shift_min(as_, int(rule["after_min"]))
+        # DGN-314: omit 'after' when a chained-appointment 'before' block
+        # already covers this departure window (reconcile restores on cancel).
+        if not _travel_after_suppressed(conn, anchor, as_, ae):
+            exp["after"] = {
+                "start_at": as_, "end_at": ae, "prep_eff": 0,
+                "notify_policy": "start_only",
+                "exclusive": _travel_expected_exclusive(
+                    conn, rule, anchor, as_, ae),
+            }
+    return exp
+
+
+# ── block row lifecycle primitives (single writer = deriver) ──────────────
+
+def _travel_never_mirrored(conn, state_conn, row):
+    """0.1 pin: reach bookkeeping truth = push_snapshot; reach predicate =
+    bookkeeping cols NULL AND no snapshot AND no pending outbox; state db
+    unavailable -> False (tombstone path, never DELETE)."""
+    if row.get("gcal_event_id") is not None or row.get("gtask_id") is not None:
+        return False
+    if state_conn is None:
+        return False
+    try:
+        snap = state_conn.execute(
+            "SELECT 1 FROM push_snapshot WHERE event_ulid=? LIMIT 1;",
+            (row["ulid"],)).fetchone()
+        if snap:
+            return False
+        pending = state_conn.execute(
+            "SELECT 1 FROM mirror_outbox WHERE event_ulid=? "
+            "AND status IN ('queued','claimed') LIMIT 1;",
+            (row["ulid"],)).fetchone()
+        return pending is None
+    except sqlite3.Error:
+        return False
+
+
+def _travel_tombstone_block(conn, state_conn, row, by=TRAVEL_REGEN_BY):
+    """Regen-branch tombstone (3.1): never-mirrored -> hard DELETE, else
+    cancel(abandoned, by) + outbox tombstone. Returns
+    'deleted'|'cancelled'|'skipped'."""
+    if _travel_never_mirrored(conn, state_conn, row):
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = conn.execute(
+                "DELETE FROM event WHERE id=? AND version=? "
+                "AND settled_at IS NULL;", (row["id"], row["version"]))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if cur.rowcount == 1:
+            if state_conn is not None:
+                state_conn.execute(
+                    "DELETE FROM mirror_outbox WHERE event_ulid=? "
+                    "AND status IN ('queued','claimed');", (row["ulid"],))
+                state_conn.commit()
+            return "deleted"
+        return "skipped"       # CAS moved under us -> converge next cycle
+    res = cancel(conn, row["id"], row["version"], by)
+    if res == MutationResult.APPLIED:
+        _travel_outbox(state_conn, row["ulid"])
+        return "cancelled"
+    return "skipped"
+
+
+def _travel_create_block(conn, state_conn, anchor, role, start_at, end_at,
+                         exclusive, pinned=0, delta_json=None, now=None,
+                         notify_policy="start_only"):
+    """Single-writer block insert (bypass semantics: the demotion predicate
+    already decided exclusivity deterministically; the deriver never asks
+    the slot predicate about its own block). idx_event_travel_live guards
+    duplicate live rows (race -> skip). Returns event id or None.
+
+    DGN-305: notify_policy param allows 'silent' for the travel-only 'before'
+    block in a prep-split pair (alert stays on 'before_prep' block only)."""
+    now = now or now_utc()
+    ulid = new_ulid()
+    # DGN-305: prep blocks use the prep title.
+    # DGN-314: after blocks use the fixed home title (not the anchor title).
+    # All other roles use the anchor-based travel title.
+    if role == "before_prep":
+        title = _travel_prep_title(anchor["title"])
+    elif role == "after":
+        title = _travel_home_title()
+    else:
+        title = _travel_title(anchor["title"])
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        conn.execute(
+            "INSERT INTO event (ulid, kind, title, schedule_kind, start_at, "
+            "end_at, display_tz, open_ended, slot_exclusive, completion_rule, "
+            "status, owning_agent, created_by, notify_policy, notify_lead_min, "
+            "block_class, derived_from, derived_role, derived_pinned, "
+            "derived_delta, version, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,0,?,'manual','open',?,?,?,NULL,"
+            "?,?,?,?,?,0,?,?);",
+            (ulid, "task", title, "timed", start_at, end_at,
+             anchor.get("display_tz") or TRAVEL_DISPLAY_TZ,
+             1 if exclusive else 0,
+             TRAVEL_OWNING_AGENT, TRAVEL_DERIVER_BY,
+             notify_policy,
+             TRAVEL_BLOCK_CLASS, anchor["ulid"], role,
+             1 if pinned else 0, delta_json, now, now))
+        eid = conn.execute("SELECT id FROM event WHERE ulid=?;",
+                           (ulid,)).fetchone()[0]
+        _recompute_and_store(conn, eid, now=now)
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        if "idx_event_travel_live" in str(e) or "UNIQUE" in str(e):
+            return None       # live dup guard: another writer won -- converge
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    _travel_outbox(state_conn, ulid)
+    return eid
+
+
+# ── travel_refresh: the convergence entrypoint (3.1) ──────────────────────
+
+def travel_refresh(conn, state_conn, anchor_ulid, carry=None, now=None):
+    """Reconcile the blocks of ONE anchor instance against derive()
+    (3.1 algorithm, deterministic, zero discretion). Returns a summary
+    {result, regen, created, tombstoned, moved}.
+
+    Lifelog guard: rows whose start_at <= now are never touched (started /
+    past blocks are lifelog; C5 pins future-only creation -- include_day
+    inheritance), and no expected block materializes at a past instant."""
+    now = now or now_utc()
+    summary = {"result": "ok", "regen": 0, "created": 0,
+               "tombstoned": 0, "moved": 0}
+    if not _travel_schema_ready(conn):
+        summary["result"] = "schema_not_ready"   # M2: v7 no-op
+        return summary
+    state_conn = _travel_state_conn(state_conn)
+    anchor = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;",
+                         (anchor_ulid,))
+    if anchor is None:
+        summary["result"] = "anchor_not_found"
+        return summary
+    rule = _travel_rule_for_anchor_row(conn, anchor)
+    eligible = rule is not None and _travel_anchor_eligible(anchor)
+    expected = travel_derive(conn, rule, anchor, now=now) if eligible else {}
+    carry = carry or {}
+
+    # DGN-305: iterate three roles; 'before_prep' is the prep block emitted
+    # only when prep_eff>0. 'before' is the travel-only leg.
+    for role in ("before_prep", "before", "after"):
+        exp = expected.get(role)
+        if exp is not None and exp["start_at"] <= now:
+            exp = None            # no past instants (C5 include_day guard)
+        all_live = _travel_rows(
+            conn, "SELECT * FROM event WHERE block_class='travel' "
+            "AND derived_from=? AND derived_role=? AND settled_at IS NULL;",
+            (anchor_ulid, role))
+        # started/past rows: lifelog -- never tombstoned/regen-ed. The
+        # unique live index means a past live row and a future live row
+        # cannot coexist, so `live` and `past_live` are exclusive (F1).
+        live = [r for r in all_live if r["start_at"] is not None
+                and r["start_at"] > now]
+        past_live = [r for r in all_live if r["start_at"] is not None
+                     and r["start_at"] <= now]
+        suppressed = conn.execute(
+            "SELECT 1 FROM event WHERE block_class='travel' AND derived_from=? "
+            "AND derived_role=? AND settled_at IS NOT NULL "
+            "AND COALESCE(settled_by,'') NOT IN (?, ?, ?) LIMIT 1;",
+            (anchor_ulid, role, TRAVEL_REGEN_BY, TRAVEL_EXPIRE_BY,
+             TRAVEL_SKIP_CLEARED_BY)
+        ).fetchone() is not None
+
+        if live:
+            row = live[0]         # unique live index guarantees <= 1
+            if row["derived_pinned"]:
+                if row["derived_delta"] is None:
+                    continue      # frozen transition -- delta engrave owns it
+                if not eligible:
+                    if _travel_tombstone_block(conn, state_conn, row) != "skipped":
+                        summary["tombstoned"] += 1
+                    continue
+                try:
+                    delta = json.loads(row["derived_delta"])
+                    off = int(delta["offset_min"])
+                    dur = int(delta["duration_min"])
+                except (ValueError, KeyError, TypeError):
+                    continue      # unreadable delta: skip, never guess
+                want_s = _iso_shift_min(anchor["start_at"], off)
+                want_e = _iso_shift_min(want_s, dur)
+                if (row["start_at"], row["end_at"]) != (want_s, want_e):
+                    # in-place CAS move (bypass semantics, no slot predicate;
+                    # CAS fail -> skip, next cycle converges). Preserves the
+                    # row = gcal event identity (4.1).
+                    conn.execute("BEGIN IMMEDIATE;")
+                    try:
+                        cur = conn.execute(
+                            "UPDATE event SET start_at=?, end_at=?, "
+                            "version=version+1, updated_at=? "
+                            "WHERE id=? AND version=? AND settled_at IS NULL;",
+                            (want_s, want_e, now, row["id"], row["version"]))
+                        if cur.rowcount == 1:
+                            _recompute_and_store(conn, row["id"], now=now)
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                    if cur.rowcount == 1:
+                        summary["moved"] += 1
+                        _travel_outbox(state_conn, row["ulid"])
+                continue
+            # unpinned live row
+            if exp is None:
+                if _travel_tombstone_block(conn, state_conn, row) != "skipped":
+                    summary["tombstoned"] += 1
+                    summary["regen"] += 1
+                continue
+            # DGN-305: conformance check includes notify_policy so a legacy
+            # combined 'before' block (start_only) is regen-ed into the
+            # correct per-role policy ('silent' for the travel-only 'before').
+            # DGN-314: include title in the conformance tuple so an after block
+            # carrying the old anchor-based title ("이동: 회사") regens to the
+            # new fixed home title ("이동: 집").
+            row_np = row.get("notify_policy") or "start_only"
+            exp_np = exp.get("notify_policy", "start_only")
+            row_title = row.get("title") or ""
+            # compute expected title for this role to compare
+            if role == "before_prep":
+                exp_title = _travel_prep_title(anchor["title"])
+            elif role == "after":
+                exp_title = _travel_home_title()
+            else:
+                exp_title = _travel_title(anchor["title"])
+            conforms = ((row["start_at"], row["end_at"],
+                         int(row["slot_exclusive"]), row_np, row_title)
+                        == (exp["start_at"], exp["end_at"],
+                            int(exp["exclusive"]), exp_np, exp_title))
+            if conforms:
+                continue
+            # regen: tombstone + recreate at expected.
+            if _travel_tombstone_block(conn, state_conn, row) == "skipped":
+                continue
+            summary["regen"] += 1
+            eid = _travel_create_block(
+                conn, state_conn, anchor, role,
+                exp["start_at"], exp["end_at"], exp["exclusive"], now=now,
+                notify_policy=exp.get("notify_policy", "start_only"))
+            if eid is not None:
+                summary["created"] += 1
+            continue
+
+        # missing (no FUTURE live row)
+        if exp is None or suppressed:
+            continue              # settled row suppresses recreate (skip
+                                  # semantics; travel-regen / travel-expire
+                                  # carve-outs above)
+        if past_live:
+            # F1 fix: a stale started (past, unsettled) row still occupies
+            # the live-unique slot at (anchor, role) -- the future block
+            # could NEVER materialize (silent created=0 forever). Resolve:
+            # settle the stale row done/by='travel-expire' (it is lifelog --
+            # the travel happened; abandoned would tombstone its calendar
+            # surface). travel-expire joins the recreate carve-out so the
+            # new block lands right below.
+            stale = past_live[0]
+            res = _settle(conn, stale["id"], stale["version"], "done",
+                          TRAVEL_EXPIRE_BY)
+            if res != MutationResult.APPLIED:
+                continue          # CAS moved under us -> converge next cycle
+            _travel_outbox(state_conn, stale["ulid"])
+        pin = carry.get(role)
+        if pin:
+            pinned_flag, delta_json = int(pin[0] or 0), pin[1]
+            pin_exclusive = int(pin[2]) if len(pin) > 2 else 1
+            if pinned_flag and delta_json:
+                try:
+                    delta = json.loads(delta_json)
+                    ps = _iso_shift_min(anchor["start_at"],
+                                        int(delta["offset_min"]))
+                    pe = _iso_shift_min(ps, int(delta["duration_min"]))
+                except (ValueError, KeyError, TypeError):
+                    ps, pe, delta_json = exp["start_at"], exp["end_at"], None
+                if ps > now:
+                    eid = _travel_create_block(
+                        conn, state_conn, anchor, role, ps, pe,
+                        pin_exclusive,      # M4: engrave-time value kept
+                        pinned=1, delta_json=delta_json, now=now,
+                        notify_policy=exp.get("notify_policy", "start_only"))
+                    if eid is not None:
+                        summary["created"] += 1
+                continue
+            if pinned_flag:
+                # pinned but delta unknown (pre-clean hit a frozen row):
+                # recreate at expected, keep the pin (M4: engrave-time
+                # exclusive kept); lazy engrave computes the delta at
+                # cycle end / nightly.
+                eid = _travel_create_block(
+                    conn, state_conn, anchor, role,
+                    exp["start_at"], exp["end_at"], pin_exclusive,
+                    pinned=1, delta_json=None, now=now,
+                    notify_policy=exp.get("notify_policy", "start_only"))
+                if eid is not None:
+                    summary["created"] += 1
+                continue
+        eid = _travel_create_block(
+            conn, state_conn, anchor, role,
+            exp["start_at"], exp["end_at"], exp["exclusive"], now=now,
+            notify_policy=exp.get("notify_policy", "start_only"))
+        if eid is not None:
+            summary["created"] += 1
+    return summary
+
+
+def travel_refresh_rule(conn, state_conn, rule, now=None):
+    """Refresh every anchor instance a rule governs (inline entrypoint for
+    rule/place verbs + the nightly pass). Returns aggregate summary."""
+    agg = {"regen": 0, "created": 0, "tombstoned": 0, "moved": 0}
+    for anchor_ulid in _travel_rule_anchor_instances(conn, rule):
+        s = travel_refresh(conn, state_conn, anchor_ulid, now=now)
+        for k in agg:
+            agg[k] += s.get(k, 0)
+    return agg
+
+
+# ── pre-clean contract (3.5) ──────────────────────────────────────────────
+
+def travel_preclean(conn, state_conn, anchor_ulid, now=None):
+    """Step 1 of the anchor-moving verb sequence (3.5): tombstone the own
+    live FUTURE derived blocks (pinned INCLUDED -- a pinned exclusive block
+    would still self-deadlock the move), recording carry =
+    {role: (pinned, delta, exclusive)} for pinned rows (F-C carry-forward;
+    M4: exclusive is the engrave-time value, 3.3). Returns
+    (precleaned, carry).
+
+    M1 (grill fix, OQ-3 resolution -- 3.2 lifelog rule wins over the 3.5
+    "ALL" letter): started/past rows are NOT tombstoned. A stale past live
+    row left at (anchor, role) is resolved by the F1 branch of
+    travel_refresh (settle by='travel-expire'), so the verb lane inherits
+    no deadlock."""
+    now = now or now_utc()
+    state_conn = _travel_state_conn(state_conn)
+    rows = _travel_rows(
+        conn, "SELECT * FROM event WHERE block_class='travel' "
+        "AND derived_from=? AND settled_at IS NULL AND start_at > ?;",
+        (anchor_ulid, now))
+    carry = {}
+    for r in rows:
+        if r["derived_pinned"]:
+            carry[r["derived_role"]] = (1, r["derived_delta"],
+                                        int(r["slot_exclusive"]))
+        _travel_tombstone_block(conn, state_conn, r)
+    return True, carry
+
+
+# ── travel-move / travel-skip (3.3 CLI lane / opt-out) ────────────────────
+
+def _travel_block_resolve(conn, token):
+    row = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;", (str(token),))
+    if row is None and str(token).isdigit():
+        row = _travel_row(conn, "SELECT * FROM event WHERE id=?;",
+                          (int(token),))
+    return row
+
+
+def travel_move(conn, block_token, new_start, new_end, state_conn=None,
+                now=None):
+    """Block-only time move (3.3 CLI lane, the SOLE chat/CLI path):
+    block_class validated (loud refusal on non-blocks), bypass semantics
+    (own block / predicate self-deadlock irrelevant), and derived_pinned=1
+    AND derived_delta engraved in the SAME txn (CLI is serial -- no
+    concurrent-drag race, no reason to defer). Delta is computed against
+    the anchor's CURRENT position inside that txn."""
+    canonical(new_start)
+    canonical(new_end)
+    validate_interval(new_start, new_end)
+    row = _travel_block_resolve(conn, block_token)
+    if row is None:
+        return {"result": "not_found"}
+    if row.get("block_class") != TRAVEL_BLOCK_CLASS:
+        raise ValueError(
+            "travel-move: %r is not a travel block (block moves only; "
+            "use appt-upd / task verbs for regular events)" % block_token)
+    if row.get("settled_at") is not None:
+        return {"result": "settled"}
+    anchor = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;",
+                         (row["derived_from"],))
+    if anchor is None or anchor.get("start_at") is None:
+        return {"result": "anchor_not_found"}
+    now = now or now_utc()
+    delta = json.dumps({
+        "offset_min": _iso_diff_min(new_start, anchor["start_at"]),
+        "duration_min": _iso_diff_min(new_end, new_start)})
+    conn.execute("BEGIN IMMEDIATE;")
+    try:
+        cur = conn.execute(
+            "UPDATE event SET start_at=?, end_at=?, derived_pinned=1, "
+            "derived_delta=?, version=version+1, updated_at=? "
+            "WHERE id=? AND version=? AND settled_at IS NULL;",
+            (new_start, new_end, delta, now, row["id"], row["version"]))
+        if cur.rowcount == 1:
+            _recompute_and_store(conn, row["id"], now=now)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    if cur.rowcount != 1:
+        return {"result": "cas_fail"}
+    _travel_outbox(_travel_state_conn(state_conn), row["ulid"])
+    return {"result": "applied", "delta": delta}
+
+
+def travel_skip(conn, block_token, state_conn=None):
+    """This-occurrence opt-out (3.3): cancel(abandoned, by='travel-skip') +
+    outbox tombstone if reached. The settled row suppresses recreation at
+    (anchor, role) -- skip semantics; distinct from the travel-regen
+    carve-out."""
+    row = _travel_block_resolve(conn, block_token)
+    if row is None:
+        return {"result": "not_found"}
+    if row.get("block_class") != TRAVEL_BLOCK_CLASS:
+        raise ValueError("travel-skip: %r is not a travel block" % block_token)
+    if row.get("settled_at") is not None:
+        return {"result": "already_settled"}
+    res = cancel(conn, row["id"], row["version"], TRAVEL_SKIP_BY)
+    if res != MutationResult.APPLIED:
+        return {"result": "cas_fail"}
+    _travel_outbox(_travel_state_conn(state_conn), row["ulid"])
+    return {"result": "applied"}
+
+
+def _travel_clear_skips(conn, anchor_ulid, now=None):
+    """dec-021 (OQ-8 owner pin, 2026-07-14): a skip is a judgment about
+    THAT occurrence at THAT time -- any schedule change to the anchor
+    instance supersedes it. Mechanism: bookkeeping rewrite of settled_by
+    ('travel-skip' and its inbound twin 'gcal-owner-delete') to
+    'travel-skip-cleared' -- the settled row and its surface tombstone
+    stay untouched (no deletes, mirror discipline kept, audit line in
+    roller_log carries the original settler); the suppression predicate
+    carve-out ignores cleared rows so the next refresh re-derives at the
+    new position. Deterministic code only. Returns cleared count."""
+    now = now or now_utc()
+    rows = _travel_rows(
+        conn, "SELECT id, ulid, version, settled_by, derived_role "
+        "FROM event WHERE block_class='travel' AND derived_from=? "
+        "AND settled_at IS NOT NULL "
+        "AND settled_by IN ('travel-skip', 'gcal-owner-delete');",
+        (anchor_ulid,))
+    n = 0
+    for r in rows:
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = conn.execute(
+                "UPDATE event SET settled_by=?, version=version+1, "
+                "updated_at=? WHERE id=? AND version=?;",
+                (TRAVEL_SKIP_CLEARED_BY, now, r["id"], r["version"]))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if cur.rowcount == 1:
+            n += 1
+            _travel_log(conn, "travel_skip_cleared", None,
+                        "block=%s role=%s was=%s (anchor schedule change)"
+                        % (r["ulid"], r["derived_role"], r["settled_by"]),
+                        now=now)
+    return n
+
+
+# ── anchor settle follow (3.2) ────────────────────────────────────────────
+
+def _travel_on_anchor_settled(conn, eid, settle_ts):
+    """After an anchor settles (done OR abandoned): tombstone every
+    unsettled block with start_at > settle instant (a travel not yet
+    started will not happen). Started/past blocks untouched (lifelog).
+    No-op for block rows and rule-less rows."""
+    if not _travel_schema_ready(conn):
+        return 0                       # M2: pre-008 DB -> no-op
+    row = _travel_row(conn, "SELECT * FROM event WHERE id=?;", (eid,))
+    if row is None or row.get("block_class") is not None:
+        return 0
+    # any live blocks at all? (cheap guard before rule resolution)
+    blocks = _travel_rows(
+        conn, "SELECT * FROM event WHERE block_class='travel' "
+        "AND derived_from=? AND settled_at IS NULL AND start_at > ?;",
+        (row["ulid"], settle_ts))
+    if not blocks:
+        return 0
+    state_conn = _travel_state_conn(None)
+    n = 0
+    for b in blocks:
+        if _travel_tombstone_block(conn, state_conn, b) != "skipped":
+            n += 1
+    return n
+
+
+# ── lazy delta engrave + nightly conformance pass (3.3 / V10) ─────────────
+
+def travel_delta_engrave_pass(conn, now=None):
+    """Engrave derived_delta on every (pinned=1, delta NULL) live block from
+    its FINAL resting position vs the anchor's current position (3.3
+    inbound lane; runs at mirror-poll cycle end and as pass (1) of the
+    nightly conformance -- engrave BEFORE judging, or the frozen row skips
+    its cycle). Returns engraved count."""
+    now = now or now_utc()
+    rows = _travel_rows(
+        conn, "SELECT * FROM event WHERE block_class='travel' "
+        "AND derived_pinned=1 AND derived_delta IS NULL "
+        "AND settled_at IS NULL;", ())
+    n = 0
+    for row in rows:
+        anchor = _travel_row(conn, "SELECT start_at FROM event WHERE ulid=?;",
+                             (row["derived_from"],))
+        if (anchor is None or anchor["start_at"] is None
+                or row["start_at"] is None or row["end_at"] is None):
+            continue
+        delta = json.dumps({
+            "offset_min": _iso_diff_min(row["start_at"], anchor["start_at"]),
+            "duration_min": _iso_diff_min(row["end_at"], row["start_at"])})
+        conn.execute("BEGIN IMMEDIATE;")
+        try:
+            cur = conn.execute(
+                "UPDATE event SET derived_delta=?, version=version+1, "
+                "updated_at=? WHERE id=? AND version=? "
+                "AND derived_delta IS NULL;",
+                (delta, now, row["id"], row["version"]))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        if cur.rowcount == 1:
+            n += 1
+    return n
+
+
+def _travel_frozen(conn, rule):
+    """Churn breaker state (3.1): a travel_conformance_frozen log row newer
+    than the rule's last owner edit freezes the nightly pass for that rule.
+    Release = travel-rule-upd (updated_at CAS bump)."""
+    return conn.execute(
+        "SELECT 1 FROM roller_log WHERE category='travel_conformance_frozen' "
+        "AND recurrence_id=? AND ts > ? LIMIT 1;",
+        (rule["ulid"], rule["updated_at"])).fetchone() is not None
+
+
+def _travel_regen_on_previous_run(conn, rule, today):
+    """Did the PREVIOUS nightly run regen this rule? (breaker arm)"""
+    prev = (datetime.date.fromisoformat(today)
+            - timedelta(days=1)).isoformat()
+    for r in conn.execute(
+            "SELECT ts FROM roller_log WHERE "
+            "category='travel_conformance_regen' AND recurrence_id=?;",
+            (rule["ulid"],)):
+        ts_local = (datetime.datetime.strptime(r[0], "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=timezone.utc)
+                    .astimezone(ZoneInfo(TRAVEL_DISPLAY_TZ))
+                    .strftime("%Y-%m-%d"))
+        if ts_local == prev:
+            return True
+    return False
+
+
+def travel_conformance_pass(conn, state_conn=None, today=None, now=None):
+    """Nightly travel conformance (V10, roller-called at pass end).
+    Internal order (3.3, pinned): (1) delta engrave pass, (2) reconcile.
+    Churn breaker: same rule regen-ed on 2 consecutive nightly runs ->
+    freeze + retro flag (key = travel_rule.ulid; the roller's
+    recurrence_id key is NOT reused). Release = travel-rule-upd only."""
+    now = now or now_utc()
+    today = today or (datetime.datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                      .replace(tzinfo=timezone.utc)
+                      .astimezone(ZoneInfo(TRAVEL_DISPLAY_TZ))
+                      .strftime("%Y-%m-%d"))
+    state_conn = _travel_state_conn(state_conn)
+    engraved = travel_delta_engrave_pass(conn, now=now)
+    total_regen = 0
+    frozen = 0
+    for rule in _travel_rows(
+            conn, "SELECT * FROM travel_rule WHERE status='active';", ()):
+        if _travel_frozen(conn, rule):
+            frozen += 1
+            continue
+        agg = travel_refresh_rule(conn, state_conn, rule, now=now)
+        if agg["regen"] > 0:
+            _travel_log(conn, "travel_conformance_regen", rule["ulid"],
+                        "regen=%d" % agg["regen"], now=now)
+            total_regen += agg["regen"]
+            if _travel_regen_on_previous_run(conn, rule, today):
+                _travel_log(conn, "travel_conformance_frozen", rule["ulid"],
+                            "regen=%d" % agg["regen"], now=now)
+    # non-active rules: converge leftover live blocks (retire backstop).
+    for rule in _travel_rows(
+            conn, "SELECT * FROM travel_rule WHERE status='retired';", ()):
+        _travel_rule_group_cleanup(conn, state_conn, rule, now=now)
+    return {"engraved": engraved, "regen": total_regen, "frozen": frozen}
+
+
+# ── remind wording seam (4.3 / V13) ───────────────────────────────────────
+
+def travel_remind_wording(conn, ulid, lang="ko"):
+    """Deterministic wording input for the remind template on a travel row
+    (V13). Returns (wording, departure_hhmm_local) or (None, None) for
+    non-travel rows. Pinned rows use the departure wording (geometry is the
+    user's; the prep split is not attributable).
+
+    DGN-305 split: 'before_prep' blocks carry the departure at end_at
+    (prep block end = departure). Legacy combined 'before' blocks (pre-305)
+    still reconstruct prep_eff from stored geometry for backward compat."""
+    row = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;", (ulid,))
+    if row is None or row.get("block_class") != TRAVEL_BLOCK_CLASS:
+        return None, None
+    derived_role = row.get("derived_role")
+    # DGN-305: 'before_prep' role = the prep block; departure = block end_at.
+    if derived_role == "before_prep" and not row["derived_pinned"]:
+        if row.get("end_at"):
+            depart_at = row["end_at"]
+            hhmm = (datetime.datetime.strptime(depart_at, "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=timezone.utc)
+                    .astimezone(ZoneInfo(row.get("display_tz") or TRAVEL_DISPLAY_TZ))
+                    .strftime("%H:%M"))
+            tpl = TRAVEL_REMIND_I18N["prep"].get(lang,
+                                                  TRAVEL_REMIND_I18N["prep"]["ko"])
+            return tpl.format(hhmm=hhmm), hhmm
+    prep_eff = 0
+    if derived_role == "before" and not row["derived_pinned"]:
+        # grill m3: recompute from STORED geometry, never re-run the chain
+        # predicate at remind time (the row IS the derive() materialization:
+        # duration = before_min + prep_eff, so prep_eff = duration - before).
+        # For DGN-305 split 'before' blocks, duration == before_min so
+        # prep_eff == 0 and departure wording is returned (correct).
+        anchor = _travel_row(conn, "SELECT * FROM event WHERE ulid=?;",
+                             (row["derived_from"],))
+        if (anchor is not None and anchor.get("start_at") is not None
+                and row.get("start_at") and row.get("end_at")):
+            rule = _travel_rule_for_anchor_row(conn, anchor)
+            if rule is not None and int(rule["before_min"]) > 0:
+                dur = _iso_diff_min(row["end_at"], row["start_at"])
+                prep_eff = max(0, dur - int(rule["before_min"]))
+    depart_at = _iso_shift_min(row["start_at"], prep_eff)
+    hhmm = (datetime.datetime.strptime(depart_at, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .astimezone(ZoneInfo(row.get("display_tz") or TRAVEL_DISPLAY_TZ))
+            .strftime("%H:%M"))
+    if prep_eff > 0:
+        tpl = TRAVEL_REMIND_I18N["prep"].get(lang,
+                                             TRAVEL_REMIND_I18N["prep"]["ko"])
+        return tpl.format(hhmm=hhmm), hhmm
+    tpl = TRAVEL_REMIND_I18N["depart"].get(
+        lang, TRAVEL_REMIND_I18N["depart"]["ko"])
+    return tpl, hhmm
 
 
 # ── routine CLI (lifekit.sh routine <verb> ..., task-CLI 동형) ─────────────
@@ -3597,7 +4986,12 @@ def cli_appt_add(argv):
             # timed (A1 zero-length / A2 explicit end).
             schedule_kind = "timed"
             start_at = _to_canonical_utc(start_raw)
-            end_at = _to_canonical_utc(end_raw) if end_raw else start_at  # A1
+            if end_raw:
+                end_at = _to_canonical_utc(end_raw)
+            else:
+                # +3h default: no end given -> start + 3 hours
+                _st = datetime.datetime.fromisoformat(start_at.replace("Z", "+00:00"))
+                end_at = (_st + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")  # A1 +3h
     except ValueError as e:
         _err(str(e))                                   # E-add-badfmt / reversed
 
@@ -3749,6 +5143,16 @@ def cli_appt_upd(argv):
 
     conn = event_conn()
     _appt_upd_ulid = None
+    # DGN-274 3.5 (V5): pre-clean -> move -> UNCONDITIONAL refresh. F-A
+    # invariant: once pre-clean commits, EVERY termination path (APPLIED /
+    # OVERLAP_REJECT / CAS exhaustion / ValueError -- _err raises SystemExit)
+    # runs travel_refresh(anchor) before returning: success re-derives at
+    # the new position, failure re-derives at the OLD position -- a failed
+    # move never kills the day's prep/departure alert. Rule-less anchors:
+    # steps 1/3 are no-ops (legacy behavior fully preserved).
+    _travel_precleaned = False
+    _travel_carry = None
+    _travel_anchor_ulid = None
     try:
         # M-1 kind gate: read kind ONCE; task / not-found -> legacy loud reject.
         kind = _read_appt_kind(conn, eid)
@@ -3765,6 +5169,15 @@ def cli_appt_upd(argv):
         time_applied = False
         # ---- time edit (event_move) with M-2 full-row re-read retry loop ----
         if time_fields:
+            _arow = conn.execute(
+                "SELECT ulid, recurrence_id, block_class FROM event "
+                "WHERE id=?;", (eid,)).fetchone()
+            if (_arow is not None and _arow[2] is None
+                    and _travel_rule_for_anchor_txn(
+                        conn, _arow[0], _arow[1]) is not None):
+                _travel_anchor_ulid = _arow[0]
+                _p, _travel_carry = travel_preclean(conn, None, _arow[0])
+                _travel_precleaned = True
             for attempt in range(_UPD_RETRY_MAX):
                 cur = conn.execute(
                     "SELECT version, schedule_kind, start_at, end_at, "
@@ -3790,6 +5203,10 @@ def cli_appt_upd(argv):
                 # CAS_FAIL -> re-read full row and retry.
             else:
                 _err("conflict, please retry")            # E-upd-cas (U8)
+            if time_applied and _travel_precleaned:
+                # dec-021 (OQ-8): the landed schedule change supersedes
+                # this anchor instance's skip rows before the F-A refresh.
+                _travel_clear_skips(conn, _travel_anchor_ulid)
 
         # ---- meta edit (event_set_meta) retry loop -- m-3: uniform full-row
         # re-read (same discipline as the time loop; meta values are absolute
@@ -3834,6 +5251,11 @@ def cli_appt_upd(argv):
         _appt_upd_ulid = _ulid_for_event_id(conn, eid)
         print(f"{row[0]}\t{row[1]}\t{row[2] or ''}")
     finally:
+        # DGN-274 3.5 step 3 (F-A): unconditional refresh on EVERY
+        # termination path after a committed pre-clean (try/finally grade).
+        if _travel_precleaned:
+            travel_refresh(conn, None, _travel_anchor_ulid,
+                           carry=_travel_carry)
         conn.close()
     # DGN-258: best-effort mirror outbox enqueue after successful commit.
     if _appt_upd_ulid:
@@ -4005,6 +5427,16 @@ def _task_line(row):
     return f"{eid}\t{title}\t{due}\t{state}"
 
 
+def _travel_block_gate(conn, eid, verb, hint):
+    """DGN-274 4.4 (V6): write verbs refuse travel blocks LOUDLY with a
+    one-line pointer to the travel verb family (model discretion zero --
+    the refusal lives in verb code)."""
+    row = conn.execute(
+        "SELECT block_class FROM event WHERE id=?;", (eid,)).fetchone()
+    if row is not None and row[0] == "travel":
+        _err("%s: travel block refused -- %s" % (verb, hint))
+
+
 def cli_task_add(argv):
     # task-add <title> [due_date] [note] [--notify <policy>]
     # (dec-001: event_add kind='task'; --notify = DGN-273 per-event override)
@@ -4052,6 +5484,8 @@ def cli_task_find(argv):
         base = ("SELECT id, ulid, title, start_at, end_at, schedule_kind, "
                 "display_tz, settled_outcome, settled_at, version FROM event "
                 "WHERE kind='task' "
+                "AND block_class IS NULL "     # DGN-274 4.4 (V7): blocks are
+                                               # time, not to-dos
                 "AND (settled_outcome IS NULL OR settled_outcome <> 'abandoned') ")
         if arg == "all":
             rows = conn.execute(
@@ -4079,6 +5513,8 @@ def cli_task_done(argv):
     _task_done_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
+        _travel_block_gate(conn, row[0], "task-done",
+                           "blocks have no done settle concept (completion tracking does not apply)")
         res = force_settle(conn, row[0], row[9], _facade_agent())
         if res != MutationResult.APPLIED:
             _err(f"task-done 실패 ({res}): 이미 완료/취소되었거나 동시 변경")
@@ -4098,6 +5534,8 @@ def cli_task_undone(argv):
     _task_undone_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
+        _travel_block_gate(conn, row[0], "task-undone",
+                           "blocks have no done settle concept (completion tracking does not apply)")
         res, _warn = unsettle(conn, row[1], _facade_agent())
         if res != "applied":
             _err(f"task-undone 실패 ({res}): done 상태가 아니면 재개 불가")
@@ -4119,6 +5557,8 @@ def cli_task_reschedule(argv):
     _task_resched_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
+        _travel_block_gate(conn, row[0], "task-reschedule",
+                           "all_day coercion would corrupt the block shape; use travel-move")
         sa, ea = all_day_instants(argv[1])
         res, warn = bypass_schedule_apply(conn, row[1], "all_day", sa, ea)
         if res != "applied":
@@ -4149,6 +5589,8 @@ def cli_task_archive(argv):
     _task_archive_ulid = None
     try:
         row = _resolve_task(conn, argv[0])
+        _travel_block_gate(conn, row[0], "task-archive",
+                           "skip semantics live in travel-skip (pin/tombstone bookkeeping differs)")
         res = cancel(conn, row[0], row[9], _facade_agent())
         if res != MutationResult.APPLIED:
             _err(f"task-archive 실패 ({res}): 이미 종결되었거나 동시 변경")
@@ -4171,6 +5613,8 @@ def cli_task_overdue(argv):
             "SELECT id, ulid, title, start_at, end_at, schedule_kind, "
             "display_tz, settled_outcome, settled_at, version FROM event "
             "WHERE kind='task' AND settled_at IS NULL "
+            "AND block_class IS NULL "  # DGN-274 4.4 (V7): expired blocks
+                                        # must never pile up in overdue
             "AND start_at IS NOT NULL "
             "AND COALESCE(end_at, start_at) <= ? "
             "ORDER BY start_at;", (today_start,)).fetchall()
@@ -4192,6 +5636,8 @@ def cli_task_done_between(argv):
             "SELECT id, ulid, title, start_at, end_at, schedule_kind, "
             "display_tz, settled_outcome, settled_at, version FROM event "
             "WHERE kind='task' AND settled_outcome='done' "
+            "AND block_class IS NULL "  # DGN-274 4.4 (V7): weekly review
+                                        # (done-between) stays uncontaminated
             "AND settled_at >= ? AND settled_at < ? "
             "ORDER BY settled_at;", (ws, we)).fetchall()
         for row in rows:
@@ -4506,6 +5952,167 @@ def cli_project_upd(argv):
         conn.close()
 
 
+
+# -- DGN-274 travel CLI verbs (5.2) -------------------------------------------
+
+def _travel_kv(argv):
+    """key=value tokens -> dict (ints where numeric)."""
+    out = {}
+    for tok in argv:
+        if "=" not in tok:
+            _err("want key=value, got: %s" % tok)
+        k, v = tok.split("=", 1)
+        if v == "":
+            out[k] = None
+        elif v.lstrip("-").isdigit():
+            out[k] = int(v)
+        else:
+            out[k] = v
+    return out
+
+
+def cli_travel_rule_add(argv):
+    # travel-rule-add <def|event> <anchor_ulid> [key=value ...]
+    if len(argv) < 2:
+        _err("usage: lifekit.sh travel-rule-add <def|event> <anchor_ulid> "
+             "[place_id=N before_min=N after_min=N prep_min=N status=S]")
+    kv = _travel_kv(argv[2:])
+    conn = event_conn()
+    try:
+        rule = travel_rule_add(
+            conn, argv[0], argv[1],
+            place_id=kv.get("place_id"),
+            before_min=kv.get("before_min"), after_min=kv.get("after_min"),
+            prep_min=kv.get("prep_min"),
+            status=kv.get("status") or "active")
+        print("%s\t%s\t%s\t%s/%s/%s\t%s" % (
+            rule["id"], rule["ulid"], rule["anchor_ulid"],
+            rule["before_min"], rule["after_min"], rule["prep_min"],
+            rule["status"]))
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_rule_upd(argv):
+    if len(argv) < 2:
+        _err("usage: lifekit.sh travel-rule-upd <rule> [key=value ...]")
+    kv = _travel_kv(argv[1:])
+    conn = event_conn()
+    try:
+        res = travel_rule_upd(conn, argv[0], kv)
+        if res["result"] != "applied":
+            _err("travel-rule-upd failed (%s)" % res["result"])
+        r = res["rule"]
+        print("%s\t%s\t%s/%s/%s\t%s" % (
+            r["id"], r["ulid"], r["before_min"], r["after_min"],
+            r["prep_min"], r["status"]))
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_rule_retire(argv):
+    if not argv:
+        _err("usage: lifekit.sh travel-rule-retire <rule>")
+    conn = event_conn()
+    try:
+        res = travel_rule_retire(conn, argv[0])
+        if res["result"] != "applied":
+            _err("travel-rule-retire failed (%s)" % res["result"])
+        print("%s\tretired\tcleaned=%s" % (argv[0], res.get("cleaned", 0)))
+    finally:
+        conn.close()
+
+
+def cli_travel_place_add(argv):
+    if not argv:
+        _err("usage: lifekit.sh travel-place-add <name> [key=value ...]")
+    kv = _travel_kv(argv[1:])
+    conn = event_conn()
+    try:
+        p = travel_place_add(conn, argv[0], to_min=kv.get("to_min"),
+                             from_min=kv.get("from_min"),
+                             prep_min=kv.get("prep_min"),
+                             note=kv.get("note"))
+        print("%s\t%s\t%s\t%s/%s/%s" % (
+            p["id"], p["ulid"], p["name"], p["to_min"], p["from_min"],
+            p["prep_min"]))
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_place_upd(argv):
+    if len(argv) < 2:
+        _err("usage: lifekit.sh travel-place-upd <place> [key=value ...]")
+    kv = _travel_kv(argv[1:])
+    conn = event_conn()
+    try:
+        res = travel_place_upd(conn, argv[0], kv)
+        if res["result"] != "applied":
+            _err("travel-place-upd failed (%s)" % res["result"])
+        p = res["place"]
+        print("%s\t%s\t%s/%s/%s" % (
+            p["id"], p["name"], p["to_min"], p["from_min"], p["prep_min"]))
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_move(argv):
+    # travel-move <id|ulid> <start_utc> <end_utc>
+    if len(argv) < 3:
+        _err("usage: lifekit.sh travel-move <block> <start_utc> <end_utc>")
+    conn = event_conn()
+    try:
+        res = travel_move(conn, argv[0], argv[1], argv[2])
+        if res["result"] != "applied":
+            _err("travel-move failed (%s)" % res["result"])
+        print("%s\tmoved\t%s" % (argv[0], res["delta"]))
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_skip(argv):
+    if not argv:
+        _err("usage: lifekit.sh travel-skip <block>")
+    conn = event_conn()
+    try:
+        res = travel_skip(conn, argv[0])
+        if res["result"] != "applied":
+            _err("travel-skip failed (%s)" % res["result"])
+        print("%s\tskipped" % argv[0])
+    except ValueError as e:
+        _err(str(e))
+    finally:
+        conn.close()
+
+
+def cli_travel_refresh(argv):
+    # travel-refresh [anchor_ulid] -- convergence entrypoint (verb inline /
+    # mirror-poll wrapper / roller shared; no arg = full conformance pass).
+    conn = event_conn()
+    try:
+        if argv and argv[0]:
+            s = travel_refresh(conn, None, argv[0])
+            print("refresh\t%s\tregen=%s created=%s tombstoned=%s moved=%s"
+                  % (argv[0], s["regen"], s["created"], s["tombstoned"],
+                     s["moved"]))
+        else:
+            s = travel_conformance_pass(conn)
+            print("conformance\tengraved=%s regen=%s frozen=%s"
+                  % (s["engraved"], s["regen"], s["frozen"]))
+    finally:
+        conn.close()
+
+
 _DISPATCH = {
     'meal-add': cli_meal_add,
     'meal-find': cli_meal_find,
@@ -4546,6 +6153,14 @@ _DISPATCH = {
     'project-add': cli_project_add,
     'project-upd': cli_project_upd,
     'routine': cli_routine,
+    'travel-rule-add': cli_travel_rule_add,
+    'travel-rule-upd': cli_travel_rule_upd,
+    'travel-rule-retire': cli_travel_rule_retire,
+    'travel-place-add': cli_travel_place_add,
+    'travel-place-upd': cli_travel_place_upd,
+    'travel-move': cli_travel_move,
+    'travel-skip': cli_travel_skip,
+    'travel-refresh': cli_travel_refresh,
 }
 
 
