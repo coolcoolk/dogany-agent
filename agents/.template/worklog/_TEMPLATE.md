@@ -1,7 +1,8 @@
 ---
 id:
 title:
-status: open | wip | blocked | done
+status: open | wip | blocked | done | parked
+# gate: <parked tickets only -- one-line unpark condition; include ticket/decision IDs where possible; use "owner-review" when condition is unclear>
 priority: P0 | P1 | P2
 area:
 created: 2026-01-01
