@@ -554,6 +554,23 @@ LINT_CIRCULAR_TOTAL="${#LINT_CIRCULAR[@]}"
 log "scan complete: $TOTAL findings (A/B/C), $GC_TOTAL gate-clearance, $BR_TOTAL big-rock P1"
 log "lint: Rule-6 violations=$LINT_R6_TOTAL deprecated-pass=$LINT_DEPR_TOTAL unknown-ids=$LINT_UNKNOWN_TOTAL circular=$LINT_CIRCULAR_TOTAL"
 
+# --- session-recap 7-day median size ---
+RECAP_SIZE_LOG="$ROOT/.telegram_bot/logs/session-recap-size.log"
+RECAP_MEDIAN=0
+_cutoff_ep=$(( NOW - 7 * 86400 ))
+_cutoff_date="$(date -j -f '%s' "$_cutoff_ep" '+%Y-%m-%d' 2>/dev/null \
+  || date -d "@$_cutoff_ep" '+%Y-%m-%d' 2>/dev/null || true)"
+if [ -f "$RECAP_SIZE_LOG" ] && [ -n "$_cutoff_date" ]; then
+  _counts="$(awk -v cutoff="$_cutoff_date" 'NF >= 3 && $1 >= cutoff {print $3}' "$RECAP_SIZE_LOG" | sort -n)"
+  _count="$(echo "$_counts" | grep -c '^[0-9]' || echo 0)"
+  if [ "$_count" -gt 0 ]; then
+    _mid=$(( (_count + 1) / 2 ))
+    RECAP_MEDIAN="$(echo "$_counts" | sed -n "${_mid}p")"
+    RECAP_MEDIAN="${RECAP_MEDIAN:-0}"
+    log "session-recap 7d median: ${RECAP_MEDIAN} chars (${_count} samples)"
+  fi
+fi
+
 # --- build body ---
 build_body() {
   local prefix="$1"
@@ -675,6 +692,12 @@ circular refs: ${LINT_CIRCULAR_TOTAL}:"
       body="${body}
 ${br_id}  ${br_st}  ${br_age}d  ${gate_disp}"
     done
+  fi
+
+  # --- session-recap size flag ---
+  if [ "${RECAP_MEDIAN:-0}" -gt 4000 ] 2>/dev/null; then
+    body="${body}
+[recap size] 7d median ${RECAP_MEDIAN} chars -- over 4000"
   fi
 
   echo "$body"

@@ -9,7 +9,7 @@ stdout(JSON): {"hookSpecificOutput": {"hookEventName": "SessionStart",
                                        "additionalContext": "..."}}
 No output = nothing injected (no previous session / not a target).
 """
-import sys, os, json, glob, re
+import sys, os, json, glob, re, datetime
 
 # Defaults (used when config/agent.conf is absent, key is missing, or non-integer).
 # RECAP_CHAR_CAP controls chars per half: first N chars + last N chars per message.
@@ -44,6 +44,22 @@ def _load_recap_config(cwd):
     except Exception:
         pass
     return pairs, char_cap
+
+
+def _log_recap_size(cwd, char_count):
+    """Append one size-log entry to .telegram_bot/logs/session-recap-size.log.
+    Format: YYYY-MM-DD HH:MM:SS <chars>
+    Silent on any error -- hook path must never crash."""
+    try:
+        log_dir = os.path.join(cwd, ".telegram_bot", "logs")
+        if not os.path.isdir(log_dir):
+            return
+        log_path = os.path.join(log_dir, "session-recap-size.log")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{stamp} {char_count}\n")
+    except Exception:
+        pass
 
 
 def text_of(message):
@@ -147,6 +163,7 @@ def main():
     for role, t in tail:
         lines.append(f"### {label.get(role, role)}\n{t}\n")
     ctx = "\n".join(lines)
+    _log_recap_size(cwd, len(ctx))
 
     out = {
         "hookSpecificOutput": {
