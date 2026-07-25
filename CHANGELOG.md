@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `install.sh`, `update.sh`: Pro (non-max) subscription tier now seeds
+  `opus,sonnet,haiku` in the `/model` picker instead of `sonnet,haiku`.
+  Sonnet remains the recommended default for non-max installs; fable stays
+  max-only. Existing user-customized `BRIDGE_MODELS` values are untouched
+  by the update backfill. (DGN-565)
+
 ## [1.14.0] - 2026-07-22
 
 ### Added
