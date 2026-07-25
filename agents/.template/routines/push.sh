@@ -46,6 +46,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# B: CLAUDECODE guard -- nested claude -p is rejected by the CLI (M1: CLAUDECODE=1 inherited).
+# Fail fast before any .env work so the error is visible; --text bypasses generation.
+if [[ -n "${CLAUDECODE:-}" && -n "$PROMPT" ]]; then
+  echo "[push] error: CLAUDECODE session detected -- claude -p cannot run inside an active session." >&2
+  echo "[push] hint: use --text \"<message>\" to send a pre-composed message instead of --prompt." >&2
+  exit 1
+fi
+
+# A: resolve per-call timeout command; empty = no-timeout fallback (M4: orphan stdout hold).
+_PUSH_TIMEOUT=""
+if command -v timeout > /dev/null 2>&1; then
+  _PUSH_TIMEOUT="timeout 60"
+elif command -v gtimeout > /dev/null 2>&1; then
+  _PUSH_TIMEOUT="gtimeout 60"
+fi
+
 # ---- .env 골라 토큰/대상 읽기 ----
 read_kv() { grep -E "^$1=" "$2" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
 
@@ -106,11 +122,17 @@ if [[ -n "$RAW_TEXT" ]]; then
   BODY="$RAW_TEXT"
 elif [[ -n "$PROMPT" ]]; then
   echo "[push] generating via claude --model $MODEL ..." >&2
+  # A: empty-prompt guard -- defensive check before entering the retry loop.
+  if [[ -z "$PROMPT" ]]; then
+    echo "[push] empty prompt -- aborting" >&2; exit 1
+  fi
   BODY=""
   _attempt=0
   while [[ $_attempt -lt 3 ]]; do
     _attempt=$(( _attempt + 1 ))
-    BODY="$(claude -p "$PROMPT" --model "$MODEL" 2>/dev/null)"
+    # A: < /dev/null prevents stdin hang (M2); $_PUSH_TIMEOUT caps per-call wall time (M4);
+    # || true lets set -e survive a non-zero claude exit so the retry loop continues.
+    BODY="$($_PUSH_TIMEOUT claude -p "$PROMPT" --model "$MODEL" 2>/dev/null < /dev/null)" || true
     if [[ -n "$BODY" ]]; then
       break
     fi
