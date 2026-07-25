@@ -5,7 +5,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-25
+
+### Added
+- `agents/.template/routines/session-recap.py`: size-log instrumentation
+  (`_log_recap_size()`) records injected character totals per session and
+  flags a hygiene warning when the 7-day median exceeds the configured cap.
+  `agents/.template/routines/tests/test-session-recap-size-log.sh` (new,
+  4 scenarios). `packs/dev/refdev/scripts/ticket-hygiene.sh`: 7-day median
+  scan block and `[recap size]` flag line ported in generic English form.
+  (DGN-501 follow-up)
+- `packs/dev/refdev/scripts/ticket-hygiene.sh` (new): generic port of Metal's
+  ticket-hygiene script. Includes DGN-409 additions: gate-resolution
+  unpark-suggestion scan and weekly big-rock P1 table. Metal-specific paths
+  stripped; `TICKET_PREFIX` config-driven; push path via `PUSH_CMD` env var.
+  `agents/.template/worklog/_TEMPLATE.md` gains `parked` status and
+  `gate:` comment convention. `packs/dev/refdev/AGENT.md.add` updated with
+  gate convention one-liner. (DGN-409)
+
+### Fixed
+- `agents/.template/routines/generic-brief.sh`: blank line between sections
+  now inserted consistently, matching Metal main behavior. (DGN-562)
+- `agents/.template/routines/session-recap.py`: `_DEFAULT_CHAR_CAP` reduced
+  from 500 to 200; cap is now applied per-half (first N + last N chars).
+  `agents/.template/config/agent.conf` comment updated to document
+  `RECAP_CHAR_CAP` as a per-half value. (DGN-562)
+
 ### Changed
+- `rules/RULES.md`: work-items line rephrased from negative-command
+  ("never memory") to positive ticket-surface ownership: work-items live on
+  the ticket surface; memory holds durable facts only. Applies via symlink
+  to `.template/RULES.md`. (dec-090 / DGN-446)
+- `mirror/sdk_bridge.py`: `ALLOWED_USER_VERSIONS` tightened from `(8, 9)`
+  to `(9,)` after the 24-hour M1 rollout window (v<9 nodes confirmed
+  absent). (DGN-553)
+- `agents/.template/routines/status-footer.py` (Rev 11): `[콘솔액션]`
+  dashboard section added. Byte-identical to Metal canonical; section is
+  omitted silently on instances without `decision-actions.md`. New test
+  suite `agents/.template/routines/tests/test-status-footer.sh` (159 lines).
+  (DGN-536)
 - `install.sh`, `update.sh`: Pro (non-max) subscription tier now seeds
   `opus,sonnet,haiku` in the `/model` picker instead of `sonnet,haiku`.
   Sonnet remains the recommended default for non-max installs; fable stays
