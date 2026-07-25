@@ -1576,7 +1576,7 @@ fi
 
 # Probe $HOME/.claude.json for the subscription tier (same logic as
 # install.sh recommend_model / step_model). Returns the bridge model list
-# on stdout: "fable,opus,sonnet,haiku" for max tier, "sonnet,haiku" otherwise. (DGN-346)
+# on stdout: "fable,opus,sonnet,haiku" for max tier, "opus,sonnet,haiku" for Pro (non-max). (DGN-346, DGN-565)
 # Exits non-zero on any failure (no python3 / missing file / parse error).
 # This is a LOCAL read of the current machine's Claude CLI credential file;
 # it makes no network call. Conservative fallback when the probe fails is
@@ -1594,7 +1594,7 @@ try:
     if "max" in tier or "max" in otype:
         print("fable,opus,sonnet,haiku")  # DGN-346: fable-first
     else:
-        print("sonnet,haiku")
+        print("opus,sonnet,haiku")  # DGN-565: Pro tier now includes opus
 except Exception:
     sys.exit(1)
 PYEOF
