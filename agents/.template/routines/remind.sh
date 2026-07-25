@@ -73,7 +73,7 @@ hdr() { # hdr <kind> <alert> <lead_min> -> localized header line
 ROWS="$(python3 "$SELECT_PY" 2>/dev/null || true)"
 [[ -z "$ROWS" ]] && exit 0
 
-while IFS=$'\t' read -r key kind alert lead hhmm title location purpose; do
+while IFS=$'\t' read -r key kind alert lead hhmm title location purpose persons; do
   [[ -z "$key" ]] && continue
   grep -qxF "$key" "$TODAY_SENT" && continue
   HEADER="$(hdr "$kind" "$alert" "$lead")"
@@ -81,6 +81,7 @@ while IFS=$'\t' read -r key kind alert lead hhmm title location purpose; do
   [[ -n "$hhmm" ]] && BODY+=" · $hhmm"
   [[ -n "$location" ]] && BODY+=" · $location"
   [[ -n "$purpose" ]] && BODY+=" · $purpose"
+  [[ -n "$persons" ]] && BODY+=" · $persons"
   MSG="$HEADER
 $BODY"
   if [[ "$DRY" == "1" ]]; then
