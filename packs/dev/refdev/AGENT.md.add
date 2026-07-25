@@ -2,11 +2,12 @@
 Appended to <root>/AGENT.md by pack_install.sh (idempotent via the marker
 line above). Everything below is prose discipline audited by the owner:
 this pack ships NO hooks and NO linters, so none of these rules are
-machine-enforced. The scripts referenced are the two this pack ships
-(scripts/secret-sweep.sh, scripts/claude-usage.sh) plus files the
-framework template already provides (worklog/_TEMPLATE.md, RULES). The
-secret sweep also reads config/secret-patterns.conf when present (seeded
-outside the pack; read-if-present contract). -->
+machine-enforced. The scripts referenced are the three this pack ships
+(scripts/secret-sweep.sh, scripts/claude-usage.sh,
+scripts/ticket-hygiene.sh) plus files the framework template already
+provides (worklog/_TEMPLATE.md, RULES). The secret sweep also reads
+config/secret-patterns.conf when present (seeded outside the pack;
+read-if-present contract). -->
 
 ## Development discipline (dev pack)
 
@@ -21,7 +22,9 @@ outside the pack; read-if-present contract). -->
   Next id = scan worklog/ for the highest existing ticket number and add 1
   -- no counter file.
 - States: open > wip > blocked > done. `parked` = idea/design on hold
-  behind an unmet gate (not actionable now, not dead).
+  behind an unmet gate (not actionable now, not dead). Parked tickets
+  MUST carry `gate: <one-line unpark condition>` in frontmatter (include
+  ticket/decision IDs where possible; use "owner-review" when unclear).
 - Deferred-execution work: open a ticket AT SCHEDULING TIME -- any work item leaving the live conversation for a future return path (one-shot reminder, scheduled/one-shot cron, queue placement, wakeup/wait gate). The ticket records the return path (schedule time / reminder / queue + expected pickup); the scheduled artifact references the ticket id. No ticketless deferred work -- a reservation alone is not a ledger.
 - Every work item -- incoming task, handoff, triage output, parked idea, backlog entry, pending decision -- gets a worklog ticket (status + priority + lifecycle). Never write work-tracking to the memory store; memory is for durable fact recall only.
 - backlog status = accepted but unscheduled (gate unmet or deprioritized). Pending decisions are tracked as tickets, not as prose notes.
