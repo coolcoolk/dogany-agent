@@ -30,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   from 500 to 200; cap is now applied per-half (first N + last N chars).
   `agents/.template/config/agent.conf` comment updated to document
   `RECAP_CHAR_CAP` as a per-half value. (DGN-562)
+- `agents/.template/routines/remind.sh`: read the 9th `persons` field from
+  `remind_select.py` and append it to the alert body; the template lagged the
+  9-field output contract and silently dropped participant names on freshly
+  minted agents. (release-preflight live-ahead harvest, DGN-225)
 
 ### Changed
 - `rules/RULES.md`: work-items line rephrased from negative-command
