@@ -436,6 +436,165 @@ echo ""
 # restore default isolation for any later additions
 export DOGANY_UNPARK_FILE="$WORK/unpark-missing.md"
 
+# ===========================================================================
+# DGN-536 T3b: dashboard [콘솔액션] derived view (journal read-only, Rev 11)
+# ===========================================================================
+echo "=== DGN-536 T3b: dashboard console-actions section (Rev 11) ==="
+echo ""
+
+CA_FILE="$WORK/decision-actions.md"
+# Point all scenarios at this file unless overridden.
+export DOGANY_DECISION_ACTIONS_FILE="$WORK/ca-missing.md"
+
+# t11-a: journal ABSENT -> no section (canonical no-op).  A live agent
+#         fills the board but must not include any [콘솔액션] header.
+echo "--- t11-a: journal absent -> no section (canonical no-op) ---"
+{ launch_line aaa0000111; echo; } > "$TRANSCRIPT"
+freshen
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "board filled by live agent" "$dash" '[서브에이전트 작업 중]'
+if [[ "$dash" == *"콘솔액션"* ]]; then
+  fail "absent journal still rendered a [콘솔액션] section"
+else
+  ok "absent journal renders no section (canonical no-op)"
+fi
+echo ""
+
+# t11-b: journal with ONE pending act -> section rendered with count + item.
+echo "--- t11-b: pending act -> section rendered ---"
+cat > "$CA_FILE" << 'EOF'
+## act-1753401600 [pending]
+target: dec-123
+action: approve
+decided_at: 2026-07-25 10:00 KST
+note: approve the design
+EOF
+export DOGANY_DECISION_ACTIONS_FILE="$CA_FILE"
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "콘솔액션 header present" "$dash" '[콘솔액션]'
+assert_contains "act id in item" "$dash" 'act-1753401600'
+assert_contains "action verb in item" "$dash" 'approve'
+assert_contains "target in item" "$dash" 'dec-123'
+assert_contains "board trigger: pending act alone fills board" "$dash" '갱신 '
+echo ""
+
+# t11-c: journal with ONLY terminal acts -> section suppressed (no pending).
+#         confirmed-empty board (no other trigger) -> empty dashboard write.
+echo "--- t11-c: only terminal acts -> section suppressed, empty board ---"
+cat > "$CA_FILE" << 'EOF'
+## act-1753401600 [applied]
+target: dec-123
+action: approve
+decided_at: 2026-07-25 09:00 KST
+EOF
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+if [[ -f "$DASHBOARD" && ! -s "$DASHBOARD" ]]; then
+  ok "terminal-only journal -> suppressed section -> empty dashboard write"
+else
+  if [[ "$(cat "$DASHBOARD" 2>/dev/null)" == *"콘솔액션"* ]]; then
+    fail "terminal-only journal rendered [콘솔액션] section"
+  else
+    fail "expected empty dashboard, got non-empty without콘솔액션"
+  fi
+fi
+echo ""
+
+# t11-d: journal with failed act (non-pending, non-terminal word) ->
+#         has_failed=True -> section header forced even with zero pending.
+echo "--- t11-d: failed act -> header forced (zero pending) ---"
+cat > "$CA_FILE" << 'EOF'
+## act-1753401601 [failed]
+target: dec-456
+action: reject
+decided_at: 2026-07-25 08:00 KST
+EOF
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "failed act forces header visible" "$dash" '[콘솔액션]'
+assert_contains "forced header shows 실패 flag" "$dash" '실패 act'
+echo ""
+
+# t11-e: journal with mixed acts (1 pending + 1 applied) ->
+#         only pending appears as item; has_failed from applied -> True.
+echo "--- t11-e: mixed acts -> only pending in items, has_failed from terminal ---"
+cat > "$CA_FILE" << 'EOF'
+## act-1753401700 [applied]
+target: dec-789
+action: approve
+decided_at: 2026-07-24 15:00 KST
+
+## act-1753401800 [pending]
+target: dec-111
+action: hold
+decided_at: 2026-07-25 09:30 KST
+EOF
+{ launch_line aaa0000111; echo; compl_line aaa0000111; echo; } > "$TRANSCRIPT"
+run_footer "$(make_input false)" > /dev/null
+dash="$(cat "$DASHBOARD" 2>/dev/null || true)"
+assert_contains "콘솔액션 section present" "$dash" '[콘솔액션]'
+assert_contains "pending act item rendered" "$dash" 'act-1753401800'
+assert_contains "pending act verb rendered" "$dash" 'hold'
+if [[ "$dash" == *"act-1753401700"* ]]; then
+  fail "terminal act appeared in section items"
+else
+  ok "terminal act not in section items"
+fi
+echo ""
+
+# t11-f: drop-priority unit test -- console-action items drop before live,
+#         after unpark items; the 콘솔액션 HEADER is never dropped.
+echo "--- t11-f: drop priority: ca items before live, header never dropped ---"
+out="$("$PYTHON" - "$FOOTER_PY" <<'PY'
+import importlib.util, sys, time
+spec = importlib.util.spec_from_file_location("sf", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+# Use items sized so that live(3) + ca(8) + unpark(4) + done(2) exceeds
+# budget, forcing the drop loop.  Each big item = 200 units; at 3800 unit
+# budget: 3(live) + 8(ca) + 4(unpark) + 2(done) = 17 items * ~220 each
+# plus headers ~= 3740 before caps.  Nudge budget down to force drops.
+big = "x" * 200
+live = [big] * 3
+ca_items_big = [big + " ca%d" % i for i in range(8)]  # sized items, distinct
+unpark = (time.time(), "2026-07-24 06:00", [big] * 4)
+done = [big] * 2
+ca = (ca_items_big, False)
+# Reduce budget so that not all items fit, forcing the drop loop.
+orig_max = m.DASHBOARD_MAX_UNITS
+m.DASHBOARD_MAX_UNITS = 1800
+text = m._build_dashboard(["small decision"], live, done, unpark, ca)
+m.DASHBOARD_MAX_UNITS = orig_max
+assert m._u16len(text) <= 1800, "over reduced budget: %d" % m._u16len(text)
+# live items must be intact (ca drops first, after unpark)
+n_live = text.split("[%s]" % m.LIVE_LABEL)[1].split("[언파크 후보")[0].count(big) if m.LIVE_LABEL in text and "[언파크 후보" in text else -1
+n_ca = sum(1 for i in range(8) if (big + " ca%d" % i) in text)
+assert n_live == 3, "live items dropped too early: %d" % n_live
+assert 0 <= n_ca < 8, "ca items cut wrong (expected < 8): %d" % n_ca
+assert "[콘솔액션]" in text, "ca header dropped"
+# extreme budget: all ca items cut, header still present
+m.DASHBOARD_MAX_UNITS = 500
+text2 = m._build_dashboard(["small decision"], live, done, unpark, ca)
+m.DASHBOARD_MAX_UNITS = orig_max
+assert "[콘솔액션]" in text2, "ca header dropped under extreme budget"
+n_ca2 = sum(1 for i in range(8) if (big + " ca%d" % i) in text2)
+assert n_ca2 == 0, "ca items survived extreme cut: %d" % n_ca2
+print("CA-DROPTEST-OK live=%d ca=%d ca-header-survives-full-cut" % (n_live, n_ca))
+PY
+)" && rc=0 || rc=$?
+assert_eq "ca drop-priority unit exit 0" "$rc" "0"
+assert_contains "ca drop order verified" "$out" 'CA-DROPTEST-OK'
+echo "  $out"
+echo ""
+
+# restore default isolation
+export DOGANY_DECISION_ACTIONS_FILE="$WORK/ca-missing.md"
+
 echo "==========================="
 printf "Results: %d passed, %d failed, %d skipped\n" "$PASS" "$FAIL" "$SKIP"
 echo "==========================="
