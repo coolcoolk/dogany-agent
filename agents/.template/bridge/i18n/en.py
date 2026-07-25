@@ -291,4 +291,5 @@ SKILL_DISPLAY_NAMES = {
     "appointment-log":  "Appointment Manager",
     "relationship":     "Relationship Manager",
     "task-update":      "Task Manager",
+    "spending-log":     "Spending Log",
 }

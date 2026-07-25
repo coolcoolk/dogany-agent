@@ -82,6 +82,7 @@ REQUIRED_IDS = [
     "appointment-log",
     "relationship",
     "task-update",
+    "spending-log",
 ]
 
 

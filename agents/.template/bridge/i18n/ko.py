@@ -286,4 +286,5 @@ SKILL_DISPLAY_NAMES = {
     "appointment-log":  "약속 관리",
     "relationship":     "관계 관리",
     "task-update":      "할 일 관리",
+    "spending-log":     "소비 기록",
 }
