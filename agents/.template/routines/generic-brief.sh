@@ -181,7 +181,7 @@ Write in the user's language (locale: ${AGENT_LANG}). Address the user as: ${ADD
 Your role: ${ROLE_PROSE}
 Tone rules: ${TONE}
 
-Compose a short, warm ${SLOT} briefing from the data below. Lead with a one-line greeting in your own voice; then render the schedule under a header line that reads EXACTLY '${SCHED_HEADER}' (omit the section entirely if none -- no filler; header and bullets stay plain, no markdown); include highlights / my section / peer sections only when present, each verbatim as its own short block. Never invent facts or numbers. Output the message body only.
+Compose a short, warm ${SLOT} briefing from the data below. Lead with a one-line greeting in your own voice; then render the schedule under a header line that reads EXACTLY '${SCHED_HEADER}' (omit the section entirely if none -- no filler; header and bullets stay plain, no markdown); include highlights / my section / peer sections only when present, each verbatim as its own short block; place a blank line between every section and paragraph. Never invent facts or numbers. Output the message body only.
 
 === DATA ===
 ${data}

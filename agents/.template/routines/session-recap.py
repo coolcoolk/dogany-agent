@@ -12,8 +12,9 @@ No output = nothing injected (no previous session / not a target).
 import sys, os, json, glob, re
 
 # Defaults (used when config/agent.conf is absent, key is missing, or non-integer).
+# RECAP_CHAR_CAP controls chars per half: first N chars + last N chars per message.
 _DEFAULT_PAIRS = 2
-_DEFAULT_CHAR_CAP = 500
+_DEFAULT_CHAR_CAP = 200
 
 
 def _load_recap_config(cwd):
@@ -90,8 +91,8 @@ def turns_of(path, char_cap):
                 # skip machine prompts (cron inject spool tail / continuous-work loop)
                 if low.startswith(("[cron-inject]", "[DGN-")):
                     continue
-                if len(t) > char_cap:
-                    t = t[:char_cap] + " ...(truncated)"
+                if len(t) > char_cap * 2:
+                    t = t[:char_cap] + " ...(middle trimmed)... " + t[-char_cap:]
                 turns.append((role, t))
     except Exception:
         return []
