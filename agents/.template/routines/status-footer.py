@@ -78,6 +78,19 @@ cut drops unpark items after 최근 완료 but before the live section, and
 never drops the header.  The FOOTER is unchanged -- unpark candidates ride
 the pinned dashboard only.
 
+Rev 11 (DGN-536 T3b): the dashboard gains a [콘솔액션] section -- a
+read-only DERIVED view of the console decision-action journal
+product/decision-actions.md (sole writer = the console, DGN-536 design).
+Canonical no-op: instances WITHOUT the journal file (every instance except
+Metal today, e.g. Ag) render zero change -- byte-identical to Rev 10
+behaviour.  When the journal exists, pending (non-terminal) acts are
+rendered as compact one-liners: dec id, verb, age.  A zero-pending journal
+suppresses the section (Rev 8 empty-section suppression).  failed/conflict
+acts force the header visible even when pending count is zero (M5 analog:
+a silently-stuck failed act must not become invisible).  The section is
+ordered BETWEEN [결정대기] and [언파크 후보] in the drop-priority chain;
+its items are dropped before live agents but after 언파크 items.
+
 Behaviour (rev 6):
   - Not owner session  -> exit 0 (no sidecar written).
   - NO_PUSH sentinel turn -> exit 0 (no sidecar written).
@@ -636,6 +649,24 @@ UNPARK_FILE = "worklog/_UNPARK.md"
 # surface it.
 UNPARK_STALE_SECS = 26 * 3600
 
+# Console decision-action journal (DGN-536 T3b, Rev 11).  Sole writer = the
+# console (product/decision-actions.md).  This script only READS it to derive
+# a compact dashboard section.  A MISSING file means this instance has no
+# console decision-action machinery -> the section is omitted entirely
+# (framework-canonical no-op for instances like Ag).
+DECISION_ACTIONS_FILE = "product/decision-actions.md"
+
+# Journal block status markers (DGN-536 spec 2.3).
+#   pending   -- awaiting Metal reconcile (non-terminal, show in section).
+#   terminal  -- applied / superseded* / failed (trigger forced header).
+# The bracket form "## act-<id> [pending]" is the canonical write; other
+# status values appear in decision-actions-status.md overlay (Metal-owned),
+# not in the journal itself.  Any act header WITHOUT "[pending]" is treated
+# as terminal for section-rendering purposes.
+_ACT_HEADER_RE = re.compile(
+    r"^##\s+(act-[^\s\[]+)\s*(?:\[([^\]]*)\])?\s*$")
+_ACT_FIELD_RE = re.compile(r"^([a-z_]+):\s*(.+?)\s*$")
+
 # Ticket frontmatter line: "key: value" between the two '---' fences.
 _FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*\S)?\s*$")
 
@@ -808,6 +839,129 @@ def _collect_unpark():
     return stamp_epoch, stamp_display, items
 
 
+def _collect_console_actions():
+    """Derived view of the console decision-action journal (DGN-536 T3b, Rev 11).
+
+    Returns None when the journal file is ABSENT: this instance has no
+    console decision-action machinery, so the dashboard renders no
+    [콘솔액션] section at all (framework-canonical no-op).
+
+    Otherwise returns (pending, has_failed):
+      pending    -- list of compact one-liner strings for pending acts
+                    (non-terminal, i.e. "[pending]" status), each formatted
+                    as "<act-id> <action> <target> <age>d".
+      has_failed -- True if any act header is present with a non-pending
+                    status (failed / applied / superseded*).  When True the
+                    section header is forced even if pending is empty (M5
+                    analog: a stuck failed act must not become invisible).
+
+    Journal format (DGN-536 spec 2.3):
+      ## act-<epoch>[-bump] [pending]
+      target: dec-NNN
+      action: approve|hold|reject
+      decided_at: YYYY-MM-DD HH:MM KST
+      note: <text>
+
+    Only blocks whose header bracket is exactly "[pending]" are counted as
+    pending.  Any other bracket value (or no bracket) is treated as terminal.
+    Env override DOGANY_DECISION_ACTIONS_FILE mirrors the test-isolation
+    convention used by other file overrides.
+    """
+    path = os.environ.get("DOGANY_DECISION_ACTIONS_FILE") or os.path.join(
+        _ROOT_DIR, DECISION_ACTIONS_FILE)
+    try:
+        fh = open(path, "r", errors="replace")
+    except FileNotFoundError:
+        return None          # no journal -> no section (canonical no-op)
+    except Exception:
+        return [], True      # exists but unreadable -> force header visible
+
+    pending = []
+    has_failed = False
+    try:
+        with fh:
+            current_id = None
+            current_status = None
+            fields = {}
+            def _flush_block():
+                nonlocal has_failed
+                if current_id is None:
+                    return
+                if current_status == "pending":
+                    target = fields.get("target", "?")
+                    action = fields.get("action", "?")
+                    # Age from decided_at field (when the act was recorded).
+                    age_str = ""
+                    decided_at = fields.get("decided_at", "")
+                    if decided_at:
+                        try:
+                            # Format: YYYY-MM-DD HH:MM KST (trailing zone ignored)
+                            dt = time.strptime(decided_at[:16], "%Y-%m-%d %H:%M")
+                            age_days = int(
+                                (time.time() - time.mktime(dt)) / 86400)
+                            age_str = " %dd" % age_days
+                        except Exception:
+                            pass
+                    pending.append("%s %s %s%s" % (
+                        current_id, action, target, age_str))
+                else:
+                    # Only flag has_failed for genuinely bad terminal states
+                    # (failed / conflict).  Normal terminal states (applied,
+                    # superseded*) indicate successful processing and should
+                    # not force the header visible.
+                    if (current_status.startswith("failed")
+                            or "conflict" in current_status):
+                        has_failed = True
+
+            for raw in fh:
+                line = raw.strip()
+                m = _ACT_HEADER_RE.match(line)
+                if m:
+                    _flush_block()
+                    current_id = m.group(1)
+                    current_status = (m.group(2) or "").strip().lower() or "terminal"
+                    fields = {}
+                    continue
+                if current_id is not None:
+                    fm = _ACT_FIELD_RE.match(line)
+                    if fm:
+                        fields[fm.group(1)] = fm.group(2)
+            _flush_block()
+    except Exception:
+        return [], True
+
+    return pending, has_failed
+
+
+def _console_actions_visible(console_actions):
+    """Whether the [콘솔액션] section renders at all.
+
+    None (journal absent) -> never (canonical no-op).
+    has_failed True       -> always (force for stuck failed acts, M5 analog).
+    pending non-empty     -> always.
+    Zero pending + no failed -> suppressed (Rev 8 empty-section suppression).
+    """
+    if console_actions is None:
+        return False
+    pending, has_failed = console_actions
+    return bool(pending) or has_failed
+
+
+def _console_actions_header(console_actions):
+    """Section header for [콘솔액션].
+
+    Shows pending count.  When has_failed but no pending, appends a flag
+    so a stuck failed act is visible.
+    """
+    if console_actions is None:
+        return "[콘솔액션]"
+    pending, has_failed = console_actions
+    n = len(pending)
+    if n == 0 and has_failed:
+        return "[콘솔액션] (실패 act 있음)"
+    return "[콘솔액션] %d건" % n
+
+
 def _unpark_fresh(stamp_epoch):
     """True iff the last-scan stamp parsed AND is within UNPARK_STALE_SECS.
 
@@ -846,25 +1000,29 @@ def _unpark_header(stamp_epoch, stamp_display):
     return "[언파크 후보] (스캔 %s)" % stamp_display
 
 
-def _build_dashboard(decisions, active_agents, recent_done, unpark=None):
+def _build_dashboard(decisions, active_agents, recent_done, unpark=None,
+                     console_actions=None):
     """Assemble the dashboard.md content string.
 
     Header: BOARD_TITLE line -- fixed name "작업대" (owner naming 2026-07-24;
     renamed from 상황판) with an optional per-instance emoji prefix (Rev 9).
-    Sections: 결정대기 / <live label> / 언파크 후보 / 최근 완료.  The live
-    section title comes from LIVE_LABEL (DGN-541 S2/S3: short form,
+    Sections: 결정대기 / 콘솔액션 / <live label> / 언파크 후보 / 최근 완료.
+    The live section title comes from LIVE_LABEL (DGN-541 S2/S3: short form,
     per-instance via config/env, neutral default).  `unpark` is None (ledger
     absent -> no section) or the (stamp_epoch, stamp_display, items) triple
     from _collect_unpark(); visibility follows _unpark_visible (Rev 8
-    empty-suppression + M5 forced staleness).
-    Last line is the freshness
-    stamp "갱신 HH:MM" -- written by the GENERATOR only; the bridge never
-    touches it, so a dead generator shows up as a visibly stale timestamp.
+    empty-suppression + M5 forced staleness).  `console_actions` is None
+    (journal absent -> no section, canonical no-op) or the (pending, has_failed)
+    pair from _collect_console_actions(); visibility follows
+    _console_actions_visible (Rev 8 + M5-analog forced header for failed acts).
+    Last line is the freshness stamp "갱신 HH:MM" -- written by the GENERATOR
+    only; the bridge never touches it, so a dead generator shows up as a
+    visibly stale timestamp.
     Length cut: drop tail items lowest-priority-first (최근 완료 -> 언파크
-    후보 items -> live -> 결정대기) until the text fits DASHBOARD_MAX_UNITS.
-    The unpark HEADER is never dropped: the ledger keeps the full candidate
-    list (only the view shrinks) and the freshness stamp must stay visible
-    (DGN-534 T3).
+    후보 items -> 콘솔액션 items -> live -> 결정대기) until the text fits
+    DASHBOARD_MAX_UNITS.  The unpark HEADER and the 콘솔액션 HEADER are never
+    dropped: the freshness/failure signal must stay visible (DGN-534 T3 +
+    DGN-536 T3b).
     """
     # Cap every decision item: the section cut never drops the last decision,
     # so an uncapped runaway line would break the 3800-unit contract and let
@@ -881,6 +1039,13 @@ def _build_dashboard(decisions, active_agents, recent_done, unpark=None):
         # budget in one item (same rationale as the decision-item cap).
         unpark_items = [_cap_item(x) for x in unpark_items]
         unpark_title = _unpark_header(stamp_epoch, stamp_display)
+    ca_show = _console_actions_visible(console_actions)
+    ca_items = []
+    ca_title = ""
+    if ca_show:
+        ca_pending, _ca_failed = console_actions
+        ca_items = [_cap_item(x) for x in list(ca_pending)]
+        ca_title = _console_actions_header(console_actions)
     stamp = "갱신 " + time.strftime("%H:%M")
 
     def _sec(title, items):
@@ -892,12 +1057,16 @@ def _build_dashboard(decisions, active_agents, recent_done, unpark=None):
         return [title] + ["- " + x for x in items]
 
     def _render():
-        # The unpark block bypasses _sec: when shown, the header stands even
-        # with zero items (forced staleness case, or all items length-cut).
+        # The unpark block and the console-actions block bypass _sec: when
+        # shown, the header stands even with zero items (forced-failure / forced-
+        # staleness case, or all items length-cut).
         unpark_block = ([unpark_title] + ["- " + x for x in unpark_items]
                         if unpark_show else [])
+        ca_block = ([ca_title] + ["- " + x for x in ca_items]
+                    if ca_show else [])
         lines = [BOARD_TITLE, ""]
         for block in (_sec("[결정대기]", decisions),
+                      ca_block,
                       _sec("[%s]" % LIVE_LABEL, live),
                       unpark_block,
                       _sec("[최근 완료]", done)):
@@ -913,6 +1082,8 @@ def _build_dashboard(decisions, active_agents, recent_done, unpark=None):
             done.pop()
         elif unpark_items:
             unpark_items.pop()
+        elif ca_items:
+            ca_items.pop()
         elif live:
             live.pop()
         elif len(decisions) > 1:
@@ -939,12 +1110,13 @@ def _write_dashboard_text(text):
     os.replace(tmp, path)
 
 
-def _write_dashboard(active_agents, decisions, unpark=None):
+def _write_dashboard(active_agents, decisions, unpark=None,
+                     console_actions=None):
     """Regenerate <BOT_DATA_DIR>/dashboard.md.  Caller has already passed the
     ownership gate -- this function does no gating of its own."""
     _write_dashboard_text(
         _build_dashboard(decisions, active_agents, _collect_recent_done(),
-                         unpark))
+                         unpark, console_actions))
 
 
 # ---------------------------------------------------------------------------
@@ -1270,6 +1442,10 @@ def main():
             # no-op, unreadable ledger = forced-visible section), so it does
             # not participate in collect_ok.
             unpark = _collect_unpark()
+            # Console-actions collector has NO failure state (absent journal =
+            # canonical no-op, unreadable journal = forced-visible section),
+            # so it does not participate in collect_ok either.
+            console_actions = _collect_console_actions()
             collect_ok = (
                 transcript_agents is not None
                 and ledger_agents is not None
@@ -1278,15 +1454,19 @@ def main():
             active_agents = (transcript_agents or []) + (ledger_agents or [])
             decisions = raw_decisions or []
             try:
-                if active_agents or decisions or _unpark_visible(unpark):
-                    # Display trigger (DGN-541 S1 + DGN-534 T3): >=1 pending
-                    # decision OR >=1 working subagent OR a visible unpark
-                    # section -> fill the board.  Unpark candidates awaiting
-                    # promotion are actionable, and a stale scan is a health
-                    # signal that must not vanish with the board (M4/M5);
-                    # recent-completed history stays extra info only, never a
-                    # standalone trigger (D2).
-                    _write_dashboard(active_agents, decisions, unpark)
+                if (active_agents or decisions
+                        or _unpark_visible(unpark)
+                        or _console_actions_visible(console_actions)):
+                    # Display trigger (DGN-541 S1 + DGN-534 T3 + DGN-536 T3b):
+                    # >=1 pending decision OR >=1 working subagent OR a visible
+                    # unpark section OR a visible console-actions section ->
+                    # fill the board.  Unpark candidates and pending console
+                    # acts are actionable; a stale scan or a stuck failed act
+                    # is a health signal that must not vanish with the board
+                    # (M4/M5); recent-completed history stays extra info only,
+                    # never a standalone trigger (D2).
+                    _write_dashboard(active_agents, decisions, unpark,
+                                     console_actions)
                 elif collect_ok:
                     # CONFIRMED empty board -> empty write; the bridge's
                     # debounced delete state machine unpins the message.
