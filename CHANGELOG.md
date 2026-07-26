@@ -5,6 +5,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-26
+
+### Added
+- `agents/.template/.claude/skills-bundle/spending-log/SKILL.md` (new): spending-log
+  skill propagated to the template as consumption module J1. Covers spend capture (C1:
+  spend-add, find, day, del, upd) and weekly ledger session (C2: week, month, unknown
+  verbs), with a duplicate gate and scope rules. DB layer (migration 009, schema.sql v9,
+  lifekit.py spend verbs) was already in canonical; newly minted agents now receive the
+  skill at mint time. Bridge i18n entries added for both `ko` and `en` locales; bridge
+  test suite extended to gate both catalog entries. (DGN-553)
+
+### Changed
+- `rules/RULES.md` (and `agents/.template/RULES.md` via symlink): dec-094 forcing-point
+  meta-principle restored to canonical. The principle -- "rule unfollowed -> design a
+  forcing point; structural wins over reminder/negative-command framing" -- existed only
+  in Metal's local copy and was inadvertently reverted when v1.15.0 was consumed. All
+  future mints and self-updates will carry it. Governance/baseline change only; no
+  behavior change for instances already following the rule.
+
+### Fixed
+- `agents/.template/routines/push.sh`: four reliability hardening changes propagated
+  from Metal canonical (DGN-452). (1) CLAUDECODE guard: when `CLAUDECODE=1` is inherited
+  from an active session, a `--prompt` invocation now fails fast with a clear error and
+  hint to use `--text` instead. (2) Per-call timeout: a 60-second wall-time cap via
+  `timeout` / `gtimeout` prevents orphaned stdout holds. (3) stdin redirect: `< /dev/null`
+  prevents the `claude -p` subprocess from hanging on stdin. (4) `set -e` safety: `|| true`
+  on the claude call lets the retry loop continue after a non-zero exit. Propagated
+  4-way across the estate (DGN-452).
+
 ## [1.15.0] - 2026-07-25
 
 ### Added
