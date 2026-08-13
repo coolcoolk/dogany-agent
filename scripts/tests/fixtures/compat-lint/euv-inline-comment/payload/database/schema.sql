@@ -1,0 +1,4 @@
+-- FIXTURE: schema.sql matching EXPECTED_USER_VERSION=4
+PRAGMA user_version = 4;
+
+CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY);
