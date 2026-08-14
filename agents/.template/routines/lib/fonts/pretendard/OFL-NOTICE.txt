@@ -1,0 +1,11 @@
+Pretendard (Regular 400 / SemiBold 600 / ExtraBold 800)
+Copyright (c) 2021 Kil Hyung-jin, with Reserved Font Name Pretendard.
+https://github.com/orioncactus/pretendard
+
+Licensed under the SIL Open Font License, Version 1.1.
+License text: https://openfontlicense.org
+
+Bundled for the DGN-660 card-block render primitive (card_blocks.py):
+the three weights above are the full weight set of the 3x3 type system
+(DESIGN-SYSTEM R7). Embedded via @font-face with a runtime-resolved
+bundle path so Linux live instances render identically to macOS.
