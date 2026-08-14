@@ -1,0 +1,7 @@
+{
+  "id": "lifekit",
+  "pack_version": "1.0.0",
+  "contract_version": 1,
+  "requires_framework": ">=1.28.0 <2.0.0",
+  "payload_root": "payload"
+}
