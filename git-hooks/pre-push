@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# pre-push: dogany repo secret gate (DGN-668).
+# FULL secret-sweep (all categories 1-9) + D7 outbound-diff gate (dec-026).
+#
+# This is the tracked canonical source. It is ACTIVE because the repo sets
+# core.hooksPath=git-hooks (mint.sh / repo setup); .git/hooks/ is fully
+# overridden by that config and never consulted, so per-clone hand-installed
+# hooks are inert -- only this tracked file runs.
+#
+# SWEEP path resolution (DGN-668):
+#   1. DOGANY_SWEEP_SCRIPT env var (portable override; set on workspace move)
+#   2. <repo-root>/scripts/secret-sweep.sh (instance-relative fallback,
+#      derived from the repo this hook runs in via git rev-parse
+#      --show-toplevel, with the hook's own location as a last resort --
+#      never a hardcoded workspace path)
+# Missing sweep script -> fail closed (push blocked) with the override hint.
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || dirname "$HOOK_DIR")"
+SWEEP="${DOGANY_SWEEP_SCRIPT:-$REPO_DIR/scripts/secret-sweep.sh}"
+
+if [ ! -x "$SWEEP" ]; then
+  echo "PUSH BLOCKED -- secret-sweep.sh not found or not executable: $SWEEP" >&2
+  echo "(fail-closed gate: set DOGANY_SWEEP_SCRIPT to the sweep script path," >&2
+  echo " or place it at <repo>/scripts/secret-sweep.sh; DGN-668)" >&2
+  exit 1
+fi
+
+# ---- full secret-sweep (all categories) -------------------------------------
+SWEEP_EXIT=0
+SWEEP_OUT="$("$SWEEP" "$REPO_DIR" 2>&1)" || SWEEP_EXIT=$?
+if [ "$SWEEP_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED -- secret-sweep dirty:" >&2
+  echo "$SWEEP_OUT" >&2
+  exit 1
+fi
+
+# ---- D7 outbound-diff gate (dec-026, 2026-07-16) ----------------------------
+# pre-push stdin protocol: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# Use the remote SHA as base-ref when non-zero; fall back to origin/main.
+BASE_REF=""
+# shellcheck disable=SC2034  # protocol fields; only remote_sha is consumed
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    BASE_REF="$remote_sha"
+  fi
+done
+if [ -z "$BASE_REF" ]; then
+  BASE_REF="origin/main"
+fi
+
+D7_EXIT=0
+D7_OUT="$("$SWEEP" --outbound-diff "$BASE_REF" "$REPO_DIR" 2>&1)" || D7_EXIT=$?
+if [ "$D7_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED (D7) -- outbound primitive added without review:" >&2
+  echo "$D7_OUT" >&2
+  exit 1
+fi
+
+exit 0
