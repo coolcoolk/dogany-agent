@@ -1,0 +1,40 @@
+{
+  "name": "health-trainer",
+  "reference_slug": "warg",
+  "reference_root": "/opt/dogany/agents/warg",
+  "reference_home": "/opt/dogany",
+  "agent_md_marker": "DGN-287-CONSULT-FRAGMENT",
+  "agent_conf_marker": "# DGN-238 pack fragment appended",
+  "domain_seed": true,
+  "categories": [
+    {"category": "lib", "required": true,
+     "files": ["handoff.py", "handoff_cli.py", "ledger.py", "thresholds.py",
+               "l1gate.py", "push_gate.py", "daily_job.py", "section_submit.py"]},
+    {"category": "routines", "required": true},
+    {"category": "plists", "required": true},
+    {"category": "prompts", "required": true},
+    {"category": "agent_conf_fragment", "required": true},
+    {"category": "triggers", "required": true},
+    {"category": "db_migrations", "required": true},
+    {"category": "skills", "required": true},
+    {"category": "agent_md_fragment", "required": true},
+    {"category": "scripts", "required": true},
+    {"category": "knowledge_snapshot", "required": true}
+  ],
+  "net_new_skills": ["diet-log", "workout-log"],
+  "knowledge": {
+    "warehouse": "kimwog",
+    "source": "~/.dogany/kimwog",
+    "consumer_skills": {
+      "diet-log":    ["nutrition", "sleep-recovery"],
+      "workout-log": ["exercise", "sleep-recovery"]
+    },
+    "turns": [
+      {"type": "T1", "home": ".claude/skills-bundle/diet-log/SKILL.md"},
+      {"type": "T1", "home": ".claude/skills-bundle/workout-log/SKILL.md"},
+      {"type": "T2", "home": "AGENT.md"}
+    ],
+    "smoke_item": "exercise/funding-coi-check-004",
+    "smoke_args": ""
+  }
+}
