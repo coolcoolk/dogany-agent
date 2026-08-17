@@ -1,0 +1,8 @@
+{
+  "name": "legacy-test",
+  "reference_slug": "reflegacy",
+  "reference_root": "/opt/dogany/agents/reflegacy",
+  "categories": [
+    {"category": "scripts", "required": true}
+  ]
+}
