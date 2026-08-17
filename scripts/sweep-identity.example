@@ -1,0 +1,40 @@
+# sweep-identity.example -- owner identity for scripts/secret-sweep.sh
+#
+# The pre-push secret-sweep gate (scripts/secret-sweep.sh) needs the OWNER's
+# real identity strings to detect owner PII (Telegram ID, emails, real name,
+# machine home path) before anything reaches a public git history. Those strings
+# are PII, so they are NOT embedded in the tracked script -- they live here, in
+# an UNTRACKED machine-local file that the script sources at runtime.
+#
+# SETUP:
+#   1. Copy this file to  ~/.dogany/sweep-identity
+#        mkdir -p ~/.dogany
+#        cp scripts/sweep-identity.example ~/.dogany/sweep-identity
+#        chmod 600 ~/.dogany/sweep-identity
+#   2. Replace every DUMMY value below with your real identity.
+#   3. NEVER commit the filled-in file. It is machine-local only.
+#      (The repo .gitignore also ignores a repo-relative ".sweep-identity"
+#       override, but the canonical location is ~/.dogany/sweep-identity.)
+#
+# Each value is an ERE fragment passed to `grep -E`. Escape regex metacharacters
+# as needed. All five vars are REQUIRED; if any is empty the owner-PII
+# categories (cat2-5 and the owner-name part of cat9) are disabled with a loud
+# warning and only the generic secret categories run.
+
+# cat2 -- owner Telegram ID (numeric)
+SWEEP_OWNER_TG_ID='1234567890'
+
+# cat3 -- owner email(s). ERE alternation is fine, e.g. '(you|you.alt)@example'
+SWEEP_OWNER_EMAIL_PAT='(you)@example'
+
+# cat4 -- owner real name(s). Include native-script names, e.g. 'Your Name|이름'
+SWEEP_OWNER_NAME_PAT='Your Name'
+
+# cat5 -- owner machine home path prefix, e.g. '/Users/you' or '/home/you'
+SWEEP_MACHINE_PATH='/Users/you'
+
+# cat9 -- owner-name / login / hostname portion merged into the git-identity
+# scan. ERE alternation of real name, login username, and machine hostname.
+# The machine-local '@*.local' pattern is added by the script itself; do NOT
+# repeat it here.
+SWEEP_OWNER_IDENT_PAT='Your Name|you|your-host'
