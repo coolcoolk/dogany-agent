@@ -1,0 +1,62 @@
+# secrets / env
+.env
+**/.env
+rules/USER.md
+# secret-sweep owner identity override (repo-relative; canonical is ~/.dogany/sweep-identity)
+.sweep-identity
+**/.sweep-identity
+
+# personal agent instances (.template only ships)
+agents/main/
+
+# runtime data (was .telegram_bot -> runtime)
+**/runtime/
+**/logs/
+**/sessions.json
+# instance .claude runtime state (hook markers / one-shot sentinels; never ship)
+**/.claude/.last-skill.json
+**/.claude/.token-gate-approved
+**/health*.json
+**/images/
+
+# memory (per-agent, personal)
+# ship the empty seed scaffold; instance memories (under agents/main/) stay ignored
+**/memories/*
+!**/memories/MEMORY.md
+**/memory-engine/state.db
+
+# lifekit data (global but personal)
+database/*.db
+database/*.db-wal
+database/*.db-shm
+database/body_stats.json
+database/food_cache.json
+database/lifekit.sql
+# NOTE: schema.sql is CODE (ships); lifekit.sql is a personal data dump (excluded).
+
+# python / OS / backup
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+# backups (DGN-868: *.bak_* covers underscore-separated backup tags)
+*.bak
+*.bak-*
+*.bak.*
+*.bak_*
+files/tmp/
+_archive/
+# scrub / cleanup backups (never ship -- they hold pre-scrub content)
+.scrub-backup-*/
+scrub-backup-*/
+
+# deprecated scaffold (not for distribution)
+scripts/_deprecated-dgn036/
+
+# local git worktrees (never tracked)
+.worktrees/
+mirror/*.db*
+
+# DGN-872: compat-lint mirror-residue fixture synthesizes its residue .db at test
+# runtime -- never track a .db (secret-sweep cat8; public mirror stays db-free).
+scripts/tests/fixtures/compat-lint/mirror-residue/payload/mirror/*.db
