@@ -1,0 +1,11 @@
+{
+  "id": "barkit",
+  "pack_version": "1.0.0",
+  "contract_version": 1,
+  "requires_framework": ">=1.28.0 <2.0.0",
+  "kind": "kit",
+  "provides_kit": "barkit",
+  "capabilities": { "db_lane": false },
+  "payload_root": "payload",
+  "status": "scaffold"
+}

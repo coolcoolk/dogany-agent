@@ -1,0 +1,2 @@
+PRAGMA user_version = 1;
+CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY);
