@@ -1,0 +1,12 @@
+{
+  "id": "foopack",
+  "kind": "pack",
+  "pack_version": "0.1.0",
+  "contract_version": 1,
+  "requires_framework": ">=1.30.0 <2.0.0",
+  "payload_root": "payload",
+  "status": "draft",
+  "capabilities": {
+    "db_lane": true
+  }
+}
