@@ -1,0 +1,11 @@
+{
+  "id": "okkit",
+  "pack_version": "1.0.0",
+  "contract_version": 1,
+  "requires_framework": ">=1.28.0 <2.0.0",
+  "kind": "kit",
+  "provides_kit": "okkit",
+  "capabilities": { "db_lane": "yes" },
+  "payload_root": "payload",
+  "status": "scaffold"
+}

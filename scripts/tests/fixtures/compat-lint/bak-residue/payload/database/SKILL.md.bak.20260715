@@ -1,0 +1,2 @@
+# FIXTURE: stale backup residue -- should be caught by C4b (DGN-868)
+# This file simulates an editor backup left in the payload at pack time.
