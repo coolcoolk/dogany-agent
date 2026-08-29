@@ -1,0 +1,385 @@
+#!/usr/bin/env python3
+"""Skill-feedback gate: three-mode hook so skill feedback deterministically
+enters a propose-edit loop.
+
+Mode A  --record  (PostToolUse, matcher "Skill"): after a Skill runs, write a
+  marker file <project_root>/.claude/.last-skill.json =
+  {"skill": <name>, "ts": <epoch int>, "session_id": <id>, "injected": 0,
+   "stop_nudged": false}, overwritten each time. Meta skills (skill-creator,
+  memory-search) are NOT recorded: the propose-edit procedure itself invokes
+  them, and stamping them would overwrite the marker mid-feedback-loop with
+  the wrong skill.
+
+  The SAME --record call also appends one line to the skill-usage ledger
+  (~/.dogany/skill-usage/<slug>-<year>.jsonl, one file per instance per
+  year) -- ALL skills, including the ones the marker denylist skips. The
+  denylist is a feedback-loop-only concern (do not clobber the marker
+  mid-loop); the usage ledger has no such conflict and would be skewed by
+  excluding meta skills (memory-search is plausibly the most-used skill).
+  Ledger event = {v, ts, skill, slug, actor, session_id, source}. NEVER the
+  tool_input args -- those can carry full task text (privacy gate). Append
+  is its own try/except so a ledger failure never affects the marker write
+  or the denylist-skip return. See routines/skill-usage.py for the reader.
+
+Mode B  --inject  (UserPromptSubmit): read the marker; if it is missing,
+  corrupt, stale (older than the window, default 1800s, env override
+  DOGANY_SKILL_FEEDBACK_WINDOW), from another session (cron / subagent
+  poisoning guard), or already injected MAX_INJECTIONS times, exit silently
+  with no output. Otherwise emit an additionalContext note (same JSON/stdout
+  format as the memory recall hook) reminding the model to run the
+  propose-edit loop IF the current message is feedback about that skill;
+  semantic judgment stays with the model. Each injection increments the
+  marker's counter so the note appears at most MAX_INJECTIONS times per
+  skill run instead of on every message in the window.
+
+Mode C  --stop  (Stop): proactive propose-at-completion. v1 is reactive (only
+  fires when the user sends feedback). v2 closes the gap where the model works
+  around a skill's missing step mid-task and never offers to fold the fix back
+  in. On Stop, if a skill ran THIS session and the marker is fresh (separate,
+  wider STOP window -- a task legitimately runs long after the skill fires),
+  BLOCK the stop ONCE with a reason telling the model to self-check for
+  deviation and, if it deviated, propose a skill update now (approval-gated,
+  same v1 rules). The block fires at most once per marker (stop_nudged flag),
+  and never when stop_hook_active is already true (Claude Code's native
+  loop guard). Any second Stop passes through unconditionally.
+
+Fail-open contract (mirrors token-gate.py / card-followup.py): ANY exception
+exits 0 with no output. The hook must never block or materially delay a turn.
+The one deliberate exception is --stop, which emits a single {"decision":
+"block"} at most once per marker; every failure path there still allows.
+"""
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+try:
+    from conf_reader import conf_get
+except Exception:
+    def conf_get(key, conf_path=None):
+        return ""
+
+MARKER_REL = os.path.join(".claude", ".last-skill.json")
+USAGE_DIR_NAME = "skill-usage"
+USAGE_SCHEMA_V = 1
+DEFAULT_WINDOW_SEC = 1800
+# Stop nudge uses a wider window: a task can legitimately run long after the
+# skill fired within the same session, and the session guard already prevents
+# cross-session poisoning. Env override DOGANY_SKILL_STOP_WINDOW.
+DEFAULT_STOP_WINDOW_SEC = 10800
+MAX_INJECTIONS = 2
+MAX_SKILL_NAME = 100
+
+# Meta skills invoked BY the propose-edit procedure (or routinely before
+# answering). Recording them would clobber the marker mid-loop (grill M2).
+RECORD_DENYLIST = {
+    "skill-creator",
+    "dogany-skill-creator",
+    "memory-search",
+    "dogany-memory-search",
+}
+
+
+def _window_sec():
+    try:
+        v = int(os.environ.get("DOGANY_SKILL_FEEDBACK_WINDOW", ""))
+        if v > 0:
+            return v
+    except Exception:
+        pass
+    return DEFAULT_WINDOW_SEC
+
+
+def _stop_window_sec():
+    try:
+        v = int(os.environ.get("DOGANY_SKILL_STOP_WINDOW", ""))
+        if v > 0:
+            return v
+    except Exception:
+        pass
+    return DEFAULT_STOP_WINDOW_SEC
+
+
+def _marker_path(cwd):
+    return os.path.join(cwd or os.getcwd(), MARKER_REL)
+
+
+def _write_marker(path, payload):
+    """Atomic write: temp file + os.replace, so readers never see a torn file."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _usage_slug(cwd):
+    """Instance slug for the ledger filename: env DOGANY_SLUG override ->
+    config/agent.conf SLUG= (resolved against the tool call's own cwd, not
+    this script's location -- a hook can run against any instance) -> the
+    neutral fallback "unknown" (template ships no SLUG= by design, see
+    config/agent.conf comments)."""
+    override = os.environ.get("DOGANY_SLUG")
+    if override:
+        return override
+    conf_path = os.path.join(cwd or os.getcwd(), "config", "agent.conf")
+    return conf_get("SLUG", conf_path) or "unknown"
+
+
+def _append_usage(skill, data, source="hook"):
+    """Append one skill-usage ledger line. Fail-open (own try/except): a
+    ledger write must never affect the marker write or block the turn.
+    Name + timestamp only -- tool_input/args are NEVER read here."""
+    try:
+        home = os.environ.get("DOGANY_HOME") or os.path.expanduser("~/.dogany")
+        usage_dir = os.path.join(home, USAGE_DIR_NAME)
+        os.makedirs(usage_dir, exist_ok=True)
+        cwd = data.get("cwd") or os.getcwd()
+        slug = _usage_slug(cwd)
+        ts = int(time.time())
+        record = {
+            "v": USAGE_SCHEMA_V,
+            "ts": ts,
+            "skill": skill,
+            "slug": slug,
+            "actor": os.environ.get("DOGANY_ACTOR", "unknown"),
+            "session_id": data.get("session_id") or "",
+            "source": source,
+        }
+        year = time.strftime("%Y", time.gmtime(ts))
+        path = os.path.join(usage_dir, "{}-{}.jsonl".format(slug, year))
+        # Single write, O_APPEND-opened file -> effectively atomic across
+        # concurrent writers (same contract note as the design skeleton).
+        with open(path, "a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def _record(data):
+    """PostToolUse (matcher Skill): stamp the marker with skill name + epoch."""
+    if data.get("hook_event_name") not in (None, "PostToolUse"):
+        return
+    if data.get("tool_name") != "Skill":
+        return
+
+    tool_input = data.get("tool_input") or {}
+    skill = tool_input.get("skill") or ""
+    if not isinstance(skill, str) or not skill.strip():
+        return
+    skill = skill.strip()[:MAX_SKILL_NAME]
+
+    # Usage ledger: ALL skills, denylist does not apply (design report --
+    # the denylist is a feedback-loop-only concern, not a usage-accounting
+    # one; excluding meta skills would skew the ledger, memory-search is
+    # plausibly the single most-used skill).
+    _append_usage(skill, data)
+
+    if skill in RECORD_DENYLIST:
+        return
+
+    cwd = data.get("cwd") or os.getcwd()
+    path = _marker_path(cwd)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        pass
+    payload = {
+        "skill": skill,
+        "ts": int(time.time()),
+        "session_id": data.get("session_id") or "",
+        "injected": 0,
+        "stop_nudged": False,
+    }
+    _write_marker(path, payload)
+
+
+NOTE = (
+    "[skill-feedback gate] Skill '{skill}' ran {mins} min ago. If the user's "
+    "current message is feedback on that skill's behavior (complaint, "
+    "correction, improvement request): do NOT hot-patch or silently adjust; "
+    "(1) propose a concrete skill edit and wait for approval; (2) read the "
+    "skill-creator skill (dogany-skill-creator in product instances) before "
+    "editing; (3) edit, verify, then log one line to memory. If it is a "
+    "dogany-* framework skill OR a bundled lifekit skill (diet-log, "
+    "workout-log, appointment-log, relationship, task-update), do not edit it "
+    "in place: copy it under a new non-framework name, edit the copy, and "
+    "note the improvement as an upstream product suggestion. If the root "
+    "cause is in service/product code (bridge, runtime, memory engine, "
+    "lifekit core), do not edit locally: say so and draft a product issue "
+    "report. If this message is not feedback about the skill, ignore this "
+    "note silently."
+)
+
+STOP_REASON = (
+    "[skill-feedback gate] Skill '{skill}' ran this session. Before you "
+    "finish: did the flow deviate from, work around, or manually supplement "
+    "that skill's documented procedure (e.g. you did a step the skill omits, "
+    "or fixed the skill's output by hand)? If YES -> propose the concrete "
+    "skill update to the user NOW, approval-gated: state the exact edit, wait "
+    "for approval, read the skill-creator skill (dogany-skill-creator in "
+    "product instances) before editing. If it is a dogany-* framework skill "
+    "OR a bundled lifekit skill (diet-log, workout-log, appointment-log, "
+    "relationship, task-update), do NOT edit in place -- note it as an "
+    "upstream product suggestion instead. If root cause is in service/product "
+    "code (bridge, runtime, memory engine, lifekit core), draft a product "
+    "issue report rather than editing locally. If there was NO deviation, "
+    "just finish normally -- this check will not fire again this turn."
+)
+
+
+def _inject(data):
+    """UserPromptSubmit: emit the note if the marker is fresh, else silent."""
+    cwd = data.get("cwd") or os.getcwd()
+    path = _marker_path(cwd)
+    try:
+        with open(path, "r") as fh:
+            marker = json.load(fh)
+    except Exception:
+        return  # missing / corrupt -> silent
+
+    if not isinstance(marker, dict):
+        return
+    skill = marker.get("skill")
+    ts = marker.get("ts")
+    if not isinstance(skill, str) or not skill.strip():
+        return
+    try:
+        ts = int(ts)
+    except Exception:
+        return
+
+    age = int(time.time()) - ts
+    if age < 0 or age > _window_sec():
+        return  # stale -> silent
+
+    # Session guard (grill M3): only inject into the session that ran the
+    # skill. Kills cron-headless and subagent marker poisoning.
+    marker_sid = marker.get("session_id") or ""
+    my_sid = data.get("session_id") or ""
+    if not marker_sid or not my_sid or marker_sid != my_sid:
+        return
+
+    # Injection cap (grill M1): at most MAX_INJECTIONS notes per skill run.
+    try:
+        injected = int(marker.get("injected", 0))
+    except Exception:
+        injected = 0
+    if injected >= MAX_INJECTIONS:
+        return
+    marker["injected"] = injected + 1
+    _write_marker(path, marker)
+
+    mins = max(0, age // 60)
+    out = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": NOTE.format(
+                skill=skill.strip()[:MAX_SKILL_NAME], mins=mins
+            ),
+        }
+    }
+    print(json.dumps(out), flush=True)
+
+
+def _stop(data):
+    """Stop: proactively nudge a propose-at-completion, at most ONCE per marker.
+
+    Anti-loop, two independent belts:
+      1. Claude Code's native stop_hook_active flag -- if a prior Stop hook
+         already blocked this turn, it is true; we pass through immediately.
+      2. Our own stop_nudged marker flag -- set the first time we block, so a
+         later Stop event (even a fresh turn, or after stop_hook_active clears)
+         never blocks on the same marker again.
+    Every other path (missing/corrupt/stale marker, wrong session, no skill)
+    allows the stop with no output.
+    """
+    # Belt 1: never block if a Stop hook already ran this turn.
+    if data.get("stop_hook_active") is True:
+        return
+
+    cwd = data.get("cwd") or os.getcwd()
+    path = _marker_path(cwd)
+    try:
+        with open(path, "r") as fh:
+            marker = json.load(fh)
+    except Exception:
+        return  # missing / corrupt -> allow
+
+    if not isinstance(marker, dict):
+        return
+    skill = marker.get("skill")
+    ts = marker.get("ts")
+    if not isinstance(skill, str) or not skill.strip():
+        return
+    try:
+        ts = int(ts)
+    except Exception:
+        return
+
+    # Belt 2: already nudged for this marker -> allow unconditionally.
+    if marker.get("stop_nudged") is True:
+        return
+
+    age = int(time.time()) - ts
+    if age < 0 or age > _stop_window_sec():
+        return  # stale -> allow
+
+    # Session guard: only nudge the session that ran the skill. A marker from
+    # a different session (cron / subagent / earlier session) must not block.
+    marker_sid = marker.get("session_id") or ""
+    my_sid = data.get("session_id") or ""
+    if not marker_sid or not my_sid or marker_sid != my_sid:
+        return
+
+    # Mark fired BEFORE emitting the block, so a torn write still fails safe
+    # (worst case: we did not block, never: we block twice).
+    marker["stop_nudged"] = True
+    _write_marker(path, marker)
+
+    out = {
+        "decision": "block",
+        "reason": STOP_REASON.format(skill=skill.strip()[:MAX_SKILL_NAME]),
+    }
+    print(json.dumps(out), flush=True)
+
+
+def main():
+    try:
+        mode = ""
+        for arg in sys.argv[1:]:
+            if arg in ("--record", "--inject", "--stop"):
+                mode = arg
+        if not mode:
+            sys.exit(0)  # no explicit mode -> no-op (wiring-typo guard)
+        try:
+            data = json.load(sys.stdin)
+        except Exception:
+            sys.exit(0)  # fail open: bad input -> silent no-op
+        if not isinstance(data, dict):
+            sys.exit(0)
+
+        if mode == "--record":
+            _record(data)
+        elif mode == "--stop":
+            _stop(data)
+        else:
+            _inject(data)
+        sys.exit(0)
+    except SystemExit:
+        raise
+    except BaseException:
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,829 @@
+#!/usr/bin/env bash
+# mint.sh -- instantiate a STANDALONE dogany-agent from this repo.
+#
+# The repo mirrors dogany-project's layout: the per-agent template lives at
+# agents/.template, shared code is hoisted to rules/ + skills/ + database/ +
+# service/, and agents/.template references the shared bits via symlinks
+# (RULES.md -> ../../rules/RULES.md ; .claude/skills/<fw> -> ../../../../skills/<fw>).
+#
+# A minted instance is SELF-CONTAINED: the target dir is itself PROJECT_ROOT and
+# carries real copies (never symlinks) of everything it needs -- rules, framework
+# skills, service surface -- so it runs with no parent-tree paths.
+# mint.sh therefore copies from agents/.template while DEREFERENCING the shared
+# symlinks (-L), and additionally bundles rules/ + service/ into the instance.
+#
+# LIFEKIT EXTRACTION (DGN-803 LS-5): lifekit content (database/lifekit.py,
+# schema.sql, migrations, bundle skills/routines, service/lifekit facade) is
+# NOT part of the framework anymore -- it ships as the independent lifekit
+# pack (repo dogany-lifekit) and lands at KIT ACTIVATION via
+# scripts/pack/pack_install.sh (kind=kit path), which also initializes
+# lifekit.db from the payload schema. A fresh mint completes with NO lifekit
+# files and NO lifekit.db -- that is the NORMAL state of a non-lifekit mint.
+#
+# Placeholders substituted (the ONLY six the framework uses):
+#   __PROJECT_ROOT__   absolute instance root  = the target dir itself
+#   __AGENT_NAME__     launchd Label slug + filenames
+#   __AGENT_LABEL__    assistant speaker label
+#   __USER_LABEL__     user honorific
+#   __HOME__           OS user home (for PATH / HOME / ~/.claude)
+#   __AGENT_LANG__     working language (en default; from install --lang)
+#
+# This script GENERATES files + builds the bridge venv only. It does NOT load
+# launchd plists and does NOT start the bridge (live ops requiring approval).
+set -euo pipefail
+
+# Repo root = parent of this scripts/ dir. Path-independent: derived from the
+# script location, never a hardcoded or parent-tree assumption.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMPLATE="$REPO_ROOT/agents/.template"
+
+usage() {
+  cat <<USAGE
+mint.sh -- instantiate a standalone dogany-agent
+
+  Usage: mint.sh --root <target-dir> [options]
+
+  Secrets (environment variables ONLY -- argv is visible in ps):
+    DOGANY_BOT_TOKEN   Telegram bot token for .env (wins over --token)
+    (email uses Google OAuth in agent onboarding -- no app password, DGN-268 S4)
+
+  Options:
+    --root  <path>    instance dir (becomes PROJECT_ROOT). REQUIRED (except --print-env).
+    --name   <text>    agent name / launchd slug        (default: basename of --root)
+    --label  <text>    assistant speaker label          (default: <name>)
+    --user   <text>    user honorific label             (default: you)
+    --prefix <text>    notify prefix emoji/tag          (default: [agent])
+    --lang   <en|ko>   working language + .env LOCALE   (default: en)
+    --token <token>   DEPRECATED bot-token fallback; prefer DOGANY_BOT_TOKEN
+    --owner-id <ids>  ALLOWED_USER_IDS for .env         (default: empty = claim mode)
+    --tz <tz>         IANA timezone for .env; empty = TZ line omitted
+    --email <addr>    outbound email address for .env   (default: empty = not connected)
+    --email-cc <addr> CC address for outbound email     (default: empty)
+    --whisper <model> faster-whisper model for .env     (default: empty = line omitted)
+    --models <list>   bridge model whitelist, comma-sep (default: empty = line omitted)
+    --print-env       render the .env body to stdout and exit (no --root, no writes)
+    --env-overwrite   overwrite an existing .env atomically (install reconfigure only)
+    --no-venv         skip building the bridge venv
+    --core-only       build venv with core deps only (skip faster-whisper/voice)
+    --force           allow minting into an existing non-empty dir
+    -h, --help        this help
+
+  Example:
+    mint.sh --root /tmp/dga-inst --name testagent --core-only
+USAGE
+}
+
+TARGET=""
+AGENT_NAME=""
+AGENT_LABEL=""
+USER_LABEL="you"
+AGENT_PREFIX="[agent]"
+AGENT_LANG="en"
+# The bot token (DOGANY_BOT_TOKEN) comes from the environment only; it is never
+# stored as a script-level variable to avoid any accidental echo. Email uses
+# Google OAuth (DGN-268 S4) -- no email secret passes through mint.
+BUILD_VENV=1
+CORE_ONLY=0
+FORCE=0
+OWNER_IDS=""           # --owner-id
+AGENT_TZ=""            # --tz
+EMAIL_ADDR=""          # --email
+EMAIL_CC_ADDR=""       # --email-cc
+WHISPER_MODEL=""       # --whisper
+BRIDGE_MODELS_ENV=""   # --models
+PRINT_ENV=0            # --print-env
+ENV_OVERWRITE=0        # --env-overwrite
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --root)         TARGET="$2"; shift 2 ;;
+    --name)         AGENT_NAME="$2"; shift 2 ;;
+    --label)        AGENT_LABEL="$2"; shift 2 ;;
+    --user)         USER_LABEL="$2"; shift 2 ;;
+    --prefix)       AGENT_PREFIX="$2"; shift 2 ;;
+    --lang)         AGENT_LANG="$2"; shift 2 ;;
+    --token)
+      # DEPRECATED fallback: use the DOGANY_BOT_TOKEN env var instead (argv is
+      # visible in ps). The env var WINS when both are set (env-first contract).
+      if [ -z "${DOGANY_BOT_TOKEN:-}" ]; then DOGANY_BOT_TOKEN="$2"; fi
+      shift 2 ;;
+    --owner-id)     OWNER_IDS="$2"; shift 2 ;;
+    --tz)           AGENT_TZ="$2"; shift 2 ;;
+    --email)        EMAIL_ADDR="$2"; shift 2 ;;
+    --email-cc)     EMAIL_CC_ADDR="$2"; shift 2 ;;
+    --whisper)      WHISPER_MODEL="$2"; shift 2 ;;
+    --models)       BRIDGE_MODELS_ENV="$2"; shift 2 ;;
+    --print-env)    PRINT_ENV=1; shift ;;
+    --env-overwrite) ENV_OVERWRITE=1; shift ;;
+    --no-venv)      BUILD_VENV=0; shift ;;
+    --core-only)    CORE_ONLY=1; shift ;;
+    --force)        FORCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+# env_render -- the SINGLE .env generator (install.sh passes values, never
+# renders). Emits the exact key names bridge/config.py reads. Reads the bot
+# token from environment (DOGANY_BOT_TOKEN -- set by caller, never argv).
+# Conditional lines: TZ only when a tz was given; BRIDGE_MODELS /
+# LOCAL_WHISPER_MODEL only when set so config.py defaults apply. LOCALE is
+# ALWAYS emitted. No [mint] banner lines on stdout. Email sends via Google
+# OAuth (DGN-268 S4) -- no app password / SMTP keys are written.
+env_render() {
+  printf '# Dogany bridge configuration -- generated by dogany mint\n'
+  printf '# Do NOT commit this file (contains your bot token).\n\n'
+  printf 'TELEGRAM_BOT_TOKEN=%s\n' "${DOGANY_BOT_TOKEN:-}"
+  printf '# Born-locked: when set, this list is authoritative and claim mode is off.\n'
+  printf 'ALLOWED_USER_IDS=%s\n' "${OWNER_IDS}"
+  printf 'LOCALE=%s\n' "${AGENT_LANG}"
+  # TZ line is omitted entirely when no tz was given (absent != empty).
+  if [ -n "${AGENT_TZ}" ]; then
+    printf 'TZ=%s\n' "${AGENT_TZ}"
+  fi
+  printf '# Extra path-guard roots (os.pathsep-separated). Empty for the product.\n'
+  printf 'EXTRA_ALLOWED_ROOTS=\n'
+  # DGN-167: bridge model whitelist derived from config/agent.conf PLAN= (DGN-590).
+  # max plan -> fable,opus,sonnet,haiku (DGN-346); non-max (Pro) -> opus,sonnet,haiku (DGN-565). Controls /model picker.
+  if [ -n "${BRIDGE_MODELS_ENV}" ]; then
+    printf '# --- Bridge model whitelist (controls /model picker). Set by installer.\n'
+    printf 'BRIDGE_MODELS=%s\n' "${BRIDGE_MODELS_ENV}"
+  fi
+  # DGN-146: voice model chosen at the deps step. Only emitted when voice is
+  # enabled; skip leaves it out so config.py's "small" default applies.
+  if [ -n "${WHISPER_MODEL}" ]; then
+    printf '# --- Voice input (faster-whisper). Model chosen during install.\n'
+    printf 'LOCAL_WHISPER_MODEL=%s\n' "${WHISPER_MODEL}"
+  fi
+  printf '# --- Email (dogany-mailer). Sent via your connected Google account\n'
+  printf '# (gws gmail, one OAuth login covering calendar + tasks + gmail.send;\n'
+  printf '# connected in agent onboarding). No app password / SMTP keys here.\n'
+  printf '# EMAIL_ADDRESS: optional From hint. EMAIL_CC: owner auto-CC on sends.\n'
+  printf 'EMAIL_ADDRESS=%s\n' "${EMAIL_ADDR}"
+  printf 'EMAIL_CC=%s\n' "${EMAIL_CC_ADDR}"
+}
+
+# --print-env: render the .env body to stdout and exit -- handled FIRST,
+# before the --root guard, before any mkdir, and before any [mint] banner
+# echo. stdout must stay byte-clean env content (callers redirect it to a
+# file); everything else this script prints goes to stdout only AFTER this
+# early exit, so a --print-env run can never pollute the render.
+if [ "$PRINT_ENV" = "1" ]; then
+  env_render
+  exit 0
+fi
+
+[ -n "$TARGET" ] || { echo "ERROR: --root <target-dir> is required" >&2; usage; exit 1; }
+
+# Resolve target to an absolute path (may not exist yet).
+mkdir -p "$TARGET"
+PROJECT_ROOT="$(cd "$TARGET" && pwd)"
+[ -n "$AGENT_NAME" ]  || AGENT_NAME="$(basename "$PROJECT_ROOT")"
+[ -n "$AGENT_LABEL" ] || AGENT_LABEL="$AGENT_NAME"
+[ -n "$AGENT_LANG" ]  || AGENT_LANG="en"
+HOME_DIR="$HOME"
+
+# Guard: refuse to mint into a non-empty dir unless --force.
+if [ -n "$(ls -A "$PROJECT_ROOT" 2>/dev/null)" ] && [ "$FORCE" != "1" ]; then
+  echo "ERROR: target not empty: $PROJECT_ROOT (use --force to overwrite)" >&2; exit 1
+fi
+# Guard: never mint onto the repo itself.
+if [ "$PROJECT_ROOT" = "$REPO_ROOT" ]; then
+  echo "ERROR: refusing to mint onto the repo root itself: $REPO_ROOT" >&2; exit 1
+fi
+# Guard: template must exist.
+[ -d "$TEMPLATE" ] || { echo "ERROR: template not found: $TEMPLATE" >&2; exit 1; }
+
+echo "[mint] repo       = $REPO_ROOT"
+echo "[mint] agent      = $AGENT_NAME"
+echo "[mint] root       = $PROJECT_ROOT"
+echo "[mint] label      = $AGENT_LABEL   user = $USER_LABEL   lang = $AGENT_LANG"
+echo "[mint] home       = $HOME_DIR"
+echo "[mint] build venv = $BUILD_VENV   core-only = $CORE_ONLY"
+
+# 1) copy agents/.template -> target, DEREFERENCING symlinks (-L) so the shared
+#    RULES.md + framework skills land as real files in the self-contained instance.
+#    Excludes VCS / runtime / build cruft.
+#
+#    config/agent.conf + config/secret-patterns.conf are EXCLUDED here and
+#    copied write-if-absent below (same contract as .env): a re-mint with
+#    --force must never reset the user's language/address settings or
+#    owner-identity sweep patterns already customized after onboarding.
+#    config/lifekit.conf left the template with the lifekit pack (DGN-803
+#    LS-5); the kit install merges it in and install.sh seeds the LIFEKIT=
+#    lifecycle key on its own (conf helpers create the file when absent).
+#
+#    CONSTRAINT (bundle dormancy): bundle skills live as REAL dirs in
+#    .claude/skills-bundle/ (framework members ship in the template; kit
+#    members arrive via pack_install) and are activated by an instance-local
+#    symlink .claude/skills/<id> -> ../skills-bundle/<id>, created ONLY
+#    post-mint by the dogany-lifekit-setup skill. NEVER pre-place such
+#    symlinks in the template: rsync -aL would dereference them into
+#    permanent real dirs and break the off-toggle. Instance-created symlinks
+#    survive a re-mint because this rsync has no --delete and the template
+#    has no such paths.
+# DGN-808 (defect2 hardening): refuse to mint if the template tree contains a
+# .dogany-private-backup marker anywhere in its subtree. A marker in the
+# template would propagate into every minted instance and auto-exempt them from
+# owner-PII sweep -- a framework-wide hole. Fail-closed: abort the mint.
+if find "$TEMPLATE" -name '.dogany-private-backup' -print -quit 2>/dev/null | grep -q .; then
+  echo "[mint] FATAL: template tree contains .dogany-private-backup -- this marker" >&2
+  echo "  must never be present in the template (DGN-808). Remove it first." >&2
+  exit 1
+fi
+
+# DGN-1141 stage 6: CONSTITUTION.md / CONTRACT.md / RULES.md are excluded. The template
+# still SHIPS them (as symlinks into repo rules/) because update.sh section 3k6
+# needs a source for instances that have not been relaid out yet -- but a fresh
+# mint lands directly in the 2.0 layout, where those two files were merged into
+# rules/hot.framework.md. Copying them would put two disagreeing copies of the
+# constitution on a brand-new instance and make update.sh's section 3k8 retire
+# them on the very first self-update (migration residue on a tree that never
+# migrated).
+#
+# RULES.md is the SAME argument one file further (DGN-1141 stage 8, M11
+# MAJOR-2). It is the v1 constitution, superseded by rules/hot.framework.md,
+# and update.sh's stated reason for keeping it -- "a PRE-2.0 instance keeps its
+# real RULES.md v1 file ... rollback stays a one-liner" -- does not reach a
+# tree that was never pre-2.0. On a fresh mint it is the largest of the three:
+# 7.8K of routing rules naming USER.md / AGENT.md, files this layout does not
+# have, sitting in the tree an agent greps. Outside the loader chain, so not
+# hot pollution -- just a second, disagreeing constitution. Section 3k in
+# update.sh is presence-gated for the same reason, so it stays absent.
+rsync -aL \
+  --exclude '.git' \
+  --exclude '/CONSTITUTION.md' \
+  --exclude '/CONTRACT.md' \
+  --exclude '/RULES.md' \
+  --exclude '/AGENT.md' \
+  --exclude '/PROFILE.md' \
+  --exclude '/DISCIPLINE.md' \
+  --exclude '/USER.md' \
+  --exclude '/rules/hot.custom.md' \
+  --exclude '/identity/hot.custom.agent.md' \
+  --exclude '/identity/hot.custom.owner.md' \
+  --exclude 'bridge/venv' \
+  --exclude 'venv' \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  --exclude '*.bak.*' \
+  --exclude '.DS_Store' \
+  --exclude 'memory-engine/state.db' \
+  --exclude '*.db' \
+  --exclude 'config/agent.conf' \
+  --exclude 'config/secret-patterns.conf' \
+  "$TEMPLATE/" "$PROJECT_ROOT/"
+
+# 1a) identity markdown: keep-if-present (re-mint must NEVER reset an agent's
+#     identity -- Role, name, accreted Workflows). Three layouts are accepted,
+#     newest first, and the loop below scaffolds ONLY the newest one:
+#       identity/hot.custom.agent.md  2.0 LAYOUT (DGN-1141 stage 6) -- the one
+#                                     the template ships and mint creates
+#       PROFILE.md                    2.0 flat root (DGN-773 T3) -- kept when
+#                                     present, never manufactured
+#       AGENT.md                      pre-2.0 -- kept when present, ditto
+#     identity/hot.custom.owner.md holds user facts (was USER.md pre-relayout).
+#     rules/hot.custom.md is the instance's own discipline overlay (was
+#     DISCIPLINE.md). It IS scaffolded, in section 1a2 below -- the hub chains
+#     it unconditionally as of DGN-1141 stage 8, so an unseeded overlay makes
+#     "MISSING" the normal loader verdict and destroys the signal. update.sh's
+#     relayout still overrides the seed with a locally-edited DISCIPLINE.md
+#     when one exists. Every one of these names is excluded from the rsync
+#     above, so a re-mint --force cannot reset them.
+#
+#     COPY FLAG IS LATCHED: "cp -Pp", never "cp -p" (DGN-773 안 C). The
+#     template used to ship AGENT.md/PROFILE.md/USER.md as compat SYMLINKS,
+#     and "cp -p" DEREFERENCES a link, laying down a second REAL file -- which
+#     is exactly onboarding-check.py resolve_persona_md()'s collision
+#     condition and lock-spec R5's pack_install preflight die condition, i.e.
+#     every new mint would be born broken. DGN-1141 stage 6 retired those
+#     three template symlinks (identity/ files are real files now), so nothing
+#     in the loop dereferences today -- the flag stays latched anyway because
+#     "-P" is no-dereference on BSD *and* GNU and the next compat link would
+#     silently reintroduce the defect. Do NOT "fix" this to "cp -Rp" (GNU
+#     coreutils does not make -R imply -P). Regression cover: T3 selftest [3g].
+#
+#     DISCIPLINE.md stays in the exclude list (DGN-773 T3, gap found at
+#     T2-consistency review): the file is retired from the template, but a
+#     pre-relayout instance still carries a locally-edited one and a re-mint
+#     --force must not touch it before update.sh migrates it.
+for idmd in identity/hot.custom.agent.md identity/hot.custom.owner.md; do
+  # DGN-773 remint guard: a pre-2.0 instance carries identity in a REAL
+  # (non-symlink) AGENT.md and has no PROFILE.md yet -- that is "not migrated",
+  # not "brand new". Scaffolding an empty identity file here would outrank the
+  # real AGENT.md in resolve_persona_md() and re-trigger onboarding on a
+  # fully-configured agent. Leave the ambiguity for update.sh step M/N to
+  # resolve instead of manufacturing it here.
+  if [ "$idmd" = "identity/hot.custom.agent.md" ] \
+     && [ ! -f "$PROJECT_ROOT/PROFILE.md" ] \
+     && [ -f "$PROJECT_ROOT/AGENT.md" ] && [ ! -L "$PROJECT_ROOT/AGENT.md" ]; then
+    echo "[mint] $idmd absent, AGENT.md is a real file -> pre-2.0 instance, skip scaffold (update migrates)"
+    continue
+  fi
+  # Same manufacturing-ambiguity guard one layer up (DGN-1141): a pre-relayout
+  # 2.0 instance carries its live persona / user facts in a REAL root
+  # PROFILE.md / USER.md. Laying down an identity/ scaffold next to it would
+  # outrank the real file in resolve_persona_md() and re-trigger onboarding on
+  # a configured agent. Leave it for the update.sh relayout (step N).
+  if [ "$idmd" = "identity/hot.custom.agent.md" ] \
+     && [ -f "$PROJECT_ROOT/PROFILE.md" ] && [ ! -L "$PROJECT_ROOT/PROFILE.md" ]; then
+    echo "[mint] real root PROFILE.md present -> pre-relayout instance, skip identity/ scaffold (update migrates)"
+    continue
+  fi
+  if [ "$idmd" = "identity/hot.custom.owner.md" ] \
+     && [ -f "$PROJECT_ROOT/USER.md" ] && [ ! -L "$PROJECT_ROOT/USER.md" ]; then
+    echo "[mint] real root USER.md present -> pre-relayout instance, skip identity/ scaffold (update migrates)"
+    continue
+  fi
+  if [ ! -f "$PROJECT_ROOT/$idmd" ] && [ -f "$TEMPLATE/$idmd" ]; then
+    mkdir -p "$PROJECT_ROOT/$(dirname "$idmd")"
+    cp -Pp "$TEMPLATE/$idmd" "$PROJECT_ROOT/$idmd"
+    echo "[mint] wrote $idmd (scaffold)"
+  elif [ -f "$PROJECT_ROOT/$idmd" ]; then
+    echo "[mint] $idmd exists -> keep (identity preserved)"
+  fi
+done
+
+# 1a2) the instance-owned operating-gate overlay. Excluded from the rsync above
+#     (a re-mint must never reset it) and scaffolded here instead, exactly like
+#     the identity pair. agents/.template/AGENTS.md chains @rules/hot.custom.md
+#     unconditionally, so seeding it is what keeps a MISSING verdict from the
+#     loader hook meaningful: without the seed every no-divergence instance
+#     would report a permanent MISSING and a real one would look identical
+#     (DGN-1141 stage 8, M11 FATAL-1). This reverses section 3.4's "never
+#     pre-create an empty overlay", which was decided while the overlay was
+#     outside the loader chain.
+#
+#     NOT scaffolded on a pre-relayout tree: a real root DISCIPLINE.md is the
+#     live overlay content and update.sh step N moves it into this exact path.
+#     Manufacturing an empty file here would make that move hit its
+#     "both exist -- move deferred" branch and strand the owner's local gates
+#     at the root forever. Same manufacturing-ambiguity rule as the identity
+#     scaffolds above.
+if [ ! -f "$PROJECT_ROOT/rules/hot.custom.md" ] && [ -f "$TEMPLATE/rules/hot.custom.md" ]; then
+  if [ -f "$PROJECT_ROOT/DISCIPLINE.md" ] && [ ! -L "$PROJECT_ROOT/DISCIPLINE.md" ]; then
+    echo "[mint] real root DISCIPLINE.md present -> pre-relayout instance, skip overlay scaffold (update migrates)"
+  else
+    mkdir -p "$PROJECT_ROOT/rules"
+    cp -Pp "$TEMPLATE/rules/hot.custom.md" "$PROJECT_ROOT/rules/hot.custom.md"
+    echo "[mint] wrote rules/hot.custom.md (empty overlay scaffold)"
+  fi
+elif [ -f "$PROJECT_ROOT/rules/hot.custom.md" ]; then
+  echo "[mint] rules/hot.custom.md exists -> keep (instance-owned)"
+fi
+
+# 1b) per-instance conf state: scaffold only if absent (idempotent re-mint).
+#     lifekit.conf is no longer scaffolded here: it moved to the lifekit pack
+#     payload (DGN-803 LS-5) and is merge-key installed at kit activation.
+for conf in agent.conf secret-patterns.conf; do
+  if [ ! -f "$PROJECT_ROOT/config/$conf" ] && [ -f "$TEMPLATE/config/$conf" ]; then
+    mkdir -p "$PROJECT_ROOT/config"
+    cp -p "$TEMPLATE/config/$conf" "$PROJECT_ROOT/config/$conf"
+    if [ "$conf" = "agent.conf" ]; then
+      # keep conf in lockstep with --lang (template default is literal 'en')
+      sed -i.tmp "s/^AGENT_LANG=.*/AGENT_LANG=${AGENT_LANG}/" "$PROJECT_ROOT/config/$conf" \
+        && rm -f "$PROJECT_ROOT/config/$conf.tmp"
+    fi
+    echo "[mint] wrote config/$conf (scaffold)"
+  elif [ -f "$PROJECT_ROOT/config/$conf" ]; then
+    echo "[mint] config/$conf exists -> keep (idempotent)"
+  fi
+done
+
+# 1c) bundle the hoisted shared roots the instance needs to be self-contained:
+#     - (USER.md scaffold ships inside the template; RULES.md already dereferenced),
+#     - database/ dir is created EMPTY: lifekit content (schema.sql, lifekit.py,
+#       CLI, selectors) moved to the lifekit pack (DGN-803 LS-5) and lands here
+#       only at kit activation via pack_install.sh. Framework consumers
+#       (backup-data.sh, remind.sh, memory-engine body-state) treat the empty
+#       dir as the NORMAL non-lifekit state (silent no-op).
+#     - service/ surface (service/lifekit/ facade also moved to the pack; what
+#       remains -- e.g. service/mailer -- is framework-owned).
+mkdir -p "$PROJECT_ROOT/database"
+if [ -d "$REPO_ROOT/service" ]; then
+  rsync -aL --exclude '__pycache__' --exclude '*.pyc' "$REPO_ROOT/service/" "$PROJECT_ROOT/service/"
+fi
+
+# 1d) mirror/ engine (DGN-268 S3): the GCal/GTasks mirror lives at repo-root
+#     mirror/ (single canonical home; NOT in the template, to avoid a third
+#     copy). Ship CODE + schema ONLY into the instance so the cron flag-gates
+#     have something to import. NEVER copy state: mirror_state.db holds the
+#     instance's live sync bookkeeping (surface ids / etags / cursors) -- a
+#     re-mint must preserve it, so *.db / *.db.bak* are excluded exactly like
+#     lifekit.db above. Idempotent on re-mint: rsync has no --delete and the
+#     db excludes protect live state, so re-minting only refreshes code.
+if [ -d "$REPO_ROOT/mirror" ]; then
+  rsync -aL \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    --exclude '*.db' \
+    --exclude '*.db-wal' \
+    --exclude '*.db-shm' \
+    --exclude '*.db.bak*' \
+    --exclude '*.bak*' \
+    "$REPO_ROOT/mirror/" "$PROJECT_ROOT/mirror/"
+  echo "[mint] copied mirror/ engine (code + schema; *.db excluded)"
+fi
+
+# Portable in-place sed: BSD (macOS) and GNU (Linux) disagree on `sed -i`'s
+# flavor (BSD requires a mandatory backup-suffix arg, GNU forbids the space).
+# Sidestep the incompatibility entirely: run sed to a temp file, then mv it back.
+# Args: <file> <sed-arg>...  (the sed args are the -e expressions to apply).
+# Preserves LC_ALL=C. GNU-safe by construction (no -i used at all).
+# MODE PRESERVATION: mktemp creates 0600 files, so a bare mv would clobber the
+# target's permissions (exec bits). `cp -p` stamps the original file's mode
+# onto the temp BEFORE the mv; the sed redirect truncates content only.
+sed_inplace() {
+  local f="$1"; shift
+  local tmp
+  tmp="$(mktemp "${f}.sed.XXXXXX")"
+  cp -p "$f" "$tmp"
+  if LC_ALL=C sed "$@" "$f" > "$tmp"; then
+    mv -f "$tmp" "$f"
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+# 2) substitute the six placeholders across text files.
+#    '#' delimiter since values (paths) contain '/'. Tokens are distinct and the
+#    substituted values never reintroduce another token, so order is irrelevant.
+substitute() {
+  local f="$1"
+  sed_inplace "$f" \
+    -e "s#__PROJECT_ROOT__#${PROJECT_ROOT}#g" \
+    -e "s#__AGENT_NAME__#${AGENT_NAME}#g" \
+    -e "s#__AGENT_LABEL__#${AGENT_LABEL}#g" \
+    -e "s#__USER_LABEL__#${USER_LABEL}#g" \
+    -e "s#__AGENT_PREFIX__#${AGENT_PREFIX}#g" \
+    -e "s#__HOME__#${HOME_DIR}#g" \
+    -e "s#__AGENT_LANG__#${AGENT_LANG}#g"
+}
+
+while IFS= read -r -d '' f; do
+  substitute "$f"
+done < <(find "$PROJECT_ROOT" -type f \
+            \( -name '*.py' -o -name '*.sh' -o -name '*.json' -o -name '*.plist' \
+               -o -name '*.service' -o -name '*.timer' \
+               -o -name '*.md' -o -name '*.example' -o -name '*.txt' -o -name '*.conf' \) \
+            -not -path '*/venv/*' -not -path '*/.git/*' -print0)
+
+# 3) rename agent-specific units (Label already substituted; make filenames
+#    carry the agent name for launchd/systemd clarity). Covers macOS plists and
+#    the Linux mirror systemd units (DGN-268 S3 .service/.timer parity).
+for p in "$PROJECT_ROOT"/bridge/*.plist "$PROJECT_ROOT"/routines/*.plist \
+         "$PROJECT_ROOT"/routines/*.service "$PROJECT_ROOT"/routines/*.timer; do
+  [ -e "$p" ] || continue
+  np="${p//telegram-agent/$AGENT_NAME}"
+  [ "$np" != "$p" ] && mv "$p" "$np"
+done
+
+# 3a) plists.defer basename manifest (DGN-227 E1-1): its entries must keep
+#     matching the plist filenames after the rename above, and the file has no
+#     extension so the step-2 render pass does not cover it -- substitute here.
+if [ -f "$PROJECT_ROOT/routines/plists.defer" ]; then
+  sed -i.bak "s/telegram-agent/$AGENT_NAME/g" "$PROJECT_ROOT/routines/plists.defer" \
+    && rm -f "$PROJECT_ROOT/routines/plists.defer.bak"
+fi
+
+# 3b) write an instance manifest so update.sh can re-substitute the same five
+#     placeholders when it refreshes framework files, and record the framework
+#     version this instance was built from. Non-secret; no token/chat id here.
+FW_VERSION="unknown"
+[ -f "$REPO_ROOT/VERSION" ] && FW_VERSION="$(head -n1 "$REPO_ROOT/VERSION" | tr -d '[:space:]')"
+# First-mint date: preserved across re-mints (the instance's birthday, UTC).
+MINTED_AT="$(grep -E '^DOGANY_MINTED_AT=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+MINTED_AT="${MINTED_AT:-$(date -u +%Y-%m-%d)}"
+# Agent prefix: preserved across re-mints (the instance's baked notify prefix).
+# Fresh mint -> the value of --prefix (default [agent]). update.sh reads this
+# field to re-substitute __AGENT_PREFIX__ after a framework refresh.
+SAVED_PREFIX="$(grep -E '^DOGANY_AGENT_PREFIX=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+# --prefix flag wins on a new mint; on re-mint keep the existing baked value
+# unless the operator explicitly passes --prefix again (AGENT_PREFIX != default).
+if [ -n "$SAVED_PREFIX" ] && [ "$AGENT_PREFIX" = "[agent]" ]; then
+  AGENT_PREFIX="$SAVED_PREFIX"
+fi
+# DGN-227 MAJOR-4 (A4/P4): agent class + pack-consumption record are preserved
+# across re-mints (keep-if-present, same contract as MINTED_AT/PREFIX).
+# mint.sh itself does not author these -- install.sh (dgn227_postmint) stamps
+# DOGANY_AGENT_CLASS and pack_install upserts DOGANY_PACKS -- but a re-mint /
+# recover rewrites .instance.conf wholesale, so without this a domain instance
+# would silently reclassify to main (P13 default) and its pack record (which
+# --upgrade version comparison depends on) would be wiped. Re-emit only when a
+# prior value exists so a fresh direct mint keeps its current lean manifest.
+SAVED_CLASS="$(grep -E '^DOGANY_AGENT_CLASS=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+SAVED_PACKS="$(grep -E '^DOGANY_PACKS=' "$PROJECT_ROOT/.instance.conf" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+cat > "$PROJECT_ROOT/.instance.conf" <<MANIFEST
+# .instance.conf -- non-secret instance manifest written by mint.sh.
+# Consumed by update.sh to re-substitute placeholders on framework refresh.
+# Secrets (bot token, chat id) live in .telegram_bot/.env, NEVER here.
+DOGANY_AGENT_NAME=${AGENT_NAME}
+DOGANY_AGENT_LABEL=${AGENT_LABEL}
+DOGANY_USER_LABEL=${USER_LABEL}
+DOGANY_AGENT_PREFIX=${AGENT_PREFIX}
+DOGANY_FW_VERSION=${FW_VERSION}
+DOGANY_REPO_ROOT=${REPO_ROOT}
+DOGANY_MINTED_AT=${MINTED_AT}
+MANIFEST
+# DGN-227 MAJOR-4: append preserved class/pack records only when they existed
+# (keep-if-present). Emitting them conditionally keeps a fresh direct mint's
+# manifest unchanged while a re-mint of a domain / pack-consuming instance
+# retains DOGANY_AGENT_CLASS and DOGANY_PACKS.
+[ -n "$SAVED_CLASS" ] && printf 'DOGANY_AGENT_CLASS=%s\n' "$SAVED_CLASS" >> "$PROJECT_ROOT/.instance.conf"
+[ -n "$SAVED_PACKS" ] && printf 'DOGANY_PACKS=%s\n' "$SAVED_PACKS" >> "$PROJECT_ROOT/.instance.conf"
+echo "[mint] wrote $PROJECT_ROOT/.instance.conf (framework version ${FW_VERSION})"
+
+# 3c) write the dogany-* skills checksum manifest. This records the sha of every
+#     framework skill AS INSTALLED so update.sh can later tell whether the user
+#     hand-edited one and must back it up before a framework refresh overwrites
+#     it. Format: "<skill-name>  <sha>" (must match update.sh's skill_checksum).
+skill_checksum() {
+  local dir="$1"
+  [ -d "$dir" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
+  ( cd "$dir" && \
+    find . -type f ! -name '.DS_Store' -print0 2>/dev/null \
+      | LC_ALL=C sort -z \
+      | xargs -0 shasum 2>/dev/null \
+      | shasum \
+      | awk '{print $1}' )
+}
+SKILLS_MANIFEST="$PROJECT_ROOT/.claude/.dogany-skills.sha"
+if [ -d "$PROJECT_ROOT/.claude/skills" ]; then
+  mkdir -p "$PROJECT_ROOT/.claude"
+  {
+    printf '# .dogany-skills.sha -- checksums of framework dogany-* skills as installed\n'
+    printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
+    printf '# framework refresh overwrites them. Format: "<skill-name>  <sha>".\n'
+    for sd in "$PROJECT_ROOT"/.claude/skills/dogany-*/; do
+      [ -d "$sd" ] || continue
+      sname="$(basename "$sd")"
+      printf '%s  %s\n' "$sname" "$(skill_checksum "$sd")"
+    done
+  } > "$SKILLS_MANIFEST"
+  echo "[mint] wrote $SKILLS_MANIFEST (dogany-* skill checksums)"
+fi
+
+# 3d) write the framework FILE checksum manifest (.dogany-framework.sha) so the
+#     very first self-update does NOT fire a spurious "user-modified" WARN +
+#     backup on a pristine instance (DGN-387). Records the sha of the
+#     framework-owned instance-root files AS THEY LAND ON DISK here at mint:
+#       - playbooks/AGENT-OPS.md : sha of the SUBSTITUTED on-disk file (step 2
+#                        already ran the whole-tree *.md substitution over it).
+#                        Moved out of the instance root by DGN-1141 stage 6 --
+#                        the manifest KEY is the relpath, matching update.sh 3k2.
+#       - RULES.md     : sha of the verbatim-copied RULES.md.
+#     Same digest as update.sh's file_checksum (shasum < file | awk '{print $1}')
+#     and the same 3-line manifest header, so update.sh's 3k/3k2 upserts append
+#     cleanly. MANDATORY: without it every mint starts on update.sh's no-manifest
+#     branch, so any template edit between mint and first self-update would fire
+#     a false backup on a pristine instance.
+fw_file_checksum() {
+  local f="$1"
+  [ -f "$f" ] || { printf '%s\n' "d41d8cd98f00b204e9800998ecf8427e-empty"; return; }
+  shasum < "$f" 2>/dev/null | awk '{print $1}'
+}
+FRAMEWORK_MANIFEST="$PROJECT_ROOT/.claude/.dogany-framework.sha"
+mkdir -p "$PROJECT_ROOT/.claude"
+{
+  printf '# .dogany-framework.sha -- checksums of framework-owned FILES as installed\n'
+  printf '# by dogany-agent (mint.sh / update.sh). Used to detect user edits before a\n'
+  printf '# framework refresh overwrites them. Format: "<relpath>  <sha>".\n'
+  [ -f "$PROJECT_ROOT/playbooks/AGENT-OPS.md" ] && \
+    printf 'playbooks/AGENT-OPS.md  %s\n' "$(fw_file_checksum "$PROJECT_ROOT/playbooks/AGENT-OPS.md")"
+  [ -f "$PROJECT_ROOT/RULES.md" ] && \
+    printf 'RULES.md  %s\n' "$(fw_file_checksum "$PROJECT_ROOT/RULES.md")"
+} > "$FRAMEWORK_MANIFEST"
+echo "[mint] wrote $FRAMEWORK_MANIFEST (framework file checksums)"
+
+# 3e) write the bridge per-file manifest so the very first self-update does NOT
+#     mis-classify pristine bridge code as class-5 bootstrap (DGN-677). Records
+#     the sha of every bridge code file AS IT LANDS ON DISK here (post step-2
+#     substitution + step-3 plist rename). MANDATORY: without it every mint
+#     starts on update.sh's no-manifest branch -> class-5 freeze (the Warg
+#     DGN-677 regression). The find universe filter below is a BYTE-IDENTICAL
+#     copy of update.sh's _bridge_universe filter (update.sh: the "Channel (2)"
+#     find); there is no shared lib between mint.sh and update.sh (verified:
+#     file_checksum / fw_file_checksum / skill_checksum are each re-defined
+#     locally), so the duplication is accepted with THIS warning comment. IF YOU
+#     EDIT ONE FILTER YOU MUST EDIT BOTH -- a divergence re-opens the
+#     missing-entry freeze. digest = fw_file_checksum, byte-identical to
+#     update.sh's file_checksum (shasum < file | awk '{print $1}').
+BRIDGE_MANIFEST="$PROJECT_ROOT/.claude/.dogany-bridge.sha"
+if [ -d "$PROJECT_ROOT/bridge" ]; then
+  mkdir -p "$PROJECT_ROOT/.claude"
+  {
+    printf '# .dogany-bridge.sha -- per-file checksums of bridge/ as last installed\n'
+    printf '# by dogany-agent update.sh (DGN-593). Used for the 3-way per-file\n'
+    printf '# reconcile. Format: "<relpath>  <sha>".\n'
+    ( cd "$PROJECT_ROOT/bridge" && find . -type f \
+        ! -name '.DS_Store' ! -name '*.pyc' ! -name '*.bak.*' \
+        ! -name '*.db' ! -name '.env' \
+        ! -path './.git/*' ! -path './venv/*' ! -path '*/__pycache__/*' \
+        ! -path './runtime/*' ! -path './logs/*' \
+        -print | sed 's|^\./||' | LC_ALL=C sort ) | while IFS= read -r _bf; do
+      [ -n "$_bf" ] || continue
+      printf 'bridge/%s  %s\n' "$_bf" "$(fw_file_checksum "$PROJECT_ROOT/bridge/$_bf")"
+    done
+  } > "$BRIDGE_MANIFEST"
+  echo "[mint] wrote $BRIDGE_MANIFEST (bridge per-file checksums)"
+fi
+
+# 4) write the project .env via env_render (single generator; the shipped
+#    .env.example is documentation only, no longer consumed here).
+#    Write-if-absent: an existing .env is user state and is kept untouched
+#    (all env flags are ignored). --env-overwrite forces an atomic replace
+#    (install.sh's confirmed reconfigure path only -- it backs up first).
+#    Atomicity + permissions: mktemp in the SAME dir, chmod 600 BEFORE any
+#    content lands, then mv -f. The .env is 0600 from the moment it exists
+#    and a mid-write failure never leaves a partial .env behind.
+ENV_DST="$PROJECT_ROOT/.telegram_bot/.env"
+mkdir -p "$PROJECT_ROOT/.telegram_bot"
+if [ -f "$ENV_DST" ] && [ "$ENV_OVERWRITE" != "1" ]; then
+  echo "[mint] env exists -> keep (env flags ignored)"
+else
+  TMP_ENV="$(mktemp "${ENV_DST}.tmp.XXXXXX")"
+  chmod 600 "$TMP_ENV"
+  env_render > "$TMP_ENV"
+  mv -f "$TMP_ENV" "$ENV_DST"
+  echo "[mint] wrote $ENV_DST"
+fi
+mkdir -p "$PROJECT_ROOT/.telegram_bot/logs"
+
+# 5) structured lane (lifekit.db): NOT initialized at mint anymore.
+#    DGN-803 LS-5 (grill G2): the unconditional schema.sql -> lifekit.db init
+#    moved to KIT ACTIVATION time -- scripts/pack/pack_install.sh (kind=kit
+#    path) initializes lifekit.db from the pack payload schema right after
+#    kit_core lands. A non-lifekit mint has no schema.sql and no lifekit.db,
+#    and every framework consumer treats that as the NORMAL state (silent
+#    no-op: backup-data.sh, remind.sh, memory-engine body-state). The F7
+#    sqlite3 hard-fail breadcrumb (DGN-674) lives in pack_install.sh now.
+echo "[mint] structured lane (lifekit.db) deferred to kit activation (pack_install)"
+
+# 6) build the bridge venv (self-contained, next to bridge/).
+# The interpreter defaults to python3 but can be pinned via DOGANY_PYTHON_BIN
+# (install.sh sets it to the interpreter it resolved as >= 3.11, so the venv is
+# built with the right Python even when the system python3 is older).
+if [ "$BUILD_VENV" = "1" ]; then
+  VENV_PYTHON="${DOGANY_PYTHON_BIN:-python3}"
+  echo "[mint] building bridge venv (interpreter: $VENV_PYTHON) ..."
+  "$VENV_PYTHON" -m venv "$PROJECT_ROOT/bridge/venv"
+  "$PROJECT_ROOT/bridge/venv/bin/pip" install -q --upgrade pip
+  if [ "$CORE_ONLY" = "1" ]; then
+    # Core deps needed to import the bridge = every requirements.txt line
+    # ABOVE the "# --- optional" marker (single source, DGN-674 F2). The old
+    # inline pip list here drifted independently of requirements.txt (A4);
+    # now a new core dep added to requirements.txt flows to --core-only
+    # automatically. Marker missing (edited file?) -> fall back to the FULL
+    # requirements (heavier, never a broken import).
+    CORE_REQ="$(mktemp "${TMPDIR:-/tmp}/dogany-core-req.XXXXXX")"
+    if grep -q '^# --- optional' "$PROJECT_ROOT/bridge/requirements.txt"; then
+      sed '/^# --- optional/,$d' "$PROJECT_ROOT/bridge/requirements.txt" > "$CORE_REQ"
+    else
+      cp "$PROJECT_ROOT/bridge/requirements.txt" "$CORE_REQ"
+    fi
+    "$PROJECT_ROOT/bridge/venv/bin/pip" install -q -r "$CORE_REQ"
+    rm -f "$CORE_REQ"
+  else
+    "$PROJECT_ROOT/bridge/venv/bin/pip" install -q -r "$PROJECT_ROOT/bridge/requirements.txt"
+  fi
+  echo "[mint] venv ready"
+fi
+
+# 7) sanity: no placeholder survivors -- HARD GATE (DGN-674 F1).
+#    (a) __X__ framework tokens across the WHOLE instance, every file type
+#        (grep -rI, no --include filter): the substitution list at step 2
+#        covers .conf/.service/.timer/.txt and the extensionless plists.defer,
+#        so the scan must not be narrower than the substitution (A9). Any
+#        survivor = a real substitution miss -> ABORT (was WARN-only, which
+#        let broken instances ship silently).
+#    CROSS-REF: token list also at update.sh subst_one (~L1053-1066),
+#    pack_install.sh _subst_mint_tokens, and knowledge_selftest.sh G4 --
+#    keep all four sites in sync when adding a token. The release smoke
+#    (tests/install_smoke.sh S2) additionally runs a GENERIC __[A-Z_]*__
+#    scan that catches list drift here at release time.
+LEFT="$(grep -rIlE '__(PROJECT_ROOT|AGENT_NAME|AGENT_LABEL|USER_LABEL|AGENT_PREFIX|HOME|AGENT_LANG)__' \
+          --exclude-dir=venv --exclude-dir=.git \
+          "$PROJECT_ROOT" 2>/dev/null || true)"
+if [ -n "$LEFT" ]; then
+  echo "[mint][ERROR] placeholder survivors (__X__ tokens) in:" >&2; echo "$LEFT" >&2
+  echo "[mint][ERROR] substitution missed the files above -- aborting (DGN-674 F1)." >&2
+  exit 1
+fi
+#    (b) angle-bracket aspirational placeholders <UPPER_SNAKE> in the baseline
+#        identity/rules markdown. EVERY layout generation is listed, newest
+#        first: identity/hot.custom.*.md + rules/hot.*.md (2.0 layout,
+#        DGN-1141) / PROFILE.md + USER.md (2.0 flat root) / AGENT.md +
+#        RULES.md (pre-2.0) / CLAUDE.md. The older names must stay listed:
+#        this same mint runs against pre-relayout instances, and dropping a
+#        name silently scans nothing there. (Historically PROFILE.md had to be
+#        listed because "grep -r" does NOT follow symlinks found during
+#        recursion, so an AGENT.md-only list scanned the compat link and found
+#        nothing -- DGN-1141 stage 6 retired those template links, but the
+#        same trap applies to any future compat name.)
+#        These were never wired to a token; a mint would leave them raw. Scoped
+#        to these files on purpose: skill docs legitimately use <TAB>/<name>
+#        notation, which is not a placeholder. HTML comments (<!-- ... -->) start
+#        with '!' so they never match <[A-Z_]+>.
+#        Stays WARN-only (not part of the F1 hard gate): the identity files are
+#        keep-if-present USER content on a re-mint, so a user-authored
+#        <UPPER_SNAKE> note must never abort a re-mint. The release smoke
+#        (install_smoke.sh S2) hard-asserts this scan on a PRISTINE mint.
+ANGLE="$(grep -rlE '<[A-Z][A-Z_]+>' \
+          --include='hot.custom.agent.md' --include='hot.custom.owner.md' \
+          --include='hot.custom.md' --include='hot.framework.md' \
+          --include='PROFILE.md' --include='AGENT.md' --include='RULES.md' \
+          --include='USER.md' --include='CLAUDE.md' \
+          "$PROJECT_ROOT" 2>/dev/null || true)"
+if [ -n "$ANGLE" ]; then
+  echo "[mint][WARN] angle-bracket placeholder survivors in:" >&2; echo "$ANGLE" >&2
+fi
+
+# 7b) seed the secret-sweep owner-identity file for the pre-push PII gate.
+#     scripts/secret-sweep.sh sources ~/.dogany/sweep-identity at runtime to
+#     detect owner PII (Telegram ID / emails / real name / machine path) before
+#     anything reaches a public history. The file holds PII so it is machine-
+#     local and UNTRACKED; mint drops a template copy the new owner must fill.
+#     Idempotent: if the file already exists, leave it untouched.
+SWEEP_ID_DST="$HOME/.dogany/sweep-identity"
+SWEEP_ID_SRC="$PROJECT_ROOT/scripts/sweep-identity.example"
+if [ -f "$SWEEP_ID_DST" ]; then
+  echo "[mint] sweep-identity exists -> keep (idempotent): $SWEEP_ID_DST"
+elif [ ! -f "$SWEEP_ID_SRC" ]; then
+  echo "[mint][WARN] no sweep-identity.example at $SWEEP_ID_SRC -- skipping" >&2
+else
+  mkdir -p "$HOME/.dogany"
+  cp "$SWEEP_ID_SRC" "$SWEEP_ID_DST"
+  chmod 600 "$SWEEP_ID_DST"
+  echo "[mint] seeded $SWEEP_ID_DST (mode 600) from sweep-identity.example"
+  echo "[mint][NOTE] FILL $SWEEP_ID_DST with your real identity -- until you do,"
+  echo "[mint][NOTE] the pre-push secret-sweep owner-PII gate cannot protect you."
+fi
+
+# 8) initialize a local git repo for continuity.
+#    Local-only: no remote is added (remote/push wiring is owner-gated).
+#    Idempotent on re-mint: if .git already exists, skip entirely.
+#    The .gitignore was copied with the template (step 1); it excludes secrets
+#    (.env / tokens / venv / logs) and runtime state while keeping memories/,
+#    config, worklog, and identity markdown.
+if [ -d "$PROJECT_ROOT/.git" ]; then
+  echo "[mint] .git exists -> skip git init (idempotent)"
+  # Idempotent: ensure core.hooksPath is set even on re-mint.
+  git -C "$PROJECT_ROOT" config core.hooksPath git-hooks
+  echo "[mint] git config core.hooksPath = git-hooks (idempotent)"
+  # DGN-668: tracked hooks must be executable or git silently skips them.
+  if [ -f "$PROJECT_ROOT/git-hooks/pre-push" ]; then
+    chmod +x "$PROJECT_ROOT/git-hooks/pre-push"
+    echo "[mint] chmod +x git-hooks/pre-push (idempotent)"
+  fi
+elif ! command -v git >/dev/null 2>&1; then
+  echo "[mint][WARN] git not found -- skipping repo init" >&2
+else
+  (
+    cd "$PROJECT_ROOT"
+    git init -q
+    # Wire the tracked git-hooks/ dir as the active hooks path so the
+    # pre-commit guard (git-hooks/pre-commit) is active from the first commit.
+    # Idempotent: safe to re-run; only sets if not already correct.
+    git config core.hooksPath git-hooks
+    # DGN-668: install the pre-push secret-sweep gate as executable BEFORE the
+    # init commit so the mode bit lands in history; a non-executable hook is
+    # silently skipped by git.
+    if [ -f git-hooks/pre-push ]; then
+      chmod +x git-hooks/pre-push
+    fi
+    git add --all
+    GIT_AUTHOR_NAME="dogany-mint" \
+    GIT_AUTHOR_EMAIL="mint@dogany.local" \
+    GIT_COMMITTER_NAME="dogany-mint" \
+    GIT_COMMITTER_EMAIL="mint@dogany.local" \
+    git commit -q -m "init: mint ${AGENT_NAME} (dogany-agent ${FW_VERSION})"
+  )
+  echo "[mint] git repo initialized at $PROJECT_ROOT (.git)"
+fi
+
+cat <<DONE
+
+[mint] DONE -> $PROJECT_ROOT
+
+Next steps (manual / require approval):
+  1. Review the config:  $ENV_DST (written by mint; edit if needed)
+  2. Fill identity:      AGENT.md onboarding skeleton; first SessionStart runs
+                         onboarding-check.py to set name/emoji/tone.
+     NOTE: for specialist agents, seed persona/Role in AGENT.md NOW, before
+     proceeding to token/launchd steps. Role seeding is a manual step with no
+     persistent record; a crashed or interrupted builder session cannot recover
+     it -- the bot wakes generic and runs generic onboarding. Record the
+     specialist Role text in AGENT.md first, then continue below.
+     (v2 mint-agent path owns first-class role seeding; this note covers v1.)
+     STAFF-AGENT NOTE: a main agent can grow staff (sub-)agents -- specialist
+     agents minted from this same base, coordinated by the main agent; a
+     specialist mint rewrites the Role section at creation
+     (e.g. "fitness-domain expert: coach the user from lifekit records and
+     training principles"). Role is editable on explicit user request, per RULES
+     edit rights. Route Role writes through the baseline-editor per the
+     agent-crafting phase steps.
+  3. (optional) voice:   bridge/venv/bin/pip install faster-whisper
+  4. Load launchd:       cp bridge/*.plist routines/*.plist ~/Library/LaunchAgents/
+                         then launchctl bootstrap (LIVE op -- get approval first).
+DONE

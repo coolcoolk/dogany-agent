@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# pre-push: dogany repo secret gate (DGN-668).
+# secret-sweep (full cats 1-9; a valid .dogany-private-backup marker reduces
+# the sweep to cats 1,6,7,8 -- DGN-808; the reduction is PRINTED on every
+# push, never silent -- DGN-1058) + D7 outbound-diff gate (dec-026).
+#
+# This is the tracked canonical source. It is ACTIVE because the repo sets
+# core.hooksPath=git-hooks (mint.sh / repo setup); .git/hooks/ is fully
+# overridden by that config and never consulted, so per-clone hand-installed
+# hooks are inert -- only this tracked file runs.
+#
+# SINGLE VARIANT (DGN-1058): git-hooks/pre-push and
+# agents/.template/git-hooks/pre-push are byte-identical. There used to be two
+# variants (root fail-open / template fail-closed on missing sweep), but
+# update.sh section 3k1 delivers the ROOT copy into live instances -- so
+# instances silently received the fail-open variant, contradicting the
+# fail-closed declaration. The missing-sweep policy is now decided at RUNTIME
+# from the repo's own content (see below), so no delivery path can ship the
+# "wrong" variant.
+#
+# SWEEP path resolution (DGN-668):
+#   1. DOGANY_SWEEP_SCRIPT env var (portable override; set on workspace move)
+#   2. <repo-root>/scripts/secret-sweep.sh (instance-relative fallback,
+#      derived from the repo this hook runs in via git rev-parse
+#      --show-toplevel, with the hook's own location as a last resort --
+#      never a hardcoded workspace path)
+#
+# Missing sweep script policy (runtime decision, DGN-960 B5 + DGN-1058):
+#   - PII-bearing repo (live agent instance: root AGENT.md / USER.md /
+#     identity/ / memories/ present) -> FAIL CLOSED. Instance repos carry real owner PII
+#     and must never push ungated.
+#   - Non-PII repo (canonical dev checkout, public framework clone -- neither
+#     carries instance identity files at the root) -> fail-open with a printed
+#     note. The public export STRIPS scripts/secret-sweep.sh (DGN-960), so a
+#     public clone structurally lacks the sweep; blocking every push there
+#     would be a dev-setup wall, not a PII gate.
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || dirname "$HOOK_DIR")"
+SWEEP="${DOGANY_SWEEP_SCRIPT:-$REPO_DIR/scripts/secret-sweep.sh}"
+
+if [ ! -x "$SWEEP" ]; then
+  # Detect a PII-bearing repo by its instance identity surfaces. Broad OR on
+  # purpose: ANY of these present -> treat as instance -> fail closed. The
+  # safe failure direction is CLOSED, so detection over-triggering only ever
+  # blocks a push, never opens the gate.
+  if [ -e "$REPO_DIR/AGENT.md" ] || [ -e "$REPO_DIR/USER.md" ] \
+     || [ -d "$REPO_DIR/identity" ] || [ -d "$REPO_DIR/memories" ]; then
+    echo "PUSH BLOCKED -- secret-sweep.sh not found or not executable: $SWEEP" >&2
+    echo "(fail-closed gate: this repo carries instance identity/PII surfaces." >&2
+    echo " Set DOGANY_SWEEP_SCRIPT to the sweep script path, or place it at" >&2
+    echo " <repo>/scripts/secret-sweep.sh; DGN-668 / DGN-1058)" >&2
+    exit 1
+  fi
+  # DGN-960 B5: non-instance repo (canonical checkout / public clone) without
+  # the sweep is a dev-setup gap, not a PII push risk. Fail-open + note.
+  echo "[pre-push] NOTE: secret-sweep.sh not found at $SWEEP" >&2
+  echo "[pre-push] Skipping secret sweep (non-instance repo without sweep script -- fail-open)." >&2
+  echo "[pre-push] Install secret-sweep.sh or set DOGANY_SWEEP_SCRIPT to enable the PII gate." >&2
+  exit 0
+fi
+
+# ---- secret-sweep (full, or DGN-808 reduced -- reduction always printed) ----
+SWEEP_EXIT=0
+SWEEP_OUT="$("$SWEEP" "$REPO_DIR" 2>&1)" || SWEEP_EXIT=$?
+if [ "$SWEEP_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED -- secret-sweep dirty:" >&2
+  echo "$SWEEP_OUT" >&2
+  exit 1
+fi
+# DGN-1058: never silent-pass. Surface the sweep scope on EVERY successful
+# push so "clean full sweep" and "clean reduced sweep" stay distinguishable
+# (a reduced sweep prints which categories were skipped on its RESULT line;
+# swallowing that on success would make reduction invisible -- the exact
+# quiet-failure class this gate exists to prevent).
+echo "$SWEEP_OUT" | grep -E '^note: private owner-backup|^  owner-PII cats|^RESULT:'
+
+# ---- D7 outbound-diff gate (dec-026, 2026-07-16) ----------------------------
+# pre-push stdin protocol: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# Use the remote SHA as base-ref when non-zero; fall back to origin/main.
+BASE_REF=""
+# shellcheck disable=SC2034  # protocol fields; only remote_sha is consumed
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    BASE_REF="$remote_sha"
+  fi
+done
+if [ -z "$BASE_REF" ]; then
+  BASE_REF="origin/main"
+fi
+
+D7_EXIT=0
+D7_OUT="$("$SWEEP" --outbound-diff "$BASE_REF" "$REPO_DIR" 2>&1)" || D7_EXIT=$?
+if [ "$D7_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED (D7) -- outbound primitive added without review:" >&2
+  echo "$D7_OUT" >&2
+  exit 1
+fi
+
+exit 0
