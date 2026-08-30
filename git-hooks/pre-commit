@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# pre-commit: guard against commits on a detached HEAD.
+#
+# A detached HEAD means commits belong to no branch. They survive only as
+# dangling objects until garbage-collected -- invisible to normal git workflows
+# and impossible to push. This hook blocks commits in that state.
+#
+# Bypass: git commit --no-verify  (intentional detached work)
+# Rebase / cherry-pick / merge in progress: allowed (git itself detaches HEAD
+# during these operations; blocking there would break normal workflow).
+
+# ---- detect in-progress git operations that legitimately detach HEAD --------
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)"
+if [ -d "${GITDIR}/rebase-merge" ] \
+   || [ -d "${GITDIR}/rebase-apply" ] \
+   || [ -f "${GITDIR}/MERGE_HEAD" ] \
+   || [ -f "${GITDIR}/CHERRY_PICK_HEAD" ]; then
+  # Rebase, merge, or cherry-pick is in progress: pass through.
+  exit 0
+fi
+
+# ---- check whether HEAD is detached -----------------------------------------
+# git symbolic-ref exits non-zero when HEAD is not a symbolic ref (i.e. detached).
+if ! git symbolic-ref -q HEAD > /dev/null 2>&1; then
+  echo "" >&2
+  echo "ERROR: pre-commit hook -- detached HEAD" >&2
+  echo "" >&2
+  echo "현재 detached HEAD 상태 -- 커밋이 어떤 브랜치에도 안 얹힙니다." >&2
+  echo "\`git switch -c <브랜치명>\` 으로 브랜치를 만든 뒤 커밋하세요." >&2
+  echo "의도한 경우: \`git commit --no-verify\` 로 이 훅을 건너뛸 수 있습니다." >&2
+  echo "" >&2
+  exit 1
+fi
+
+# ---- canonical-main trunk guard (DGN-1005; supersedes DGN-621 design) -------
+# Trunk-based development: main IS the trunk. Reviewed work branches MERGE into
+# main; release.sh tags/pushes what is already on main and never commits. A
+# PLAIN `git commit` made while HEAD is on main means hand-editing the trunk
+# outside branch review -- blocked here.
+#
+# SCOPING (fail safe-off): fires ONLY when the repo root carries the tracked
+# marker file `.dogany-canonical` (canonical framework repo only). Live agent
+# instances receive this hook FILE via update.sh's git-hooks/ section rsync and
+# commit to their own main constantly (worklog, backups, update commits) -- but
+# they never receive the MARKER: mint.sh seeds from agents/.template (no
+# marker) and update.sh copies only enumerated section dirs, never repo-root
+# dotfiles. No marker -> this block does nothing at all.
+#
+# What passes:
+#   - Branch->main merge landings (the sanctioned flow). A clean
+#     `git merge --no-ff` never invokes pre-commit (git fires pre-merge-commit
+#     for merge commits, and none is installed here); a CONFLICTED merge's
+#     resolution `git commit` reaches this hook with MERGE_HEAD present and
+#     already exited 0 at the in-progress check at the top. Rebase and
+#     cherry-pick continuations exit up there too.
+#   - Release bookkeeping: the VERSION-bump commit that must land on main
+#     BEFORE release.sh runs. Content-sniff: staged set contains both VERSION
+#     and CHANGELOG.md -> pass. (This replaces DGN-621's DOGANY_RELEASE=1 env
+#     flag, which could never fire: release.sh never commits.)
+#   - Any commit on a non-main branch.
+# What is blocked (bypass consciously with `git commit --no-verify`):
+#   - Plain hand-edit commits on main.
+#   - `git commit --amend` on main: a message-only amend stages nothing vs the
+#     amended HEAD, so the VERSION sniff cannot see that commit's files.
+#     Amending trunk history is rewrite territory -- bypass deliberately.
+_TRUNK_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+_TRUNK_BRANCH="$(git symbolic-ref --short -q HEAD 2>/dev/null || true)"
+if [ -n "$_TRUNK_TOP" ] && [ -f "$_TRUNK_TOP/.dogany-canonical" ] \
+   && [ "$_TRUNK_BRANCH" = "main" ]; then
+  _TRUNK_STAGED="$(git diff --cached --name-only 2>/dev/null || true)"
+  _TRUNK_VER="$(printf '%s\n' "$_TRUNK_STAGED" | grep -x 'VERSION' || true)"
+  _TRUNK_CHG="$(printf '%s\n' "$_TRUNK_STAGED" | grep -x 'CHANGELOG.md' || true)"
+  if [ -z "$_TRUNK_VER" ] || [ -z "$_TRUNK_CHG" ]; then
+    echo "" >&2
+    echo "ERROR: pre-commit hook -- direct commit on canonical main (DGN-1005)" >&2
+    echo "" >&2
+    echo "canonical main은 트렁크입니다 -- 직접 커밋 금지. 리뷰 브랜치에서 작업 후" >&2
+    echo "main으로 머지하세요 (머지는 이 훅이 막지 않습니다)." >&2
+    echo "main is the trunk -- no direct commits. Work on a branch and merge it" >&2
+    echo "into main (merge landings pass this hook)." >&2
+    echo "" >&2
+    echo "허용 예외 / allowed exception:" >&2
+    echo "  release bookkeeping commit staging BOTH: VERSION + CHANGELOG.md" >&2
+    echo "의도한 경우 / deliberate bypass:  git commit --no-verify" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# ---- bridge pin-bump guard (DGN-625 / DGN-385) ------------------------------
+# A change under the vendored bridge must bump the pin (UPSTREAM.md) in the SAME
+# commit; otherwise the pin silently goes stale (canonical fixed but pin not
+# bumped -> drift invisible until a release surfaces it). Pure pin-only commits
+# pass. This is the write-side forcing point paired with release.sh gate 5c.
+BRIDGE_STAGED="$(git diff --cached --name-only --diff-filter=ACMRD -- 'agents/.template/bridge/' 2>/dev/null || true)"
+if [ -n "$BRIDGE_STAGED" ]; then
+  OTHER="$(printf '%s\n' "$BRIDGE_STAGED" | grep -v '^agents/.template/bridge/UPSTREAM.md$' || true)"
+  PIN_STAGED="$(printf '%s\n' "$BRIDGE_STAGED" | grep -x 'agents/.template/bridge/UPSTREAM.md' || true)"
+  if [ -n "$OTHER" ] && [ -z "$PIN_STAGED" ]; then
+    echo "" >&2
+    echo "ERROR: pre-commit -- bridge change without pin bump (DGN-385/DGN-625)." >&2
+    echo "Staged under agents/.template/bridge/ but UPSTREAM.md not bumped:" >&2
+    printf '%s\n' "$OTHER" | sed 's/^/  /' >&2
+    echo "Re-vendor commits must bump the pin (Pinned commit / Vendor-rev) in the SAME commit." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+# ---- instance-layout bridge/ edit forcing point (DGN-724) --------------------
+# A LIVE INSTANCE repo lays bridge/ at its root (bridge/..., NOT under
+# agents/.template/). Hand-editing bridge/ there silently diverges the file from
+# the canonical template: on the next update it classifies as CONFLICT and is
+# preserved-frozen, so future canonical bridge fixes stop landing on that file
+# with no signal (DGN-696 silent-drift root). This guard forces a CONSCIOUS
+# acknowledgment before that drift is committed -- it is NOT an absolute wall.
+#
+# Scope: fires ONLY for staged paths under bridge/ that are NOT under agents/.
+# The canonical repo's bridge lives at agents/.template/bridge/ (guarded by the
+# DGN-625 pin-bump block above) and never matches ^bridge/, so this block is
+# inert there. Merge / rebase / cherry-pick landings pass: the in-progress
+# check at the top of this hook already exit 0'd before reaching here, so
+# merge-in commits are never blocked. Self-update landings are plain file
+# writes (no commit), so a pre-commit hook never observes them at all.
+INSTANCE_BRIDGE_STAGED="$(git diff --cached --name-only --diff-filter=ACMRD 2>/dev/null \
+  | grep -E '^bridge/' | grep -vE '^agents/' || true)"
+if [ -n "$INSTANCE_BRIDGE_STAGED" ]; then
+  echo "" >&2
+  echo "ERROR: pre-commit hook -- instance bridge/ local edit (DGN-724)" >&2
+  echo "" >&2
+  echo "bridge/ 를 로컬에서 직접 수정하면 canonical 템플릿과 어긋납니다 -- 다음 업데이트에서" >&2
+  echo "해당 파일이 CONFLICT-보존으로 얼어붙어 이후 canonical bridge 수정이 조용히 막힙니다." >&2
+  echo "Editing bridge/ locally diverges from canonical; on the next update the file" >&2
+  echo "freezes at CONFLICT-preserve and future canonical fixes stop landing on it." >&2
+  echo "" >&2
+  printf '%s\n' "$INSTANCE_BRIDGE_STAGED" | sed 's/^/  /' >&2
+  echo "" >&2
+  echo "권장: canonical 브랜치에서 고쳐 release 로 내려받으세요." >&2
+  echo "Recommended: fix on a canonical branch and land via release." >&2
+  echo "의도한 로컬 dogfood 수정(추후 canonical 로 back-land 예정)이면:" >&2
+  echo "Deliberate local dogfood edit that WILL be back-landed:" >&2
+  echo "  git commit --no-verify" >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0
