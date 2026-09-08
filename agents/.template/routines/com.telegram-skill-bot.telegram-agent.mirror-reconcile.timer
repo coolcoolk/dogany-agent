@@ -1,0 +1,13 @@
+[Unit]
+# DGN-268 S3: fires the paired mirror-reconcile.service weekly on Sunday at
+# 21:30 (matching the macOS plist StartCalendarInterval Weekday 0 / 21:30).
+# Persistent runs a missed reconcile after sleep/downtime.
+Description=dogany mirror reconcile timer (__AGENT_NAME__) -- Sun 21:30 weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 21:30:00
+Persistent=true
+Unit=com.telegram-skill-bot.__AGENT_NAME__.mirror-reconcile.service
+
+[Install]
+WantedBy=timers.target

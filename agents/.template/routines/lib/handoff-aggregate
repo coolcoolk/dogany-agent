@@ -1,0 +1,72 @@
+#!/bin/bash
+# handoff-aggregate -- kit-neutral peer-section aggregation library
+# (DGN-227 E1-3/P19 + DGN-420 MINOR-6). Shared by generic-brief.sh and the
+# lifekit bundle briefing scripts: per-peer section file discovery + verbatim
+# insertion + missing-section ping + N-peer loop, in ONE home so kit swap stays
+# symmetric (F-(c)).
+#
+# E2-2 "per-peer discovery": the main aggregates by discovering EACH peer's
+# section separately. A peer-blind glob (report.section.<slot> with no sender
+# component) attributes the first matching file to ALL peers when N>=2. This
+# library encodes the sender into both the filename glob and a frontmatter
+# `from:` resolve, so each peer's section is attributed to exactly that peer.
+#
+# handoff_aggregate <main_root> <slot> <peers-csv>
+#   peers-csv: "<peer_root>|<display>[,<peer_root>|<display>...]"
+#   slot: morning|retro|weekly -> looks for today's report.section.<slot>
+#   files of EACH peer (matched by that peer's root basename = sender key) in
+#   <main_root>/files/handoff; prints the aggregated block.
+handoff_aggregate() {
+  local main_root="$1" slot="$2" peers="$3"
+  local today; today="$(date +%Y%m%d)"
+  local entry peer_root disp sender f found from
+  local inbox="$main_root/files/handoff"
+  local IFS=','
+  for entry in $peers; do
+    peer_root="${entry%%|*}"
+    disp="${entry##*|}"
+    sender="$(basename "$peer_root")"
+    [ -n "$disp" ] || disp="$sender"
+    found=""
+    # Per-peer discovery (MINOR-6): the filename carries the sender basename
+    # as its trailing component (report.section.<slot>-<sender>.md). Encode the
+    # sender into the glob so peer A never picks up peer B's section.
+    for f in "$inbox/"*"report.section.$slot-$sender".md \
+             "$inbox/"*"report.section.$slot-$sender"* ; do
+      [ -e "$f" ] || continue
+      # Belt-and-suspenders: confirm the frontmatter `from:` matches the sender
+      # (guards legacy/ambiguous names and any glob overreach).
+      from="$(grep -m1 '^from:' "$f" 2>/dev/null | awk '{print $2}')"
+      if [ -z "$from" ] || [ "$from" = "$sender" ]; then found="$f"; break; fi
+    done
+    # Legacy fallback ONLY when the sender-encoded discovery found nothing AND
+    # the peer's own section (by from:) is the sole same-slot file for today.
+    if [ -z "$found" ]; then
+      for f in "$inbox/"*"$today"*"report.section.$slot"* ; do
+        [ -e "$f" ] || continue
+        from="$(grep -m1 '^from:' "$f" 2>/dev/null | awk '{print $2}')"
+        # Attribute only if the frontmatter explicitly names THIS peer.
+        if [ "$from" = "$sender" ]; then found="$f"; break; fi
+      done
+    fi
+    if [ -n "$found" ]; then
+      printf '(%s)\n' "$disp"
+      _handoff_body "$found"
+    else
+      # absence != error: one ping line, briefing still publishes (E2-2)
+      printf '%s section not submitted\n' "$disp"
+    fi
+  done
+}
+
+# _handoff_body <file> -- print the section body, stripping a leading YAML
+# frontmatter block if present (verbatim insertion of the content only).
+_handoff_body() {
+  local f="$1"
+  awk '
+    NR==1 && $0=="---" { infm=1; next }
+    infm==1 && $0=="---" { infm=0; started=1; next }
+    infm==1 { next }
+    { print }
+  ' "$f"
+}
