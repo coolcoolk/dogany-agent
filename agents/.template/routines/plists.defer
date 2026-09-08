@@ -1,0 +1,23 @@
+# plists.defer -- launchd units staged behind an explicit gate (DGN-227 E1-1).
+# One plist basename per line; '#' comments allowed. Loaders (install.sh
+# schedule_routines_launchd + mint_run.sh start) SKIP these on the default
+# scan; they load only via an explicit `mint_run.sh start --deferred` call
+# (domain install path / C2 swap / E3 resolution / G3 alignment).
+# NOTE: mint.sh renders 'telegram-agent' to the minted agent name in this
+# file (same substitution as the plist filenames).
+#
+# DGN-1286 item 2b: the three generic-brief units below are NO LONGER shipped
+# by agents/.template/routines -- they moved to kit-handover/kit_life/payload/
+# routines/ on their way to the dogany-lifekit payload (a kitless base-kit
+# agent should not own a morning brief / daily retro / weekly retro). The
+# entries STAY here on purpose. This file is a basename deny-list, not an
+# inventory: an entry naming a file that is not present is inert, and keeping
+# the names means that when a kit later drops those units into an instance's
+# routines/ they are STILL deferred rather than silently auto-loaded by the
+# next default scan. Removing the lines would delete the deferral policy
+# together with the files and hand the kit an auto-loading briefing set.
+# The framework keeps the briefing machinery either way: generic-brief.sh,
+# lib/brief-slot-ctl.sh, set-briefing-times.sh.
+com.telegram-skill-bot.telegram-agent.generic-brief-morning.plist
+com.telegram-skill-bot.telegram-agent.generic-brief-retro.plist
+com.telegram-skill-bot.telegram-agent.generic-brief-weekly.plist
