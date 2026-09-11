@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# pre-push: dogany repo secret gate (DGN-668).
+# secret-sweep (full cats 1-9; a valid .dogany-private-backup marker reduces
+# the sweep to cats 1,6,7,8 -- DGN-808; the reduction is PRINTED on every
+# push, never silent -- DGN-1058) + D7 outbound-diff gate (dec-026).
+#
+# This is the tracked canonical source. It is ACTIVE because the repo sets
+# core.hooksPath=git-hooks (mint.sh / repo setup); .git/hooks/ is fully
+# overridden by that config and never consulted, so per-clone hand-installed
+# hooks are inert -- only this tracked file runs.
+#
+# SINGLE VARIANT (DGN-1058): git-hooks/pre-push and
+# agents/.template/git-hooks/pre-push are byte-identical. There used to be two
+# variants (root fail-open / template fail-closed on missing sweep), but
+# update.sh section 3k1 delivers the ROOT copy into live instances -- so
+# instances silently received the fail-open variant, contradicting the
+# fail-closed declaration. The missing-sweep policy is now decided at RUNTIME
+# from the repo's own content (see below), so no delivery path can ship the
+# "wrong" variant.
+#
+# SWEEP path resolution (DGN-668):
+#   1. DOGANY_SWEEP_SCRIPT env var (portable override; set on workspace move)
+#   2. <repo-root>/scripts/secret-sweep.sh (instance-relative fallback,
+#      derived from the repo this hook runs in via git rev-parse
+#      --show-toplevel, with the hook's own location as a last resort --
+#      never a hardcoded workspace path)
+#
+# Missing sweep script policy (runtime decision, DGN-960 B5 + DGN-1058):
+#   - PII-bearing repo (live agent instance: root AGENT.md / USER.md /
+#     identity/ / memories/ present) -> FAIL CLOSED. Instance repos carry real owner PII
+#     and must never push ungated.
+#   - Non-PII repo (canonical dev checkout, public framework clone -- neither
+#     carries instance identity files at the root) -> fail-open with a printed
+#     note. The public export STRIPS scripts/secret-sweep.sh (DGN-960), so a
+#     public clone structurally lacks the sweep; blocking every push there
+#     would be a dev-setup wall, not a PII gate.
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || dirname "$HOOK_DIR")"
+SWEEP="${DOGANY_SWEEP_SCRIPT:-$REPO_DIR/scripts/secret-sweep.sh}"
+
+if [ ! -x "$SWEEP" ]; then
+  # Detect a PII-bearing repo by its instance identity surfaces. Broad OR on
+  # purpose: ANY of these present -> treat as instance -> fail closed. The
+  # safe failure direction is CLOSED, so detection over-triggering only ever
+  # blocks a push, never opens the gate.
+  if [ -e "$REPO_DIR/AGENT.md" ] || [ -e "$REPO_DIR/USER.md" ] \
+     || [ -d "$REPO_DIR/identity" ] || [ -d "$REPO_DIR/memories" ]; then
+    echo "PUSH BLOCKED -- secret-sweep.sh not found or not executable: $SWEEP" >&2
+    echo "(fail-closed gate: this repo carries instance identity/PII surfaces." >&2
+    echo " Set DOGANY_SWEEP_SCRIPT to the sweep script path, or place it at" >&2
+    echo " <repo>/scripts/secret-sweep.sh; DGN-668 / DGN-1058)" >&2
+    exit 1
+  fi
+  # DGN-960 B5: non-instance repo (canonical checkout / public clone) without
+  # the sweep is a dev-setup gap, not a PII push risk. Fail-open + note.
+  echo "[pre-push] NOTE: secret-sweep.sh not found at $SWEEP" >&2
+  echo "[pre-push] Skipping secret sweep (non-instance repo without sweep script -- fail-open)." >&2
+  echo "[pre-push] Install secret-sweep.sh or set DOGANY_SWEEP_SCRIPT to enable the PII gate." >&2
+  exit 0
+fi
+
+# ---- secret-sweep (full, or DGN-808 reduced -- reduction always printed) ----
+SWEEP_EXIT=0
+SWEEP_OUT="$("$SWEEP" "$REPO_DIR" 2>&1)" || SWEEP_EXIT=$?
+if [ "$SWEEP_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED -- secret-sweep dirty:" >&2
+  echo "$SWEEP_OUT" >&2
+  exit 1
+fi
+# DGN-1058: never silent-pass. Surface the sweep scope on EVERY successful
+# push so "clean full sweep" and "clean reduced sweep" stay distinguishable
+# (a reduced sweep prints which categories were skipped on its RESULT line;
+# swallowing that on success would make reduction invisible -- the exact
+# quiet-failure class this gate exists to prevent).
+echo "$SWEEP_OUT" | grep -E '^note: private owner-backup|^  owner-PII cats|^RESULT:'
+
+# ---- D7 outbound-diff gate (dec-026, 2026-07-16) ----------------------------
+# pre-push stdin protocol: <local-ref> <local-sha> <remote-ref> <remote-sha>
+# Use the remote SHA as base-ref when non-zero; fall back to origin/main.
+BASE_REF=""
+# shellcheck disable=SC2034  # protocol fields; only remote_sha is consumed
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ -n "$remote_sha" ] && [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    BASE_REF="$remote_sha"
+  fi
+done
+if [ -z "$BASE_REF" ]; then
+  BASE_REF="origin/main"
+fi
+
+D7_EXIT=0
+D7_OUT="$("$SWEEP" --outbound-diff "$BASE_REF" "$REPO_DIR" 2>&1)" || D7_EXIT=$?
+if [ "$D7_EXIT" -ne 0 ]; then
+  echo "PUSH BLOCKED (D7) -- outbound primitive added without review:" >&2
+  echo "$D7_OUT" >&2
+  exit 1
+fi
+
+# ---- DGN-1209 machine-line gate wiring lint ---------------------------------
+# "landed" means WIRED at the call site (DGN-1208), not "file exists". Every
+# owner-facing render rail must DECLARE its rail into the ONE outbound gate
+# (bridge/machine_gate.py); a rail that stops declaring re-opens the leak with
+# zero runtime signal, and the bridge test suite has no runner (DGN-1211) --
+# this hook is the reader that actually stops the regression.
+# Scope: runs only where the gate itself is present (machine_gate.py). A
+# bridge that predates the gate (pre-migration instance, DGN-1206) is noted
+# and skipped -- the lint checks wiring of a landed gate, not migration state.
+_MLG_BRIDGE=""
+for _cand in "$REPO_DIR/agents/.template/bridge" "$REPO_DIR/bridge"; do
+  if [ -f "$_cand/bot.py" ]; then _MLG_BRIDGE="$_cand"; break; fi
+done
+if [ -n "$_MLG_BRIDGE" ] && [ -f "$_MLG_BRIDGE/machine_gate.py" ]; then
+  _mlg_fail=0
+  _mlg_need() {  # <file> <fixed-string> <label>
+    if ! grep -qF -- "$2" "$1" 2>/dev/null; then
+      echo "PUSH BLOCKED (DGN-1209) -- machine-line gate wiring missing: $3" >&2
+      echo "  $1 lacks: $2" >&2
+      _mlg_fail=1
+    fi
+  }
+  _mlg_need "$_MLG_BRIDGE/bot.py"        "content = apply_machine_line_gate(content, rail)"           "bot-side choke point (_render_prose_html_segments)"
+  _mlg_need "$_MLG_BRIDGE/formatting.py" "text = apply_machine_line_gate(text, rail)"                 "formatting choke point (sanitize_message_for_telegram)"
+  _mlg_need "$_MLG_BRIDGE/bot.py"        "text, rail=RAIL_CONSUMER"                                   "R1 idrill followup_cmd rail declaration"
+  _mlg_need "$_MLG_BRIDGE/bot.py"        "force_options=has_options, rail=RAIL_CONSUMER"              "R2 fastpath body rail declaration"
+  _mlg_need "$_MLG_BRIDGE/../routines/push.sh" "rail=machine_gate.RAIL_CONSUMER"                      "R3 push.sh --text rail declaration"
+  _mlg_need "$_MLG_BRIDGE/dashboard.py"  "sanitize_message_for_telegram(text, rail=RAIL_CONSUMER)"    "R4 dashboard pin rail declaration"
+  _mlg_need "$_MLG_BRIDGE/bot.py"        "self._render_prose_html_segments(content, rail=RAIL_MODEL)" "model reply body through the shared renderer"
+  if [ "$_mlg_fail" -ne 0 ]; then
+    exit 1
+  fi
+  echo "[pre-push] DGN-1209 machine-line gate wiring: OK (4 rails declared, 2 choke points)"
+elif [ -n "$_MLG_BRIDGE" ]; then
+  echo "[pre-push] NOTE: bridge predates the DGN-1209 machine-line gate (no machine_gate.py); wiring lint skipped" >&2
+fi
+
+# ---- estate test lane (DGN-1211) --------------------------------------------
+# The harness carried NO test runner estate-wide: bridge pytest, pack tests
+# and the tests/ lints all had zero readers (DGN-1209 grill / estate-wide reader census).
+# run-tests.sh discovers this repo's test assets at runtime and enforces
+# per-suite budgets, refuses quiet-green (all-skip / 0-collected passes block
+# -- DGN-1154), and prints a RESULT line on every run including "0 assets
+# found". Test failure / timeout -> push blocked; runner-runtime absence
+# (python3/pytest) -> loud pass, printed as DEGRADED, never as PASS (same
+# direction as the missing-sweep policy above).
+# DGN-1263 widened discovery from the tests/*_lint.{py,sh} name glob (which
+# left 29 selftest suites with zero readers) to every *.sh/*.py under tests/,
+# each declaring its own lane. What runs HERE is the fast lane only.
+# pre-push, not pre-commit, on measured evidence: bridge pytest ~25s
+# (2026-09-03: canonical 26.7s / a live instance 24.5s) + the fast lane 41.5s
+# (23 suites, measured same day; the 6 suites over 8s -- 339s together -- are
+# the slow lane and run off the staleness clock, not on every push).
+# Push-cadence money, not commit-cadence money. pre-commit stays a pure
+# git-topology guard.
+RUNNER="$HOOK_DIR/run-tests.sh"
+if [ -x "$RUNNER" ]; then
+  if ! "$RUNNER"; then
+    echo "PUSH BLOCKED -- test lane failed (DGN-1211, see [run-tests] lines above)." >&2
+    echo "Deliberate red push (triaged, conscious): git push --no-verify" >&2
+    exit 1
+  fi
+else
+  # Partial delivery (hook present, runner not yet) must not wall every push,
+  # but it must never be silent either.
+  echo "[pre-push] NOTE: git-hooks/run-tests.sh missing -- test lane NOT RUN (fail-open, loud; DGN-1211)" >&2
+fi
+
+exit 0

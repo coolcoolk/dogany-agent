@@ -1,0 +1,28 @@
+# dispatch-tier-bindings.tsv -- DGN-1218 LAYER 2: (runtime, axis) -> measured models.
+# DATA, not logic. The gate (dispatch-detached.sh bottleneck_gate) reads this
+# file and contains no model names itself. Adding a runtime = adding rows here.
+#
+# Columns (TAB-separated): runtime  axis  models(comma-separated)  evidence
+# Axis semantics (Layer 1, provider-neutral -- properties of the TASK):
+#   coverage  = exhaustive enumeration; one omission voids the artifact
+#   accuracy  = verifying N given items; being wrong is the risk, not missing
+#   judgment  = the verdict itself is the work (design/security/tradeoff)
+#
+# claude-code rows = DGN-1193 disk-truth replay measurement (2026-09-02):
+#   coverage: sonnet recall 44-74% on exhaustive tasks -> opus and above only.
+#   accuracy: sonnet precision 91.4% ~= opus 92.7% at ~1/5 cost -> sonnet.
+#   judgment: unmeasurable downward (the verdict needs the top tier) -> fable.
+#   haiku: EXCLUDED from the dispatch ladder (measured 3 tasks independently:
+#     worse than sonnet at higher token cost, N-rate up to 56%). Exclusion is
+#     expressed as DATA: haiku appears in no row, so choosing it always
+#     requires an explicit --why (recorded) -- never a silent pass.
+#   Unmeasured axis note: root-cause/tracing tasks have 0 valid samples yet
+#     (DGN-1193); classify them by their true bottleneck among the 3 axes.
+#
+# codex / antigravity / openrouter: UNMEASURED -- no rows on purpose. A missing
+# (runtime, axis) row makes the gate pass through with a notice, never block
+# (2026-09-02 owner decision: multi-provider build-out is 3.0; until then the
+# design must not block it, only record it).
+claude-code	coverage	opus,fable	DGN-1193: sonnet 44-74% recall on exhaustive tasks
+claude-code	accuracy	sonnet	DGN-1193: sonnet precision 91.4 ~= opus 92.7 at 1/5 cost
+claude-code	judgment	fable	DGN-1193: design/judgment/security stays top tier
