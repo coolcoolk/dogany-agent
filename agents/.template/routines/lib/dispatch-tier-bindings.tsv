@@ -1,0 +1,57 @@
+# dispatch-tier-bindings.tsv -- DGN-1218 LAYER 2: (runtime, axis) -> measured models.
+# DATA, not logic. The gate (dispatch-detached.sh bottleneck_gate) reads this
+# file and contains no model names itself. Adding a runtime = adding rows here.
+#
+# Columns (TAB-separated): runtime  axis  models(comma-separated)  evidence
+# Axis semantics (Layer 1, provider-neutral -- properties of the TASK):
+#   coverage  = exhaustive enumeration; one omission voids the artifact
+#   accuracy  = verifying N given items; being wrong is the risk, not missing
+#   judgment  = the verdict itself is the work (design/security/tradeoff)
+#
+# claude-code rows = DGN-1193 disk-truth replay measurement (2026-09-02):
+#   coverage: sonnet recall 44-74% on exhaustive tasks -> opus and above only.
+#   accuracy: sonnet precision 91.4% ~= opus 92.7% at ~1/5 cost -> sonnet.
+#   judgment: unmeasurable downward (the verdict needs the top tier) -> fable.
+#   haiku: EXCLUDED from the dispatch ladder (measured 3 tasks independently:
+#     worse than sonnet at higher token cost, N-rate up to 56%). Exclusion is
+#     expressed as DATA: haiku appears in no row, so choosing it always
+#     requires an explicit --why (recorded) -- never a silent pass.
+#   Unmeasured axis note: root-cause/tracing tasks have 0 valid samples yet
+#     (DGN-1193); classify them by their true bottleneck among the 3 axes.
+#
+# Effort (DGN-1770): the reasoning-effort default per (runtime, axis, model)
+# lives in the sibling DATA file dispatch-effort-bindings.tsv, which
+# dispatch-detached.sh resolve_effort() reads. Effort wording inside the
+# evidence column below is history, not the live value -- in particular the
+# codex accuracy row's "medium default" was superseded there (astra a2:
+# medium cost the same wall time as high and scored like low).
+#
+# codex rows: MEASURED 2026-09-27 (DGN-1750 effort bench, see evidence column);
+# judgment row removed on purpose (owner 14:09) so judgment work stays on claude.
+# History -- codex rows (DGN-1444, 2026-09-13): were UNMEASURED -- owner-proposed, mirroring
+# the claude-code binding above as a starting point (same alias vocabulary;
+# MODEL stays fable/opus/sonnet/haiku regardless of runtime -- see
+# dispatch-detached.sh codex_slug_for_model). Do NOT read these as measured:
+# the claude-code rows are DGN-1193 replay measurement over many tasks; these
+# are the owner's initial guess pending real data. One real datapoint exists
+# on the judgment axis (n=1, 2026-09-13: anchor-B v3.2 lock-grill run on both
+# Fable and codex's astra tier, same prompt -- Fable found deeper analysis
+# gpt-6-astra missed, astra ran ~2.5x faster; see DGN-1444 "첫 런타임 측정").
+# n=1 does not overturn the owner's default -- cited here as a single
+# datapoint, not a measurement, and it must not be generalized.
+#
+# antigravity / openrouter: still UNMEASURED -- no rows on purpose, same
+# pass-through-with-notice contract as codex before this ticket (2026-09-02
+# owner decision: multi-provider build-out is 3.0; until measured, the
+# design must not block a new runtime, only record it).
+claude-code	coverage	opus,fable	DGN-1193: sonnet 44-74% recall on exhaustive tasks; effort-bench 2026-09-26 c3: sonnet 0.833 at every effort (same call site missed), opus 1.000; external bench 2026-09-29 (owner-supplied, 2 paired tickets, weak): sonnet-5.5 failed first QA exactly where the worker had to enumerate scope (path notation, containers), opus fail-closed -- supports, does not change, this binding
+claude-code	accuracy	sonnet,opus	DGN-1193: sonnet precision 91.4 ~= opus 92.7 at 1/5 cost; effort-bench 2026-09-26: large-evidence verify (a2) opus-medium 0.977 vs sonnet best 0.953, 3.4x faster, 3.6x cheaper; small-evidence verify no model/effort effect
+claude-code	judgment	opus,fable	owner 2026-09-24 12:58 ("Opus 5.5가 강력해서 당분간 fable5.1안써도되겠던데" -> 확정): opus-5-5 is the judgment default; fable only by explicit choice right before an irreversible design lock. Not a measurement -- judgment has no re-derivable answer set (DGN-1666 plan); evidence = cases where an opus grill missed something, logged in DGN-1666
+codex	coverage	fable,opus	DGN-1750 bench 2026-09-27 (216/216 graded, owner applied 14:09): c3 exhaustive call-site recall gpt-6-astra 1.000 / gpt-6-sol 1.000 at every effort, gpt-5.6-terra .72-.83, gpt-6-luna .44-.72 (claude sonnet .833, opus 1.000)
+codex	accuracy	fable	DGN-1750 bench 2026-09-27 (owner applied 14:09): a2 large-evidence verify gpt-6-astra .953/.961/.977 at low/medium/high (claude opus-medium .972, sonnet .93-.95); gpt-6-sol .72-.83, gpt-5.6-terra .82-.86, gpt-6-luna .58-.88; a1/a3 at ceiling for all. Effort: high default (dec-200 2026-09-28: medium = high wall time, accuracy near low; 3x was high vs low) -- see dispatch-effort-bindings.tsv
+# cloud rows (DGN-1726, 2026-09-26): the cloud runtime runs the SAME Claude
+# models as claude-code on a remote VM, so the claude-code measurement carries
+# over unchanged -- mirrored, not separately measured.
+cloud	coverage	opus,fable	DGN-1726: same Claude models as claude-code -- mirrors its DGN-1193 coverage binding
+cloud	accuracy	sonnet,opus	DGN-1726: same Claude models as claude-code -- mirrors its accuracy binding; effort-bench 2026-09-26: large-evidence verify (a2) opus-medium 0.977 vs sonnet best 0.953, 3.4x faster, 3.6x cheaper; small-evidence verify no model/effort effect
+cloud	judgment	opus,fable	DGN-1726: same Claude models as claude-code -- mirrors its judgment binding (owner 2026-09-24)

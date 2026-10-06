@@ -1,0 +1,43 @@
+{
+  "visible": false,
+  "age": 60,
+  "entries": [
+    {
+      "type": "assistant",
+      "timestamp": "2026-09-24T05:00:00Z",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "Bash",
+            "input": {
+              "description": "Run full tests",
+              "run_in_background": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call-1",
+            "content": "Command running in background with ID: bg-job_1. Output is being written to: /tmp/output."
+          }
+        ]
+      }
+    },
+    {
+      "type": "attachment",
+      "attachment": {
+        "type": "queued_command",
+        "prompt": "<task-notification>\n<task-id>bg-job_1</task-id>\n<tool-use-id>call-1</tool-use-id>\n<status>completed</status>\n</task-notification>",
+        "commandMode": "task-notification"
+      }
+    }
+  ]
+}
