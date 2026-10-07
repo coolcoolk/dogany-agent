@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "_doc": "DGN-1506 item 3: user-reachable gate registry. A gate that can stop a user-visible run HOLDS its user-facing sentence here (leg a); mint_run.sh pipeline sends it via the leader's routines/push.sh without the model (leg b). user_hint_ko empty = copy pending owner approval -> scripts/user-gate-lint.py fails the STABLE release door on purpose. {USER_LABEL} is resolved at send time from the SENDING instance's config/agent.conf DOGANY_USER_LABEL -- a hard-coded honorific fails the lint (DGN-1464 shape). See worklog/DGN-1506-item3-SPEC-v1.md.",
+  "gates": {
+    "kit.crew-lockstep": {
+      "script": "pack_install.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1436",
+        "DGN-1506"
+      ],
+      "operator_reason": "advancing the shared kit DB would strand crew member(s) not at the target pin; refused before any change",
+      "user_hint_ko": "같이 쓰는 봇 하나가 아직 낮은 버전이에요. 그 봇 먼저 올릴까요?"
+    },
+    "kit.crew-version": {
+      "script": "pack_install.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1682",
+        "DGN-1509"
+      ],
+      "operator_reason": "a kit crew already runs version V and this install would put a different (newer) kit version into one member -- auto-resolve for a pack whose requires_kit range rejects V, or a first-time join at a newer version; refused before any write because a split crew makes update_plan.sh ABORT every update. The crew's kit is upgraded first (crew update, all members together), then retry. COPY NOTE: user_hint_ko below is a PLACEHOLDER DRAFT pending the owner gate, written under the standing copy rules (no em-dash, planned class = no fault vocabulary)",
+      "user_hint_ko": "새 에이전트를 만들려면 {AGENT_DISPLAY_NAME}를 먼저 최신으로 업데이트해야 해요. 업데이트하고 이어서 만들까요?"
+    },
+    "crew.consent": {
+      "script": "update_apply.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1506",
+        "DGN-1509"
+      ],
+      "operator_reason": "crew-scoped apply pauses every member bridge; it proceeds only on a recorded, unexpired, member-set-matching, single-use consent token (crew_consent.sh record) -- absent/expired/drifted token = refused pre-entry with zero writes; the model's recollection of having asked is not consent",
+      "user_hint_ko": "이 업데이트를 진행하면 봇 전체가 재시작돼요. 진행할까요?"
+    },
+    "mint.occupied": {
+      "script": "mint_run.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1543"
+      ],
+      "operator_reason": "mint target root already holds a non-empty instance (predicate: root exists AND non-empty -- mint_occupancy_probe, lib/mint_teardown.sh); re-minting would overwrite the disk while the Telegram chat survives (measured 2026-09-17: the new agent read its predecessor's scrollback and skipped onboarding); refused before any write -- teardown-then-remint or abort is the owner's call, never a silent overwrite. COPY NOTE: user_hint_ko below is a PLACEHOLDER DRAFT pending the owner gate (DGN-1543 R6), written under the standing copy rules (no em-dash, 담당 에이전트, planned class = no fault vocabulary) COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "이 자리에는 담당 에이전트가 이미 있어요.\n지금 있는 에이전트를 삭제하고 새로 만들까요? 아니면 그대로 둘까요?"
+    },
+    "mint.catalog-brief": {
+      "script": "mint_run.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1575"
+      ],
+      "operator_reason": "a mint claimed by an official catalog pack reached the build step without a fresh catalog-brief stamp covering that pack (predicate: lib/catalog_brief.py gate -- same matcher as the catalog-brief verb, one implementation): the owner was never shown the official-vs-custom choice screen (measured 2026-09-18 16:08: owner asked for a health trainer, flow went straight to BotFather, pack_health never mentioned; a packless mint on that path is a blank agent, DGN-342 family); refused before any write -- run mint_run.sh catalog-brief with the owner's own domain words, render its stdout verbatim, collect the choice, then re-run; never a stamp forgery, never a direct mint.sh workaround. COPY NOTE: user_hint_ko below is a PLACEHOLDER DRAFT pending the owner gate (DGN-1575), written under the standing copy rules (no em-dash, planned class = no fault vocabulary, no internal vocabulary)",
+      "user_hint_ko": "이 분야에는 쓸 수 있는 공식 에이전트 팩이 있어요. 어떤 걸 해드리는지 먼저 보여드리고 이어갈게요."
+    },
+    "mint.stillborn": {
+      "script": "mint_run.sh",
+      "class": "fault",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1606",
+        "DGN-1506"
+      ],
+      "operator_reason": "viability verdict (DGN-1606): the freshly minted instance never wrote a first bridge heartbeat (.telegram_bot/poll_heartbeat -- the same freshness signal watchdog.sh STALE_S and promote.sh gate 3 already judge by) within the wait window after `start` returned 0; launchd bootstrap acceptance is not a running bridge (measured: four of seven mints died with zero heartbeats while the pipeline printed DONE). REPORT-ONLY by owner ruling 2026-09-20: nothing is torn down, restarted or repaired -- the newborn stays on disk for a human to inspect. COPY NOTE: user_hint_ko below is a PLACEHOLDER DRAFT pending the owner gate, written under the standing copy rules (no em-dash, 담당 에이전트, fault class = fault vocabulary allowed)",
+      "user_hint_ko": "⚠️ 새 담당 에이전트를 만들었는데 아직 깨어나지 않았어요.\n만든 내용은 그대로 두었어요. 왜 안 깨어나는지 확인해볼까요?"
+    },
+    "mint.born-alive-and-wrong": {
+      "script": "mint_run.sh",
+      "class": "fault",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1608",
+        "DGN-1606"
+      ],
+      "operator_reason": "wrongness verdict (DGN-1608): the newborn's bridge heartbeat confirmed it ALIVE, but the cheap machine-decidable birth-defect checks failed -- .instance.conf framework stamps (DOGANY_FW_TAG / DOGANY_FW_REPO_SHA) absent/empty or both 'unknown', or the update channel diverges from the ordering instance's (measured 2026-09-19: a live mint carried FW_TAG absent + channel 'release' on a dev fleet and produced no notice; a human found it by hand five days later). Checks covered: fw stamp presence, channel coherence. NOT covered (stated): estate-registry registration (DGN-1603) and predecessor knowledge-warehouse residue. REPORT-ONLY by owner ruling 2026-09-20: nothing is torn down, restarted or repaired -- the instance keeps running exactly as born. COPY NOTE: user_hint_ko below is a PLACEHOLDER DRAFT pending the owner gate (mint.stillborn precedent), written under the standing copy rules (no em-dash, 담당 에이전트, fault class = fault vocabulary allowed)",
+      "user_hint_ko": "⚠️ 새 담당 에이전트가 깨어나긴 했는데 설정 일부가 어긋나 있어요.\n만든 내용은 그대로 두었어요. 어디가 어긋났는지 확인해볼까요?"
+    },
+    "mint.fault": {
+      "script": "mint_run.sh",
+      "class": "fault",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1506"
+      ],
+      "operator_reason": "generic fault lane -- any nonzero stop of the real pipeline run that did not come from a registered planned gate (raw _fail, crash, signal)",
+      "user_hint_ko": "⚠️ 담당 에이전트 만들기가 멈췄어요.\n예상 못한 중단이에요. 중단된 이유를 분석해볼까요?"
+    },
+    "teardown.liveness": {
+      "script": "lib/mint_teardown.sh",
+      "class": "planned",
+      "user_reachable": false,
+      "refs": [
+        "DGN-1506"
+      ],
+      "operator_reason": "teardown refused while the instance shows liveness (rc=3); recovery/operator lane -- the user-facing word for a failed transaction is the transaction's abort notice, not this refusal",
+      "user_hint_ko": ""
+    },
+    "teardown.no-evidence": {
+      "script": "lib/mint_teardown.sh",
+      "class": "planned",
+      "user_reachable": false,
+      "refs": [
+        "DGN-1506"
+      ],
+      "operator_reason": "teardown refused without positive unfinished-mint evidence (rc=4); recovery/operator lane, same seat as teardown.liveness",
+      "user_hint_ko": ""
+    },
+    "mint.channel-invalid": {
+      "script": "mint_run.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1621",
+        "DGN-1608",
+        "DGN-1569"
+      ],
+      "operator_reason": "resolved channel is outside release|dev|staging|main; refused before any write; correct the ordering declaration or explicit --channel COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1621): retain the owner-confirmed sentence for invalid-channel refusals. The former channel-unmeasured gate was removed because undeclared orderers share the release default.",
+      "user_hint_ko": "새 담당 에이전트의 업데이트 설정을 먼저 확인하고 이어갈게요."
+    },
+    "retire.request": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Unsupported invocation or row-only leave of a FULL member; select the applicable lifecycle operation. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624). COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "담당 에이전트를 삭제할까요, 되돌릴까요? 만들다 멈춘 상태면 그것부터 정리할게요.",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.recovery": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Prior receipt cannot be trusted or reconciled and no partial effect is independently known. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624). COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "이전에 삭제하던 기록이 남아 있어요. 어디까지 됐는지 찾아볼까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.evidence": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Target identity, completed lifecycle, inventory or absence evidence unresolved, including crew DRIFT. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624). COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "삭제할 담당 에이전트가 맞는지 지금 상태부터 확인해볼까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.units-up": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Exact registered units, target processes or continuing writes observed; print verified manual stop commands separately. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624).",
+      "user_hint_ko": "담당 에이전트가 아직 일하고 있어요. 먼저 멈추고 이어갈까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.busy": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Existing crew update lease prevents membership mutation, or an /update apply run holds the estate apply lock (DGN-1786). COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624).",
+      "user_hint_ko": "담당 에이전트가 다른 작업 중이에요. 끝나면 이어서 할까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.restore-conflict": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Restore destination occupied or affected archive, membership or marker changed. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624).",
+      "user_hint_ko": "보관한 뒤에 달라진 내용이 있어요. 지금 내용을 지키면서 되돌릴까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.restore-incompatible": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Archived-code/current-shared-DB and crew symmetry predicate failed or unavailable. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624).",
+      "user_hint_ko": "보관해둔 담당 에이전트가 지금 쓰는 정보와 맞는지 확인이 안 돼요. 맞는 버전으로 준비해볼까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.prepare": {
+      "script": "mint_retire.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "Pre-effect storage, observer, registry, dependency or local coordination prerequisite unavailable; unexpected errors retain diagnostic fault subtype. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624). COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "삭제 전에 준비할 게 남아 있어요. 제가 준비하고 이어갈까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "retire.partial": {
+      "script": "mint_retire.sh",
+      "class": "fault",
+      "user_reachable": true,
+      "operator_reason": "A retire or restore effect failed or is unknown; mandatory target, actual availability, completed/remaining work and eligible choices report follows. COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-09-21 (DGN-1624). COPY NOTE 2026-10-01: '정리' -> '삭제' for the agent itself (owner, dec-233).",
+      "user_hint_ko": "⚠️ 담당 에이전트 삭제가 중간에 멈췄어요. 지금 상태 확인하고 남은 것부터 마저 할까요?",
+      "refs": [
+        "DGN-1624"
+      ]
+    },
+    "mint.transcript-dirty": {
+      "script": "mint_run.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1646"
+      ],
+      "operator_reason": "workspace transcript read key contains predecessor residue; retire/archive it before minting; sibling-only residue does not block",
+      "user_hint_ko": "이전 에이전트의 대화 기록이 남아 있어요. 기록을 정리한 뒤 새 에이전트를 만들게요."
+    },
+    "mint.ledger-stale": {
+      "script": "mint_run.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "refs": [
+        "DGN-1643"
+      ],
+      "operator_reason": "dedicated_agent must point to an existing absolute agent_path; legacy missing paths are stale; clear the binding before minting",
+      "user_hint_ko": "이전 담당 에이전트의 기록과 실제 폴더가 맞지 않아요. 기록을 정리한 뒤 이어갈게요."
+    },
+    "update.retiring": {
+      "script": "update_apply.sh",
+      "class": "planned",
+      "user_reachable": true,
+      "operator_reason": "An /update unit touches an agent that is mid-deletion (retire marker present); the unit is skipped, nothing stopped or restarted (DGN-1786). COPY NOTE: user_hint_ko is OWNER-CONFIRMED 2026-10-01 (dec-233).",
+      "user_hint_ko": "업데이트하지 않았어요. 이 에이전트는 지금 삭제하는 중이라 꺼진 그대로 두었어요.",
+      "refs": [
+        "DGN-1786"
+      ]
+    }
+  }
+}

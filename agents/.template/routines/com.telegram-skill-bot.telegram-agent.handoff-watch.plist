@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- DGN-1379-SPEC-r2-remaining-three S1: WatchPaths event ping on this
+     instance's handoff inbox (slug mailbox + legacy local inbox). A file
+     drop fires handoff-engine.sh consume immediately (no polling); the
+     single-consumer lock inside consume_mailbox() keeps concurrent fires
+     single. ThrottleInterval coalesces bursts. Cadence/log/env-key shape
+     inherited from the live handoff-watch convention (existing instances),
+     ProgramArguments repointed at the wrapper (DGN-1379-SPEC-consume-
+     entrypoint S2) so no python interpreter path is baked in here.
+     Label: com.telegram-skill-bot.__AGENT_NAME__.handoff-watch -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-skill-bot.__AGENT_NAME__.handoff-watch</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/handoff-engine.sh</string>
+        <string>consume</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>__HOME__/.dogany/handoff/__AGENT_NAME__/inbox</string>
+        <string>__PROJECT_ROOT__/files/handoff/inbox</string>
+    </array>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/handoff-watch.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/handoff-watch.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+</dict>
+</plist>

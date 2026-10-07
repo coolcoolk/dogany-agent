@@ -1,0 +1,3 @@
+# Agent -- entrypoint
+
+@AGENTS.md

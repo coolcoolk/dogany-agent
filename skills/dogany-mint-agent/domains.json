@@ -1,0 +1,78 @@
+{
+    "_comment": "Domain descriptors for mint-agent recommendation metrics (DGN-243). keywords: substring match (case-insensitive) against user messages in transcripts, last 14 days -> conversation share. kit_life_tables: all-time row counts summed -> accumulated records. ko: user-facing domain label. Add new domains with the same shape.",
+    "health": {
+        "ko": "건강",
+        "keywords": [
+            "운동",
+            "식단",
+            "헬스",
+            "단백질",
+            "칼로리",
+            "체중",
+            "근육",
+            "다이어트",
+            "유산소",
+            "웨이트",
+            "체지방",
+            "끼니",
+            "저녁 먹",
+            "점심 먹",
+            "아침 먹",
+            "workout",
+            "diet",
+            "protein"
+        ],
+        "kit_life_tables": [
+            "meals",
+            "workouts",
+            "metric_log"
+        ]
+    },
+    "finance": {
+        "ko": "재무(가계·투자)",
+        "keywords": [
+            "투자",
+            "주식",
+            "가계부",
+            "예산",
+            "적금",
+            "코인",
+            "지출",
+            "월급",
+            "연금",
+            "세금",
+            "재테크",
+            "펀드"
+        ],
+        "kit_life_tables": []
+    },
+    "study": {
+        "ko": "학습(공부·자기계발)",
+        "keywords": [
+            "공부",
+            "학습",
+            "강의",
+            "자격증",
+            "시험",
+            "책 읽",
+            "독서",
+            "영어 공부",
+            "복습"
+        ],
+        "kit_life_tables": []
+    },
+    "travel": {
+        "ko": "여행",
+        "keywords": [
+            "여행",
+            "항공권",
+            "숙소",
+            "호텔 예약",
+            "비행기",
+            "여행지",
+            "일정 짜",
+            "관광"
+        ],
+        "kit_life_tables": []
+    }
+}
