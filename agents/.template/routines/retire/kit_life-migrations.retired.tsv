@@ -1,0 +1,46 @@
+# kit_life-migrations.retired.tsv -- retirement declaration (DGN-1519)
+#
+# Consumed by routines/retire-prune.py. Format: 5 TAB-separated columns:
+#   path <TAB> sha256[,sha256...] <TAB> ticket <TAB> declared-date <TAB> reason
+# A file is pruned ONLY when its bytes match one of the pinned hashes
+# (fail-closed: any other content is reported DIVERGED and left in place).
+#
+# Declarer checklist (all four hold for every line below, DGN-1519 design s.3):
+#   1. replacement delivered first: the canonical migration set (kit_life pack
+#      payload, 012..050, renumbered/rewritten) is already installed on the
+#      affected instances; these files are the PRE-rename leftovers.
+#   2. callers searched beyond ast: the migration runner selects files by
+#      canonical numbering; nothing invokes these paths by name from shell/
+#      plist/cron (they are data files, not executables).
+#   3. reversible order: retire-prune.py moves to files/_archive/retired-<ts>/
+#      (never rm); one --undo restores everything.
+#   4. hashes pinned by measurement (2026-09-17): current bytes on the two
+#      affected live instances (byte-identical across them where both hold a
+#      file), plus the pre-2026-08-28 delivery bytes for the three files the
+#      fleet-wide lifekit->kit_life rename sweep mutated in place (instance
+#      continuity history is the evidence chain -- every touch was a
+#      framework act, no user edits; full derivation: DGN-1519 design doc).
+#
+# Why retired: the canonical migration baseline was renumbered at the lifekit
+# extraction (product repo 94e3afd7); 007..010 were folded into the baseline,
+# 011..014 were renamed one number up (011_soge_profile -> 012_soge_profile,
+# 012_persons_gender -> 013_persons_gender, 013_persons_relations ->
+# 014_persons_relations, 014_relation_type_unify -> 015_relation_type_unify).
+# update/pack sync has no --delete, so the pre-rename copies stayed and the
+# stale numbers collide with their successors (reddens 4 kit tests; the
+# runner's own numbering defect is DGN-1522, out of scope here).
+#
+# Deliberately NOT declared (DGN-1519 design s.3/s.4): instance-local helper
+# scripts living in the same directory (health_to_warg.py, notion_to_sqlite.py,
+# warg_to_ag.py, areas_domain_remap_7d.py, notion_projects_resync.py) and
+# routines/lib/handoff/handoff_cli.py (send-lane instances still execute it;
+# its retirement is blocked on DGN-1061/DGN-1379).
+database/migrations/007_NOTES.md	f1062e16c8da0294d33939ee93d24622847910f26b37e5c3db7ad70376ccbbd5,39abedf744219db93b8da760fb55fe9e89568495940029b2e141e98316eebf05	DGN-1519	2026-09-17	pre-rename residue; baseline folded at lifekit extraction
+database/migrations/007_notify_policy.sql	f1b73ee1dc7dac840fde5471d3e423a73c985242fa32c0afc79033c881ef9906,448a0df7a74bb057bedae2b80865e18ce775857ea95ced422a4533136ae0014d	DGN-1519	2026-09-17	pre-rename residue; baseline folded at lifekit extraction
+database/migrations/008_travel_blocks.sql	d4792586e9e09a3649289b712972a528ac73f7bff0b99f5269a578bba684b777	DGN-1519	2026-09-17	pre-rename residue; baseline folded at lifekit extraction
+database/migrations/009_spend_tables.sql	4dba3f2c6fb61e6755b66f96f459e7ce920d73964b242802652ae86cd37b47e3,3d2246c36c28bc859d9236b385a812ad9f09a9c6a770c853cdf56412cb52208a	DGN-1519	2026-09-17	pre-rename residue; baseline folded at lifekit extraction
+database/migrations/010_unified_event.sql	a8931b0b9b062975080f23545f09068cec16f4eafd75cce90e9e5bf57de7fb02	DGN-1519	2026-09-17	pre-rename residue; opens the _V10_AVAILABLE test gate against a v50 schema
+database/migrations/011_soge_profile.sql	c1bfce77b1a9d9fc27c4f92440652dfaed3e44f2e668d67c2310a2c3435053e8	DGN-1519	2026-09-17	renamed to 012_soge_profile.sql; stale number collides
+database/migrations/012_persons_gender.sql	bc4b5f72b4ca8dbda1423d2602c900890942d19b59c43c20a703d624ede171c2	DGN-1519	2026-09-17	renamed to 013_persons_gender.sql; stale number collides
+database/migrations/013_persons_relations.sql	5925482c08af9a244918784fe4b237861ca8e7902af8a8ec92cd9f7151cb99be	DGN-1519	2026-09-17	renamed to 014_persons_relations.sql; stale number collides
+database/migrations/014_relation_type_unify.sql	86c2421cedeca93ce401a97d8cecb81465554db0c523de846dd2a1f3ff188a7d	DGN-1519	2026-09-17	renamed to 015_relation_type_unify.sql; stale number collides

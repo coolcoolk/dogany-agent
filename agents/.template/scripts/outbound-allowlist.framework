@@ -1,0 +1,36 @@
+# outbound-allowlist.framework -- FRAMEWORK-owned reviewed-outbound fragment
+# for the D7 tripwire (the secret-sweep outbound-diff check). DGN-1860.
+#
+# Shipped in the instance template and refreshed by every framework update
+# (update.sh section 3k5, the same per-file channel as secret-sweep.sh), so
+# do NOT edit it in an instance: a local edit is overwritten (or held by
+# .claude/.dogany-preserve). The owner's own layer is the instance-root
+# .outbound-allowlist, which this file never replaces -- the sweep merges
+# both additively.
+#
+# Rules for this file (enforced by review, not by code):
+#   - one entry per framework file that carries a REAL reviewed outbound
+#     primitive (or a reviewed false positive) AND has review evidence; the
+#     evidence ref is the 4th field and the source of the copy is cited.
+#   - paths are instance-root-relative and match EXACTLY (not substring):
+#     a framework entry can never clear a hit in some other file that only
+#     happens to contain the same path text.
+#   - a framework primitive without review evidence does NOT go here; it
+#     stays a D7 hit until it is reviewed.
+# Format (same as .outbound-allowlist, DGN-1518 5-field shape):
+#   <path> | <reason-token> | <free-text> | <d7-review ref> | <YYYY-MM-DD>
+# Sources: canonical dogany-agent .outbound-allowlist (entries keyed
+# agents/.template/<path>) and a reviewed instance .outbound-allowlist
+# (2026-08-20-d7-outbound-review, 2026-09-16-d7-outbound-review-2,
+# 2026-10-05-d7-dgn1860).
+
+routines/push.sh | reviewed-call | push rail sender: Telegram Bot API sendMessage/sendPhoto, keyboard artifact on the same host, same bot token, same chat_id; no new destination, no new data class (source: canonical DGN-966 entry; instance review 2026-08-20-d7-outbound-review) | DGN-966 | 2026-08-21
+bridge/healthcmd.py | reviewed-call | /health CLI freshness probe: one GET of the public npm registry latest record for the Claude CLI, 2s timeout, fires only when the owner runs /health, sends no instance/owner data (source: canonical DGN-986 entry; instance review 2026-09-16-d7-outbound-review-2) | DGN-986 | 2026-08-24
+routines/claude-usage.sh | reviewed-call | /usage lookup: one GET to the Anthropic oauth usage endpoint presenting the user's own Claude OAuth token to its issuer via a stdin config (never argv), 10s timeout, no identifier, no telemetry (source: canonical DGN-1362 entry; instance review 2026-09-16-d7-outbound-review-2) | DGN-1362 | 2026-09-09
+routines/cli-updater.py | reviewed-call | nightly external CLI updater: public npm registry packument GETs for claude/codex plus the Codex vendor installer only when armed; no body, no query, no token, no instance/owner identifier; kill switch DMQ_CLI_UPDATE=0 (source: canonical DGN-1673 entry, owner decision dec-207; instance review 2026-10-05-d7-dgn1860 owner OK) | DGN-1673 | 2026-09-30
+bridge/tests/test_dgn1252_dash_normalize.py | false-positive | the flagged line is a Python string literal fed to normalize_dashes(), not an invocation; the file has no network imports (source: canonical DGN-1252 entry; instance review 2026-09-16-d7-outbound-review-2) | DGN-1252 | 2026-09-03
+memory-engine/memory.py | reviewed-call | memory embedding: urllib POST of the memory text + model name to a local Ollama at the hard-coded loopback http://localhost:11434/api/embeddings; nothing leaves the machine (owner approval 2026-10-05 09:13, DGN-1860 review) | DGN-1860 | 2026-10-05
+mirror/http_direct.py | reviewed-call | calendar mirror direct path: Google OAuth token refresh (oauth2.googleapis.com) and calendar v3 event GET/PUT/PATCH (www.googleapis.com) with the owner's own gws credential; sends calendar event bodies to Google; runs only when the owner's calendar mirror is on (owner approval 2026-10-05 09:13, DGN-1860 review) | DGN-1860 | 2026-10-05
+routines/version-check.py | reviewed-call | update check: plain GETs of VERSION / CHANGELOG / release notes on raw.githubusercontent.com (public product repo); no body, no identifier; 6h cache; opt-out DOGANY_VERSION_CHECK=0 (owner approval 2026-10-05 09:13, DGN-1860 review) | DGN-1860 | 2026-10-05
+bridge/tests/test_dgn649_image_send.py | false-positive | the flagged line is the string literal NetworkError("httpx.ConnectError") in a test parameter table, not a call (owner approval 2026-10-05 09:13, DGN-1860 review) | DGN-1860 | 2026-10-05
+routines/tests/test-push-edit-dgn1803.sh | false-positive | test of the push rail: every `curl` is a PATH stub written into the test tmp dir that logs argv and returns a canned reply; no real network call, no token, no destination (leader review 2026-10-07 of an instance D7 backup block; same class as the owner-approved test false positive of 2026-10-05) | DGN-1860 | 2026-10-07

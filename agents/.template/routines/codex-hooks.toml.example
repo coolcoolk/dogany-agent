@@ -1,0 +1,56 @@
+# Copy these entries into the reviewed project .codex/config.toml.
+# Do not put them in ~/.codex/config.toml.
+#
+# Format and location verified 2026-09-14 against learn.chatgpt.com/docs/hooks.md
+# and codex-cli 0.154.0 (see docs/codex-hook-install.md for the acceptance test).
+#
+# Trust, verified: an interactive session can persist project trust and hook
+# trust once via the normal prompt and `/hooks`. Headless `codex exec` has no
+# such prompt -- without both project trust (`-c 'projects."<abs-path>"
+# .trust_level="trusted"'`) and `--dangerously-bypass-hook-trust`, every hook
+# below is silently skipped (no warning, no log line) and this file does
+# nothing. Prefer accepting trust interactively once per CODEX_HOME when that
+# is possible; use the bypass flag only for genuinely headless dispatch that
+# already vets this exact file.
+
+# Canonical-template note: only gates whose backing script ships in this
+# template are wired below. tmp-artifact-gate.py landed canonically in
+# DGN-1560 (its DGN-935 doctrine and the cleanup-files.sh half of the same
+# mechanism were already here), so that entry is now live.
+#
+# The decomp / Stop entries stay commented out: decomp-gate.py and
+# decomp-ledger.py are instance-local by design (DGN-1009 work-SET doctrine,
+# kept out of this template per DGN-1006 -- see done-claim-gate.py's header),
+# so wiring them here would enforce nothing. The adapter no longer punishes
+# that: since DGN-1560 an absent decomp gate passes through with a note and an
+# absent Stop ledger allows Stop, both on stderr. An absent script for a gate
+# the adapter DOES own still denies -- and now names the missing path.
+
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = ".*"
+hooks = [
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate dispatch-return-result-first", timeout = 15 },
+]
+
+[[hooks.PreToolUse]]
+matcher = "apply_patch"
+hooks = [
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate memory", timeout = 15 },
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate skill-landing", timeout = 15 },
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate tmp-artifact", timeout = 15 },
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate done-claim", timeout = 15 },
+]
+
+[[hooks.PreToolUse]]
+matcher = "spawn_agent"
+hooks = [
+#  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate decomp", timeout = 15 },
+  { type = "command", command = "python3 routines/codex-hook-adapter.py --gate in-session-dispatch", timeout = 15 },
+]
+
+# [[hooks.Stop]]
+# hooks = [
+#   { type = "command", command = "python3 routines/codex-hook-adapter.py --stop", timeout = 15 },
+# ]
