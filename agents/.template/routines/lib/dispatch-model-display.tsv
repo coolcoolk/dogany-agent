@@ -1,0 +1,48 @@
+# dispatch-model-display.tsv -- DGN-1444: runtime model vocabulary and owner display.
+# DATA, not logic. Shell dispatch and Python status-footer both read this file.
+# One row owns the concrete runtime slug and owner-facing display for one
+# (runtime, model) pair. Adding a future runtime model is one row here.
+#
+# Columns (TAB-separated): runtime  model  observed_slug  display
+# observed_slug is the concrete runtime identifier persisted in status.json;
+# display is presentation-only, the full model name "<Vendor> <Family> <version>"
+# (owner 2026-09-27 13:38, DGN-1752; supersedes DGN-1227 dec-177's no-vendor form).
+# Codex rows carry the full display (the slug pins the version). Claude rows
+# carry the bare "Claude <Family>": the CLI decides the
+# version at run time, so it is derived from the model id the run reports
+# (lib/model_display.py); the bare name shows only until an id is observed.
+# lib/model_display.py is the only reader/parser of this file.
+# Optional 5th column: surfaces the row is offered on, comma-separated
+# ("chat" = the bridge /model picker, DGN-1814 r3). model_table() reads the
+# rows layered vendor -> family -> version (Claude / Opus / 5.5), so a second
+# chat-selectable vendor is rows marked "chat" here -- the picker turns
+# two-step (vendor, then family) by itself.
+claude-code	fable	fable	Claude Fable 5.1	chat
+claude-code	opus	opus	Claude Opus 5.5	chat
+# 2026-09-30 DGN-1673 probe on claude 2.1.284: alias sonnet -> claude-sonnet-5-5 (head-confirmed).
+claude-code	sonnet	sonnet	Claude Sonnet 5.5	chat
+claude-code	haiku	haiku	Claude Haiku 5.5	chat
+# 2026-09-24 re-measured on codex-cli 0.156.1 (owner: "왜아직도 5.6 sol써?"): `codex exec --model <m> "just answer me hi"`
+#   gpt-6-sol -> ok, gpt-6-luna -> ok, gpt-6-terra -> ERROR (model not available on this account).
+#   The old 5.6 pins were correct only for codex-cli 0.154.0; sol/luna move to gen-6, terra stays 5.6.
+codex	fable	gpt-6-astra	GPT 6 Astra
+# 2026-10-03 probe on codex-cli 0.159.3: gpt-6.1-sol -> ok; gpt-6.1-astra / gpt-6.1-luna -> ERROR (not released).
+codex	opus	gpt-6.1-sol	GPT 6.1 Sol
+codex	sonnet	gpt-5.6-terra	GPT 5.6 Terra
+codex	haiku	gpt-6-luna	GPT 6 Luna
+# DGN-1726 cloud runtime (a routine, session_context.model = <slug>): the slug
+# is passed explicitly, so it pins the version like a codex slug does -- the
+# cloud VM reports no stream back to this host to observe one from. Display
+# carries NO runtime marker (owner 2026-09-27 13:38: full model name only).
+cloud	fable	claude-fable-5-1	Claude Fable 5.1
+cloud	opus	claude-opus-5-5	Claude Opus 5.5
+cloud	sonnet	claude-sonnet-5-5	Claude Sonnet 5.5
+cloud	haiku	claude-haiku-4-5-20251001	Claude Haiku 4.5
+# DGN-1963 claude-api runtime: the claude-code worker on the monthly API credit
+# pool -- same CLI, so the version is observed like claude-code (bare name until
+# an id lands). Not offered on chat. lib/model_display.py RUNTIME_SUFFIX adds
+# " (API)" so the workbench row names the runtime.
+claude-api	fable	fable	Claude Fable 5.1
+claude-api	opus	opus	Claude Opus 5.5
+claude-api	sonnet	sonnet	Claude Sonnet 5.5
+claude-api	haiku	haiku	Claude Haiku 5.5

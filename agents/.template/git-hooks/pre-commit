@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# pre-commit: guard against commits on a detached HEAD.
+#
+# A detached HEAD means commits belong to no branch. They survive only as
+# dangling objects until garbage-collected -- invisible to normal git workflows
+# and impossible to push. This hook blocks commits in that state.
+#
+# Bypass: git commit --no-verify  (intentional detached work)
+# Rebase / cherry-pick / merge in progress: allowed (git itself detaches HEAD
+# during these operations; blocking there would break normal workflow).
+
+# ---- detect in-progress git operations that legitimately detach HEAD --------
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)"
+if [ -d "${GITDIR}/rebase-merge" ] \
+   || [ -d "${GITDIR}/rebase-apply" ] \
+   || [ -f "${GITDIR}/MERGE_HEAD" ] \
+   || [ -f "${GITDIR}/CHERRY_PICK_HEAD" ]; then
+  # Rebase, merge, or cherry-pick is in progress: pass through.
+  exit 0
+fi
+
+# ---- check whether HEAD is detached -----------------------------------------
+# git symbolic-ref exits non-zero when HEAD is not a symbolic ref (i.e. detached).
+if ! git symbolic-ref -q HEAD > /dev/null 2>&1; then
+  echo "" >&2
+  echo "ERROR: pre-commit hook -- detached HEAD" >&2
+  echo "" >&2
+  echo "현재 detached HEAD 상태 -- 커밋이 어떤 브랜치에도 안 얹힙니다." >&2
+  echo "\`git switch -c <브랜치명>\` 으로 브랜치를 만든 뒤 커밋하세요." >&2
+  echo "의도한 경우: \`git commit --no-verify\` 로 이 훅을 건너뛸 수 있습니다." >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0

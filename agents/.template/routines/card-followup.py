@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""PostToolUse hook: enforce the status card after a RECORD succeeds.
+
+Keyed on the RECORD CLI (<stem>.sh meal-add / workout-add; the engine stem
+kit_life|lifekit is matched via routines/lib/life_engine.py, DGN-1238), NOT
+on the skill, so it fires even when the agent hand-rolls a raw Bash call
+instead of invoking the diet-log / workout-log skill.
+
+Orders the card ONLY when the diet-status card renderer is installed
+(.claude/skills{,-bundle}/diet-status/card.py); otherwise silent (DGN-1809).
+
+Fires only on a SUCCESSFUL record:
+  - tool is Bash and its command runs `<stem>.sh meal-add` or `workout-add`
+  - the tool did not error (exit 0), stderr carries no failure
+  - stdout is well-formed for that record type:
+      meal-add    ->  ^\\d+\\t.+\\t\\d        (id  name  kcal)
+      workout-add ->  ^\\d+\\t.+             (id  type ...)
+On a match it injects a HARD, high-salience additionalContext order telling the
+model that its NEXT action, before answering anything else in this message, is
+to render the status card into files/outbox/ and emit its `send_file::` line.
+
+Does NOT fire on:
+  - failed record calls (non-zero exit / stderr failure / malformed stdout)
+  - usage/help calls
+  - read-only calls (meal-find, meal-day, agg-day, agg-week, workout-find, etc.)
+
+Dedupe: at most one card order per turn, tracked by a per-session sentinel file
+keyed on session_id (removed at each SessionStart is not required; the sentinel
+carries the session id so a new turn in the same session still dedupes only
+within that turn -- see below).
+
+Fail-open: any bad/unexpected stdin -> exit 0 with no output, mirroring the
+token-gate.py contract. The hook must never break the agent.
+"""
+import json
+import os
+import re
+import sys
+import tempfile
+
+# DGN-1238: the RECORD CLI has shipped under two stems (kit_life.sh /
+# lifekit.sh) and live fleets exist on both coordinates -- match every known
+# name, never one hardcoded stem. Guarded import, fail-open like the rest of
+# this hook: without the lib the inline tuple keeps both-name matching.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+try:
+    from life_engine import command_names as _life_cli_names
+    _CLI_NAMES = _life_cli_names()
+except Exception:
+    _CLI_NAMES = ("kit_life.sh", "kit_life.py", "lifekit.sh", "lifekit.py")
+
+# Well-formed record stdout (first line).
+RE_MEAL = re.compile(r"^\d+\t.+\t\d")     # id \t name \t kcal
+RE_WORKOUT = re.compile(r"^\d+\t.+")       # id \t type ...
+
+# stderr substrings that signal a real failure (not the benign auto-register
+# warning workout-add prints, e.g. "미등록 분류 자동 등록").
+STDERR_FAIL_MARKERS = ("Traceback", "Error", "error:", "usage:", "Usage:")
+
+
+def _extract_record_kind(command):
+    """Return 'meal' or 'workout' if the command is a life-engine RECORD add
+    call, else None. Read-only / mutate-other subcommands return None.
+    """
+    if not any(name in command for name in _CLI_NAMES):
+        return None
+    # meal-add / workout-add must appear as a token (not meal-find etc.).
+    # Use word-ish boundaries: the subcommand is preceded by whitespace and
+    # followed by whitespace (it always takes args) or end.
+    if re.search(r"(?:^|\s)meal-add(?:\s|$)", command):
+        return "meal"
+    if re.search(r"(?:^|\s)workout-add(?:\s|$)", command):
+        return "workout"
+    return None
+
+
+def _stdout_well_formed(kind, stdout):
+    # A compound command can print other lines (JSON, AUTO-LINKED, ...) before
+    # the record line, so any line may be the record (DGN-1942).
+    rx = {"meal": RE_MEAL, "workout": RE_WORKOUT}.get(kind)
+    if rx is None:
+        return False
+    return any(rx.match(line) for line in (stdout or "").split("\n"))
+
+
+def _stderr_ok(stderr):
+    s = stderr or ""
+    for marker in STDERR_FAIL_MARKERS:
+        if marker in s:
+            return False
+    return True
+
+
+def _dedupe_path(session_id):
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id or "nosession")
+    return os.path.join(tempfile.gettempdir(), "card-followup-%s.turn" % safe)
+
+
+# The pack's diet-status card is the only renderer this hook orders (DGN-1809).
+# Without it the kit's own meal card already rides the meal-add output, so a
+# second, text-only "card" would only compete with it -> stay silent.
+CARD_RELS = (
+    os.path.join(".claude", "skills", "diet-status", "card.py"),
+    os.path.join(".claude", "skills-bundle", "diet-status", "card.py"),
+)
+
+
+def _find_card(data):
+    """Absolute path of the installed diet-status card.py, else None. Agent
+    root = the payload cwd, else this hook's routines/.. dir."""
+    roots = []
+    cwd = data.get("cwd") if isinstance(data, dict) else None
+    if cwd:
+        roots.append(cwd)
+    roots.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for root in roots:
+        for rel in CARD_RELS:
+            path = os.path.join(root, rel)
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+ORDER = (
+    "A {kind} record just succeeded. Your NEXT action, before answering "
+    "anything else in this message, is to render the status card and send it: "
+    "run the diet-status card renderer ({card}) so it reads today's life DB "
+    "and outputs into files/outbox/, then emit its "
+    "`send_file:: <absolute path>` line. This is MANDATORY and cannot be "
+    "deferred to a later turn. After the card is emitted, continue and answer "
+    "the rest of the user's message. If matplotlib is unavailable and the "
+    "renderer exits with code 3, skip the card silently."
+)
+
+
+def main():
+    try:
+        data = json.load(sys.stdin)
+    except Exception:
+        sys.exit(0)  # fail open: never break the agent on bad input
+
+    try:
+        if data.get("hook_event_name") not in (None, "PostToolUse"):
+            sys.exit(0)
+        if data.get("tool_name") != "Bash":
+            sys.exit(0)
+
+        tool_input = data.get("tool_input") or {}
+        command = tool_input.get("command") or ""
+        kind = _extract_record_kind(command)
+        if not kind:
+            sys.exit(0)  # not a record add -> no injection
+
+        resp = data.get("tool_response") or {}
+        # PostToolUse only fires on success, but guard explicitly anyway.
+        if resp.get("interrupted"):
+            sys.exit(0)
+        stdout = resp.get("stdout") or ""
+        stderr = resp.get("stderr") or ""
+        if not _stderr_ok(stderr):
+            sys.exit(0)
+        if not _stdout_well_formed(kind, stdout):
+            sys.exit(0)
+        card = _find_card(data)
+        if not card:
+            sys.exit(0)  # no diet-status card installed -> no order
+
+        # Dedupe: one card order per turn. A "turn" is a single hook process
+        # lifetime is too short; we key on session_id + the model's current
+        # tool_use batch is not exposed, so we dedupe within a short window by
+        # writing a sentinel and only injecting when it is fresh-per-turn.
+        # Practical rule: one injection per (session_id, prompt_uuid) if
+        # available; else fall back to session_id. This collapses a compound
+        # turn that records twice into a single card order.
+        session_id = data.get("session_id") or ""
+        turn_key = data.get("prompt_uuid") or data.get("uuid") or ""
+        sentinel = _dedupe_path(session_id)
+        already = ""
+        try:
+            with open(sentinel, "r") as fh:
+                already = fh.read().strip()
+        except OSError:
+            already = ""
+        # If we have a turn_key and it matches the last one, we already injected
+        # for this turn -> skip. If no turn_key is available, dedupe on the
+        # session for a short mtime window so back-to-back records in one turn
+        # only order one card.
+        if turn_key:
+            if already == turn_key:
+                sys.exit(0)
+        else:
+            try:
+                import time
+                if os.path.exists(sentinel):
+                    age = time.time() - os.path.getmtime(sentinel)
+                    if age <= 30:  # same-turn window
+                        sys.exit(0)
+            except OSError:
+                pass
+        try:
+            with open(sentinel, "w") as fh:
+                fh.write(turn_key)
+        except OSError:
+            pass
+
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": ORDER.format(kind=kind, card=card),
+            }
+        }))
+        sys.exit(0)
+    except Exception:
+        sys.exit(0)  # fail open on any unexpected error
+
+
+if __name__ == "__main__":
+    main()

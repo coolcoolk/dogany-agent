@@ -1,0 +1,10 @@
+[Unit]
+Description=dogany stale handoff backstop timer (__AGENT_NAME__)
+
+[Timer]
+OnCalendar=*-*-* 08:40:00
+Persistent=true
+Unit=com.telegram-skill-bot.__AGENT_NAME__.handoff-stale-sweep.service
+
+[Install]
+WantedBy=timers.target

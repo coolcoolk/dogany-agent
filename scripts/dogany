@@ -1,0 +1,987 @@
+#!/bin/bash
+# dogany -- thin local launcher for a Dogany agent instance (DGN-137).
+#
+# A DUMB DISPATCHER. No business logic lives here: every subcommand shells out
+# to the real door (claude / the service manager / the repo's update.sh / the
+# bot log). Keep it that way -- logic belongs in the instance, not the launcher.
+#
+# install.sh symlinks this file into ~/.local/bin/dogany, pointing into the
+# repo checkout. The default (release) update channel NEVER moves that
+# checkout, so the symlink target would stay at install-time HEAD forever
+# (DGN-1717). update.sh therefore refreshes the launcher from the release it
+# consumed: it installs a copy at ~/.dogany/bin/dogany and repoints the
+# ~/.local/bin/dogany symlink there. A copy has no repo around it, so the
+# repo root falls back to the instance's DOGANY_REPO_ROOT (see repo_root).
+#
+# Instance resolution (DGN-1716):
+#   chat / status / logs / start / stop list the instances this machine
+#   DECLARES and let the user pick one (see list_instances): the
+#   ~/.dogany/lite_instance marker, the install registry ~/.dogany/instances,
+#   the crew registries ~/.dogany/crews/<kit>/crew.conf, and the estate scan
+#   rule of scripts/pack/lib/discover_instances.sh (the one update_plan.sh
+#   uses). One instance opens directly; several show an arrow-key picker
+#   (with a numbered non-TTY fallback), grouped by crew (see picker_plan);
+#   none stops with a clear message. There is NO directory guess -- the old
+#   <repo>/agents/main fallback is gone (a stale copy there is a
+#   valid-looking dead instance).
+#   update keeps its DGN-1717 rule: the marker or an explicit --root only.
+# An instance = a directory with .instance.conf AND
+# identity/hot.custom.agent.md, PROFILE.md or AGENT.md (see has_persona_md).
+#
+# bash 3.2 compatible (macOS ships bash 3.2). ASCII only: screen copy in
+# other languages lives in the framework's i18n language files (see lmsg).
+
+set -u
+
+PROG="dogany"
+# select_ui_available is copied verbatim from install.sh. This launcher has no
+# dry-run mode, but its shared selector interface requires the flag.
+DRY_RUN=0
+
+# --------------------------------------------------------------------------
+# Path helpers (bash 3.2: no realpath / readlink -f guaranteed).
+# --------------------------------------------------------------------------
+
+# Resolve a possible symlink chain to the final physical file path.
+resolve_link() {
+  local src="$1" dir base
+  while [ -h "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    base="$(readlink "$src")"
+    case "$base" in
+      /*) src="$base" ;;
+      *)  src="$dir/$base" ;;
+    esac
+  done
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  base="$(basename "$src")"
+  printf '%s/%s' "$dir" "$base"
+}
+
+# Repo root = parent of the scripts/ dir that holds the resolved launcher.
+# DGN-1717: the update-installed copy (~/.dogany/bin/dogany) has no repo
+# around it -- then read DOGANY_REPO_ROOT from the marker instance's
+# .instance.conf. Prints nothing when neither yields a dir with update.sh.
+repo_root() {
+  local self scripts_dir root recorded
+  self="$(resolve_link "$0")"
+  scripts_dir="$(cd -P "$(dirname "$self")" && pwd)"   # .../scripts
+  root="$(cd -P "$scripts_dir/.." && pwd)"              # repo root
+  if [ -f "$root/update.sh" ]; then
+    printf '%s' "$root"
+    return 0
+  fi
+  recorded="$(cat "$SINGLE_AGENT_MARKER" 2>/dev/null | tr -d '[:space:]')"
+  [ -n "$recorded" ] || return 0
+  root="$(sed -n 's/^DOGANY_REPO_ROOT=//p' "$recorded/.instance.conf" 2>/dev/null | head -n1)"
+  [ -n "$root" ] && [ -f "$root/update.sh" ] && printf '%s' "$root"
+  return 0
+}
+
+# Dual-accept minted-instance detector (DGN-773 T3, AGENT.md -> PROFILE.md
+# rename migration). A minted instance carries PROFILE.md (2.0+) or AGENT.md
+# (pre-2.0); post-rename AGENT.md becomes a compat symlink to PROFILE.md
+# (DGN-773 R7) so plain "-f AGENT.md" still sees it as present. Standalone
+# helper, not shared with install.sh -- this launcher never sources anything
+# by design (see file header).
+has_persona_md() {
+  # Three-way dual-accept, newest layout first (mirror of
+  # scripts/pack/lib/persona_resolver.sh and routines/onboarding-check.py):
+  #   identity/hot.custom.agent.md  2.0 layout (DGN-1141 stage 6)
+  #   PROFILE.md                    2.0 flat root (DGN-773 T3)
+  #   AGENT.md                      pre-2.0
+  # A relaid-out instance carries only the first one, so an older two-name
+  # check reads a live, fully-configured instance as "not an instance".
+  local dir="$1"
+  [ -f "$dir/identity/hot.custom.agent.md" ] \
+    || [ -f "$dir/PROFILE.md" ] || [ -f "$dir/AGENT.md" ]
+}
+
+# --------------------------------------------------------------------------
+# Instance resolution.
+# --------------------------------------------------------------------------
+SINGLE_AGENT_MARKER="$HOME/.dogany/lite_instance"
+INSTANCE_REGISTRY="$HOME/.dogany/instances"   # install.sh: "<class>\t<root>"
+# Crew registries: <crews home>/<kit>/crew.conf, "member=<root>" lines. Same
+# layout resolution as scripts/pack (update_plan.sh / crew_leave.sh).
+SHARED_HOME="${DOGANY_SHARED_HOME:-$HOME/.dogany}"
+CREW_HOME="${DOGANY_CREW_DIR:-$SHARED_HOME/crews}"
+PACK_SOURCES="${DOGANY_PACK_SOURCES:-$SHARED_HOME/pack-sources.conf}"
+TAB="$(printf '\t')"
+
+is_instance() {
+  [ -d "$1" ] && [ -f "$1/.instance.conf" ] && has_persona_md "$1"
+}
+
+# conf_value <instance> <KEY>: KEY=value from the instance's .instance.conf.
+conf_value() {
+  sed -n "s/^$2=//p" "$1/.instance.conf" 2>/dev/null | head -n1
+}
+
+# Slug = DOGANY_AGENT_NAME (mint-time), else the directory name.
+instance_slug() {
+  local slug; slug="$(conf_value "$1" DOGANY_AGENT_NAME)"
+  [ -n "$slug" ] || slug="$(basename "$1")"
+  printf '%s' "$slug"
+}
+
+# Display name = the "- Name:" line of the identity file exactly as written,
+# newest layout first (same order as has_persona_md), markdown bold
+# stripped. An unset template value ("(set at onboarding)", __PLACEHOLDER__,
+# {{x}}) or no line at all falls back to the slug. Mirror of
+# agents/.template/routines/statusline.py agent_name() -- keep in step.
+instance_name() {
+  local inst="$1" f name=""
+  for f in "$inst/identity/hot.custom.agent.md" "$inst/PROFILE.md" "$inst/AGENT.md"; do
+    [ -f "$f" ] || continue
+    name="$(sed -n 's/^- Name:[[:space:]]*//p' "$f" 2>/dev/null | head -n1 \
+            | sed -e 's/\*\*//g' -e 's/[[:space:]]*$//')"
+    break
+  done
+  case "$name" in
+    ""|"("*|*__*|*"{{"*) name="$(instance_slug "$inst")" ;;
+  esac
+  printf '%s' "$name"
+}
+
+# primary_instance: the lite_instance marker, else the first listed one.
+primary_instance() {
+  local ref=""
+  [ -f "$SINGLE_AGENT_MARKER" ] && ref="$(tr -d '[:space:]' < "$SINGLE_AGENT_MARKER")"
+  is_instance "$ref" || ref="$(list_instances | head -n1)"
+  printf '%s' "$ref"
+}
+
+# Screen language (DGN-1716): ko | en. Same sources the framework already
+# uses -- env DOGANY_LANG (install.sh --lang; version-check.py), else
+# AGENT_LANG in config/agent.conf (the i18n locale) of the primary instance,
+# else install.sh's detect_lang rule on the shell locale, else en. No new
+# setting.
+launcher_lang() {
+  local lang="${DOGANY_LANG:-}" ref=""
+  if [ -z "$lang" ]; then
+    ref="$(primary_instance)"
+    [ -n "$ref" ] && lang="$(sed -n 's/^AGENT_LANG=//p' "$ref/config/agent.conf" 2>/dev/null \
+                             | head -n1 | tr -d '[:space:]"')"
+  fi
+  if [ -z "$lang" ]; then
+    case "${LANG:-}${LC_ALL:-}${LC_MESSAGES:-}" in
+      *ko*|*ko_KR*|*Korean*) lang="ko" ;;
+    esac
+  fi
+  case "$lang" in ko|KO|ko_*|ko-*) printf 'ko' ;; *) printf 'en' ;; esac
+}
+
+# json_string <file> <key>: the string value of "key" in a flat JSON object
+# written one pair per line (the config/i18n/<lang>.json shape). Handles the
+# \n \t \" \\ escapes; rc 1 when the file or key is missing. No python:
+# the launcher runs before any venv exists.
+json_string() {
+  [ -f "$1" ] || return 1
+  awk -v k="$2" '
+    BEGIN { pat = "\"" k "\""; found = 0 }
+    {
+      s = $0; sub(/^[ \t]+/, "", s)
+      if (substr(s, 1, length(pat)) != pat) next
+      s = substr(s, length(pat) + 1)
+      if (!sub(/^[ \t]*:[ \t]*"/, "", s)) next
+      out = ""; i = 1
+      while (i <= length(s)) {
+        c = substr(s, i, 1)
+        if (c == "\\") {
+          d = substr(s, i + 1, 1)
+          if (d == "n") out = out "\n"; else if (d == "t") out = out "\t"; else out = out d
+          i += 2; continue
+        }
+        if (c == "\"") { printf "%s", out; found = 1; exit }
+        out = out c; i++
+      }
+    }
+    END { exit (found ? 0 : 1) }
+  ' "$1"
+}
+
+# subst <text> <token> <value>: every <token> in <text> replaced literally
+# (no pattern or & semantics, unlike ${var//pat/rep} on bash 5.2).
+subst() {
+  local s="$1" out=""
+  while :; do
+    case "$s" in
+      *"$2"*) out="$out${s%%"$2"*}$3"; s="${s#*"$2"}" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$out$s"
+}
+
+# Screen copy (DGN-1716). This file stays ASCII: each message has a key and
+# its English text here; the words for a language come from the framework's
+# i18n language files, config/i18n/<lang>.json, "launcher.*" keys. Looked up
+# per key in the primary instance's copy (update.sh refreshes it), then in
+# the repo template (agents/.template/config/i18n); a missing file or key
+# shows the English text.
+LAUNCHER_LANG="en"
+I18N_PRIMARY=""
+I18N_REPO=""
+screen_init() {
+  local ref root
+  LAUNCHER_LANG="$(launcher_lang)"
+  ref="$(primary_instance)"
+  I18N_PRIMARY=""; [ -n "$ref" ] && I18N_PRIMARY="$ref/config/i18n/$LAUNCHER_LANG.json"
+  root="$(repo_root)"
+  I18N_REPO=""; [ -n "$root" ] && I18N_REPO="$root/agents/.template/config/i18n/$LAUNCHER_LANG.json"
+}
+
+# lmsg <key> <english> [name=value ...]: the text for $LAUNCHER_LANG with
+# each {name} filled in, no newline.
+lmsg() {
+  local key="$1" text="$2" v
+  shift 2
+  if v="$(json_string "$I18N_PRIMARY" "$key")" || v="$(json_string "$I18N_REPO" "$key")"; then
+    text="$v"
+  fi
+  while [ $# -gt 0 ]; do
+    text="$(subst "$text" "{${1%%=*}}" "${1#*=}")"
+    shift
+  done
+  printf '%s' "$text"
+}
+ARROWS="$(printf '\342\206\221\342\206\223')"   # the up/down arrow glyphs, kept out of the source
+
+# render_instance_option: keep the picker row format in one place -- the
+# display name and the slug, no path. Used by the arrow-key selector and its
+# non-TTY numbered fallback.
+render_instance_option() {
+  printf '%s  [%s]' "$(instance_name "$1")" "$(instance_slug "$1")"
+}
+
+# --------------------------------------------------------------------------
+# Arrow-key selector (copied from install.sh; DGN-1716).
+#
+# The launcher deliberately sources no framework code. Keeping this local copy
+# avoids adding a runtime dependency to the release-installed launcher. The
+# DGN-1716 selftest compares these function bodies byte-for-byte with
+# install.sh, so there is still exactly one maintained implementation.
+# --------------------------------------------------------------------------
+SELECT_RESULT=0
+select_menu() {
+  local title="$1" def="$2"; shift 2
+  local opts=("$@")
+  local n="${#opts[@]}"
+  local cur="$def"
+  [ "$cur" -lt 0 ] && cur=0
+  [ "$cur" -ge "$n" ] && cur=$((n - 1))
+
+  # Heading rows (optional global SELECT_HEADINGS, "|i|j|" 0-based indexes):
+  # printed as labels, never selectable -- the cursor skips them and digit N
+  # means the Nth selectable row. Unset/empty = every row is selectable.
+  local heads="${SELECT_HEADINGS:-}" pick seen j
+  _select_is_head() { case "$heads" in *"|$1|"*) return 0 ;; esac; return 1; }
+  # _select_step <row> <1|-1>: the next selectable row in that direction.
+  _select_step() {
+    local c="$1" k=0
+    while [ "$k" -lt "$n" ]; do
+      c=$(( (c + $2 + n) % n ))
+      _select_is_head "$c" || break
+      k=$((k + 1))
+    done
+    printf '%s' "$c"
+  }
+  _select_is_head "$cur" && cur="$(_select_step "$cur" 1)"
+
+  # tput helpers with graceful degradation when tput/terminfo is missing.
+  local has_tput=0
+  command -v tput >/dev/null 2>&1 && tput cnorm >/dev/null 2>&1 && has_tput=1
+  local rev="" norm=""
+  if [ "$has_tput" = "1" ]; then
+    rev="$(tput smso 2>/dev/null || true)"   # standout / reverse video
+    norm="$(tput rmso 2>/dev/null || true)"
+  fi
+  # ANSI fallback for reverse video if tput gave nothing.
+  [ -z "$rev" ] && rev="$(printf '\033[7m')"
+  [ -z "$norm" ] && norm="$(printf '\033[0m')"
+
+  # Hide the cursor and guarantee it is restored on ANY exit path, including
+  # Ctrl-C. Both the INT trap and the explicit 0x03-byte handler call cnorm
+  # (show cursor) before exiting nonzero, so the terminal is never left with a
+  # hidden cursor.
+  _select_show_cursor() {
+    if [ "$has_tput" = "1" ]; then tput cnorm 2>/dev/null || true
+    else printf '\033[?25h'; fi
+  }
+  # On Ctrl-C: restore the cursor first, then exit nonzero (130 = the
+  # conventional SIGINT code). Exiting directly is deterministic and avoids a
+  # re-raise race where the interrupted `read` leaves the shell alive.
+  _select_on_int() {
+    _select_show_cursor
+    printf '\n' >&2
+    trap - INT
+    exit 130
+  }
+  trap '_select_on_int' INT
+  if [ "$has_tput" = "1" ]; then tput civis 2>/dev/null || true
+  else printf '\033[?25l'; fi
+
+  # Pre-drain any pending buffered input (paste protection, DGN-142 parity) so a
+  # stray paste cannot pre-answer the menu via the raw byte reader below.
+  local __junk
+  while IFS= read -r -t 1 __junk 2>/dev/null; do :; done
+
+  printf '%s\n' "$title"
+
+  local first=1 key rest
+  while :; do
+    # Redraw: on the first pass just print; afterwards move the cursor up N lines
+    # to overwrite the previous render in place.
+    if [ "$first" = "1" ]; then
+      first=0
+    else
+      printf '\033[%dA' "$n"
+    fi
+    local i=0
+    while [ "$i" -lt "$n" ]; do
+      printf '\033[2K'   # clear the whole line before redrawing
+      if _select_is_head "$i"; then
+        printf '  %s\n' "${opts[$i]}"
+      elif [ "$i" = "$cur" ]; then
+        printf '  %s> %s%s\n' "$rev" "${opts[$i]}" "$norm"
+      else
+        printf '    %s\n' "${opts[$i]}"
+      fi
+      i=$((i + 1))
+    done
+
+    # Read one raw byte. EOF (read fails) -> restore + abort like other prompts.
+    IFS= read -rsn1 key || { _select_show_cursor; trap - INT; abort_on_eof; }
+    case "$key" in
+      $'\003')
+        # Ctrl-C. `read -sn1` disables ISIG for the duration of the read, so an
+        # interactive Ctrl-C arrives here as a literal 0x03 byte rather than a
+        # SIGINT signal. Handle it explicitly: restore the cursor and exit
+        # nonzero (130) -- deterministic regardless of the trap firing.
+        _select_show_cursor; trap - INT
+        printf '\n' >&2
+        exit 130
+        ;;
+      $'\033')
+        # Escape sequence: read the two following bytes ([A / [B / [C / [D).
+        # -t 1 so a lone ESC does not hang forever.
+        IFS= read -rsn2 -t 1 rest 2>/dev/null || rest=""
+        case "$rest" in
+          '[A'|'OA') cur="$(_select_step "$cur" -1)" ;;   # up
+          '[B'|'OB') cur="$(_select_step "$cur" 1)" ;;    # down
+          *) : ;;
+        esac
+        ;;
+      k|K) cur="$(_select_step "$cur" -1)" ;;
+      j|J) cur="$(_select_step "$cur" 1)" ;;
+      ''|$'\n'|$'\r')
+        # Enter -> confirm current selection.
+        _select_show_cursor; trap - INT
+        SELECT_RESULT="$cur"
+        return 0
+        ;;
+      [1-9])
+        # Digit shortcut: jump to selectable row N (1-based) and confirm
+        # immediately. Heading rows are not counted.
+        pick=-1; seen=0; j=0
+        while [ "$j" -lt "$n" ]; do
+          if ! _select_is_head "$j"; then
+            seen=$((seen + 1))
+            [ "$seen" = "$key" ] && { pick="$j"; break; }
+          fi
+          j=$((j + 1))
+        done
+        if [ "$pick" -ge 0 ]; then
+          _select_show_cursor; trap - INT
+          SELECT_RESULT="$pick"
+          return 0
+        fi
+        ;;
+      *) : ;;
+    esac
+  done
+}
+
+# Whether the arrow selector can run: needs an interactive TTY and a sane TERM,
+# and never in dry-run (dry-run must stay fully scripted/non-interactive).
+select_ui_available() {
+  [ "$DRY_RUN" = "1" ] && return 1
+  [ -t 0 ] || return 1
+  [ "${TERM:-}" = "dumb" ] && return 1
+  return 0
+}
+
+# select_menu invokes this only on a TTY EOF, and it must not return (install.sh's
+# does not either). It has the launcher's own wording, while the copied
+# selector body stays byte-identical to install.sh.
+abort_on_eof() {
+  echo "$PROG: $(lmsg launcher.no_pick 'no agent picked.')" >&2
+  exit 1
+}
+
+# list_instances: every DECLARED instance on this machine, one physical root
+# per line, deduped, sorted by slug. Sources (DGN-1716):
+#   1. ~/.dogany/lite_instance   primary-instance pointer (install.sh)
+#   2. ~/.dogany/instances       install registry, "<class>\t<root>" lines
+#   3. estate scan -- mirror of scripts/pack/lib/discover_instances.sh (the
+#      update_plan.sh source; this launcher never sources repo files, see
+#      header): .instance.conf roots at ~/.dogany/main (install.sh
+#      default), ~/.dogany/agents/*, ~/dogany/*, ~/dogany/*/agents/*,
+#      ~/dogany/*/poc/*.
+#   4. crew registries -- member= lines of <crews home>/<kit>/crew.conf.
+# Every candidate must pass is_instance; a stale registry line just drops.
+list_instances() {
+  local d phys seen="|"
+  {
+    [ -f "$SINGLE_AGENT_MARKER" ] && tr -d '[:space:]' < "$SINGLE_AGENT_MARKER" && echo
+    [ -f "$INSTANCE_REGISTRY" ] && awk -F'\t' 'NF >= 2 { print $2 }' "$INSTANCE_REGISTRY"
+    for d in "$HOME/.dogany/main/" "$HOME/.dogany/agents"/*/ "$HOME/dogany"/*/ \
+             "$HOME/dogany"/*/agents/*/ "$HOME/dogany"/*/poc/*/; do
+      [ -f "${d}.instance.conf" ] && printf '%s\n' "${d%/}"
+    done
+    for d in "$CREW_HOME"/*/crew.conf; do
+      [ -f "$d" ] && sed -n 's/^member=//p' "$d"
+    done
+  } | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    is_instance "$d" || continue
+    phys="$(cd "$d" 2>/dev/null && pwd -P)" || continue
+    case "$seen" in *"|$phys|"*) continue ;; esac
+    seen="$seen$phys|"
+    printf '%s\t%s\n' "$(instance_slug "$phys" | tr '[:upper:]' '[:lower:]')" "$phys"
+  done | LC_ALL=C sort | cut -f2-
+}
+
+# ~/... form of a path, for display only.
+tilde_path() {
+  case "$1" in
+    "$HOME"/*) printf '~%s' "${1#"$HOME"}" ;;
+    *)         printf '%s' "$1" ;;
+  esac
+}
+
+# --------------------------------------------------------------------------
+# Crew grouping (DGN-1716). The crew-shared registry is the ONE source:
+# <crews home>/<kit>/crew.conf member= lines (update_plan.sh's crew
+# discovery source). Heading = "<kit display name> crew", English on every
+# screen, the display name lowercased. Display name: the kit manifest's
+# name_en (pack-manifest.json of the kit repo in pack-sources.conf), else
+# name_en in a declared crew's crew.declared (scripts/pack/crew_declare.sh),
+# else the id itself (kit_life -> "lifekit").
+# dec-191: the life kit crew has an explicit display override, "Lifekit Crew"
+# (the word Crew stays English; the kit_life id and paths are unchanged).
+# --------------------------------------------------------------------------
+crew_heading() {
+  local kit="$1" name="" repo
+  case "$kit" in kit_life|lifekit) printf 'Lifekit Crew'; return 0 ;; esac
+  repo="$(sed -n "s/^$kit\.repo=//p" "$PACK_SOURCES" 2>/dev/null | head -n1)"
+  [ -n "$repo" ] && name="$(json_string "$repo/pack-manifest.json" name_en)"
+  [ -n "$name" ] || name="$(sed -n 's/^name_en=//p' "$CREW_HOME/$kit/crew.declared" 2>/dev/null | head -n1)"
+  if [ -z "$name" ]; then
+    case "$kit" in kit_?*) name="${kit#kit_}kit" ;; *) name="$kit" ;; esac
+  fi
+  printf '%s crew' "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+}
+
+# crew_list: "<heading>\t<kit>" per crew registry, sorted by heading
+# (case-insensitive, so the "Lifekit Crew" override keeps its place). A kit
+# directory name outside [A-Za-z0-9_-] is skipped (it is spliced into sed).
+crew_list() {
+  local conf kit heading
+  for conf in "$CREW_HOME"/*/crew.conf; do
+    [ -f "$conf" ] || continue
+    kit="$(basename "$(dirname "$conf")")"
+    case "$kit" in *[!A-Za-z0-9_-]*) continue ;; esac
+    heading="$(crew_heading "$kit")"
+    printf '%s\t%s\t%s\n' "$(printf '%s' "$heading" | tr '[:upper:]' '[:lower:]')" "$heading" "$kit"
+  done | LC_ALL=C sort | cut -f2-3
+}
+
+# crew_rows <kit> <roots> <placed>: the crew's members that are listed in
+# <roots> (newline list) and not in <placed> ("|a|b|"), physical paths, one
+# per line. Leader first: the first member (crew.conf order) whose
+# DOGANY_AGENT_CLASS is not "domain" -- the representative rule of
+# install.sh instance_class_of() and dogany-mac-optimize gate.sh (crew.conf
+# has no leader field). No such member -> crew.conf order.
+crew_rows() {
+  local conf="$CREW_HOME/$1/crew.conf" roots="
+$2
+" placed="$3" line phys order="|" leader="" rest=""
+  [ -f "$conf" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in member=*) ;; *) continue ;; esac
+    phys="$(cd "${line#member=}" 2>/dev/null && pwd -P)" || continue
+    case "$roots" in *"
+$phys
+"*) ;; *) continue ;; esac
+    case "$placed$order" in *"|$phys|"*) continue ;; esac
+    order="$order$phys|"
+    if [ -z "$leader" ] && [ "$(conf_value "$phys" DOGANY_AGENT_CLASS)" != "domain" ]; then
+      leader="$phys"
+    else
+      rest="$rest$phys
+"
+    fi
+  done < "$conf"
+  [ -n "$leader" ] && printf '%s\n' "$leader"
+  printf '%s' "$rest"
+}
+
+# picker_plan <roots>: the picker's rows in display order, "H\t<heading>" or
+# "I\t<root>". Crews first (sorted by heading), an instance in two crews
+# only under the first; then the rest under "no crew". With no crew on the
+# machine the list is flat (no headings).
+picker_plan() {
+  local roots="$1" heading kit r r2 placed="|" grouped=0 rest=""
+  while IFS="$TAB" read -r heading kit; do
+    [ -n "$kit" ] || continue
+    r="$(crew_rows "$kit" "$roots" "$placed")"
+    [ -n "$r" ] || continue
+    grouped=1
+    printf 'H\t%s\n' "$heading"
+    while IFS= read -r r2; do
+      printf 'I\t%s\n' "$r2"
+      placed="$placed$r2|"
+    done <<ROWS
+$r
+ROWS
+  done <<CREWS
+$(crew_list)
+CREWS
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    case "$placed" in *"|$r|"*) continue ;; esac
+    rest="$rest$r
+"
+  done <<ROOTS
+$roots
+ROOTS
+  if [ -n "$rest" ]; then
+    [ "$grouped" = "1" ] && printf 'H\t%s\n' "$(lmsg launcher.no_crew 'no crew')"
+    printf '%s' "$rest" | while IFS= read -r r; do printf 'I\t%s\n' "$r"; done
+  fi
+}
+
+# resolve_instance: pick among the declared instances (DGN-1716). Prints the
+# chosen root on stdout; the list, prompt and errors go to stderr, so it
+# works inside $(...). The choice is read from stdin. Rows are grouped by
+# crew under non-selectable headings; the last row is Cancel (an
+# arrow-selectable row, not a key).
+resolve_instance() {
+  local roots n i kind val reply selected="" heads="|" grouped=0 header hint
+  local options=() row_roots=() picks=()
+  screen_init
+  roots="$(list_instances)"
+  n=0; [ -n "$roots" ] && n="$(printf '%s\n' "$roots" | wc -l | tr -d ' ')"
+
+  if [ "$n" = "0" ]; then
+    echo "$PROG: $(lmsg launcher.none_found 'no Dogany agent found on this machine.')" >&2
+    lmsg launcher.none_found_hint '  Looked in: ~/.dogany/lite_instance, ~/.dogany/instances, ~/.dogany/crews/*/crew.conf,
+             ~/.dogany/main, ~/.dogany/agents/*, ~/dogany/*, ~/dogany/*/agents/*, ~/dogany/*/poc/*
+  An agent is a folder with .instance.conf and identity/hot.custom.agent.md
+  (or PROFILE.md / AGENT.md). Install one first: bash install.sh' >&2
+    echo >&2
+    return 1
+  fi
+  if [ "$n" = "1" ]; then
+    printf '%s\n' "$roots"
+    return 0
+  fi
+
+  # options[] = what select_menu shows; row_roots[] = the root per row ("" on
+  # a heading or Cancel); picks[] = the row index behind each number.
+  while IFS="$TAB" read -r kind val; do
+    [ -n "$kind" ] || continue
+    if [ "$kind" = "H" ]; then
+      grouped=1
+      heads="$heads${#options[@]}|"
+      row_roots[${#options[@]}]=""
+      options[${#options[@]}]="$val"
+    else
+      picks[${#picks[@]}]="${#options[@]}"
+      row_roots[${#options[@]}]="$val"
+      options[${#options[@]}]="$(render_instance_option "$val")"
+    fi
+  done <<PLAN
+$(picker_plan "$roots")
+PLAN
+  if [ "$grouped" = "1" ]; then   # a blank label sets Cancel apart from the last group
+    heads="$heads${#options[@]}|"
+    row_roots[${#options[@]}]=""
+    options[${#options[@]}]=""
+  fi
+  picks[${#picks[@]}]="${#options[@]}"
+  row_roots[${#options[@]}]=""
+  options[${#options[@]}]="$(lmsg launcher.cancel_row 'Cancel')"
+  header="$(lmsg launcher.header 'Dogany agents on this machine:')"
+  hint="$(lmsg launcher.hint "Use $ARROWS to pick, Enter to open")"
+
+  if select_ui_available; then
+    # The selector paints on stderr, preserving stdout for the chosen root.
+    # Title = header line + hint line (select_menu prints it as given).
+    [ "$grouped" = "1" ] || heads=""
+    SELECT_HEADINGS="$heads" select_menu "$header
+$hint" 0 "${options[@]}" >&2 || return 1
+    selected="$SELECT_RESULT"
+  else
+    {
+      printf '%s\n\n' "$header"
+      i=0
+      for val in "${options[@]}"; do
+        case "$heads" in
+          *"|$i|"*) if [ -n "$val" ]; then printf '  %s\n' "$val"; else echo; fi ;;
+          *)
+            reply=0
+            while [ "${picks[$reply]}" != "$i" ]; do reply=$((reply + 1)); done
+            if [ "$grouped" = "1" ]; then printf '    %d) %s\n' "$((reply + 1))" "$val"
+            else printf '  %d) %s\n' "$((reply + 1))" "$val"; fi
+            ;;
+        esac
+        i=$((i + 1))
+      done
+      echo
+    } >&2
+    while :; do
+      printf '%s' "$(lmsg launcher.pick_prompt 'Pick an agent [1-{n}]: ' n="$((n + 1))")" >&2
+      if ! IFS= read -r reply; then
+        echo >&2
+        echo "$PROG: $(lmsg launcher.no_pick 'no agent picked.')" >&2
+        return 1
+      fi
+      reply="$(printf '%s' "$reply" | tr -d '[:space:]')"
+      case "$reply" in
+        ''|*[!0-9]*) ;;
+        *)
+          if [ "$reply" -ge 1 ] && [ "$reply" -le "$((n + 1))" ]; then
+            selected="${picks[$((reply - 1))]}"
+            break
+          fi
+          ;;
+      esac
+      echo "  $(lmsg launcher.bad_number 'Type a number from 1 to {n}.' n="$((n + 1))")" >&2
+    done
+  fi
+
+  if [ -z "${row_roots[$selected]}" ]; then
+    echo "$PROG: $(lmsg launcher.cancelled 'cancelled.')" >&2
+    return 1
+  fi
+  printf '%s\n' "${row_roots[$selected]}"
+}
+
+# marker_instance: update's resolver (DGN-1717) -- the marker only, never a
+# picker or a directory guess.
+marker_instance() {
+  local recorded=""
+  if [ -f "$SINGLE_AGENT_MARKER" ]; then
+    recorded="$(tr -d '[:space:]' < "$SINGLE_AGENT_MARKER" 2>/dev/null)"
+    if [ -n "$recorded" ] && [ -d "$recorded" ] && has_persona_md "$recorded"; then
+      (cd "$recorded" && pwd -P)
+      return 0
+    fi
+  fi
+  echo "$PROG: could not resolve an agent instance." >&2
+  echo "  Looked for marker: $SINGLE_AGENT_MARKER" >&2
+  echo "  It does not point at a directory containing identity/hot.custom.agent.md," >&2
+  echo "  PROFILE.md or AGENT.md." >&2
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# Log path resolution. Naming differs across versions:
+#   <instance>/.telegram_bot/logs/  (current)   or   <instance>/runtime/logs/
+# Pick whichever directory exists; prefer the one that actually holds bot.log.
+# --------------------------------------------------------------------------
+resolve_log() {
+  local inst="$1" d
+  for d in "$inst/runtime/logs" "$inst/.telegram_bot/logs"; do
+    [ -f "$d/bot.log" ] && { printf '%s' "$d/bot.log"; return 0; }
+  done
+  # No bot.log yet: return the log path under whichever logs dir exists.
+  for d in "$inst/runtime/logs" "$inst/.telegram_bot/logs"; do
+    [ -d "$d" ] && { printf '%s' "$d/bot.log"; return 0; }
+  done
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# Service label. Derive from the plist under <instance>/bridge/*.plist, reading
+# the <key>Label</key> value (filename != Label; same approach as install.sh).
+# Linux: the systemd unit is a fixed name.
+# --------------------------------------------------------------------------
+SYSTEMD_UNIT="dogany-agent.service"
+
+plist_label() {
+  local plist="$1" label=""
+  [ -f "$plist" ] || return 0
+  if command -v plutil >/dev/null 2>&1; then
+    label="$(plutil -extract Label raw -o - "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ] && [ -x /usr/libexec/PlistBuddy ]; then
+    label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist" 2>/dev/null || true)"
+  fi
+  if [ -z "$label" ]; then
+    label="$(grep -A1 '<key>Label</key>' "$plist" 2>/dev/null \
+             | grep '<string>' | head -n1 \
+             | sed -E 's#.*<string>(.*)</string>.*#\1#')"
+  fi
+  printf '%s' "$label"
+}
+
+# Echo the launchd service label for an instance (macOS), or "" if none found.
+service_label() {
+  local inst="$1" p label=""
+  for p in "$inst"/bridge/*.plist; do
+    [ -e "$p" ] || continue
+    label="$(plist_label "$p")"
+    if [ -z "$label" ]; then
+      echo "$PROG: cannot determine launchd Label from $p." >&2
+      return 1
+    fi
+    break
+  done
+  printf '%s' "$label"
+}
+
+# --------------------------------------------------------------------------
+# Subcommands.
+# --------------------------------------------------------------------------
+
+cmd_chat() {
+  local inst; inst="$(resolve_instance)" || return 1
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "$PROG: 'claude' CLI not found on PATH." >&2
+    return 1
+  fi
+  cd "$inst" || return 1
+  # DGN-276/1716: brand the terminal title with the agent's display name for
+  # the chat session (OSC 0 sets the current window/tab title only; the
+  # terminal restores its own title when claude exits). claude would retitle
+  # the tab from the conversation topic; CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+  # keeps ours. The name inside claude is drawn by the instance's statusLine
+  # (routines/statusline.py). Not `claude --agent`: that REPLACES the default
+  # system prompt (code.claude.com/docs/en/sub-agents).
+  local name; name="$(instance_name "$inst")"
+  printf '\033]0;%s\007' "dogany $name"
+  screen_init
+  echo "$PROG: $(lmsg launcher.opening 'opening {name} ({path})' name="$name" path="$(tilde_path "$inst")")" >&2
+  # Owner 2026-09-26: session name = the agent's display name, so /resume and
+  # the tab keep it (/resume already shows each session's time).
+  CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 exec claude -n "$name"
+}
+
+cmd_status() {
+  local inst; inst="$(resolve_instance)" || return 1
+  echo "instance:  $inst"
+
+  local os; os="$(uname -s)"
+
+  # --- service loaded? ---
+  if [ "$os" = "Darwin" ]; then
+    local label; label="$(service_label "$inst")"
+    if [ -z "$label" ]; then
+      echo "service:   (no plist found under $inst/bridge)"
+    elif launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 \
+         || launchctl list 2>/dev/null | grep -q -- "$label"; then
+      echo "service:   loaded ($label)"
+    else
+      echo "service:   NOT loaded ($label)"
+    fi
+  else
+    if command -v systemctl >/dev/null 2>&1 \
+       && systemctl --user is-active --quiet "$SYSTEMD_UNIT" 2>/dev/null; then
+      echo "service:   active ($SYSTEMD_UNIT)"
+    elif command -v systemctl >/dev/null 2>&1; then
+      echo "service:   NOT active ($SYSTEMD_UNIT)"
+    else
+      echo "service:   (systemctl not available)"
+    fi
+  fi
+
+  # --- bridge process alive? (scoped to THIS instance path) ---
+  if pgrep -f "bridge --path $inst" >/dev/null 2>&1; then
+    echo "bridge:    running"
+  else
+    echo "bridge:    not running"
+  fi
+
+  # --- bot.log last-write age ---
+  local log; log="$(resolve_log "$inst" 2>/dev/null || true)"
+  if [ -n "$log" ] && [ -f "$log" ]; then
+    local mtime now age
+    # GNU first: GNU `stat -f` is filesystem mode; BSD stat rejects -c.
+    mtime="$(stat -c %Y "$log" 2>/dev/null || stat -f %m "$log" 2>/dev/null)" || mtime=""
+    if [ -n "$mtime" ]; then
+      now="$(date +%s)"
+      age=$(( now - mtime ))
+      echo "bot.log:   last write ${age}s ago ($log)"
+    else
+      echo "bot.log:   present ($log)"
+    fi
+  else
+    echo "bot.log:   not found"
+  fi
+
+  # --- routine labels present (scoped to THIS instance's routine plists) ---
+  if [ "$os" = "Darwin" ]; then
+    local total=0 loaded=0 p rlabel
+    for p in "$inst"/routines/*.plist; do
+      [ -e "$p" ] || continue
+      total=$(( total + 1 ))
+      rlabel="$(plist_label "$p")"
+      if [ -z "$rlabel" ]; then
+        echo "routines:  cannot determine launchd Label from $p" >&2
+        continue
+      fi
+      if launchctl print "gui/$(id -u)/$rlabel" >/dev/null 2>&1 \
+         || launchctl list 2>/dev/null | grep -q -- "$rlabel"; then
+        loaded=$(( loaded + 1 ))
+      fi
+    done
+    echo "routines:  $loaded/$total routine plist(s) loaded"
+  else
+    if command -v systemctl >/dev/null 2>&1; then
+      local n
+      n="$(systemctl --user list-units --type=timer --all 2>/dev/null \
+           | grep -c 'dogany-' || true)"
+      echo "routines:  $n systemd timer(s) matching dogany-*"
+    else
+      echo "routines:  (systemctl not available)"
+    fi
+  fi
+}
+
+cmd_logs() {
+  local inst follow=0 log
+  inst="$(resolve_instance)" || return 1
+  case "${1:-}" in -f|--follow) follow=1 ;; esac
+  log="$(resolve_log "$inst" 2>/dev/null || true)"
+  if [ -z "$log" ] || [ ! -f "$log" ]; then
+    echo "$PROG: no bot.log found under $inst (runtime/logs or .telegram_bot/logs)." >&2
+    return 1
+  fi
+  if [ "$follow" = "1" ]; then
+    exec tail -f "$log"
+  else
+    exec tail -n 200 "$log"
+  fi
+}
+
+# DGN-1717: update.sh defaults to <repo>/agents/main without --root, so a
+# bare exec could update a stale copy instead of the real instance. An
+# explicit --root from the user wins; otherwise resolve (marker only) and
+# pass it. Resolve failure stops here -- never let update.sh pick a default.
+cmd_update() {
+  local root inst a
+  root="$(repo_root)"
+  if [ -z "$root" ] || [ ! -x "$root/update.sh" ]; then
+    echo "$PROG: update.sh not found or not executable at ${root:-<unknown repo>}." >&2
+    return 1
+  fi
+  for a in "$@"; do
+    case "$a" in --root|--root=*) exec "$root/update.sh" "$@" ;; esac
+  done
+  if ! inst="$(marker_instance)"; then
+    echo "$PROG update: stopped -- no instance to update. Pass it explicitly:" >&2
+    echo "  $PROG update --root <instance dir>" >&2
+    return 1
+  fi
+  exec "$root/update.sh" --root "$inst" "$@"
+}
+
+# Shared y/n confirm (default no). Returns 0 on yes.
+confirm() {
+  local prompt="$1" reply
+  printf '%s [y/N] ' "$prompt"
+  IFS= read -r reply || return 1
+  reply="$(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]')"
+  case "$reply" in y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+cmd_start() {
+  cmd_service_op "start"
+}
+
+cmd_stop() {
+  cmd_service_op "stop"
+}
+
+cmd_service_op() {
+  local op="$1" inst os
+  inst="$(resolve_instance)" || return 1
+  os="$(uname -s)"
+
+  if ! confirm "$PROG $op: $op the agent service now?"; then
+    echo "aborted."
+    return 0
+  fi
+
+  if [ "$os" = "Darwin" ]; then
+    local label; label="$(service_label "$inst")"
+    if [ -z "$label" ]; then
+      echo "$PROG: no plist found under $inst/bridge -- cannot derive the service label." >&2
+      return 1
+    fi
+    local dest="$HOME/Library/LaunchAgents/$(basename "$(ls "$inst"/bridge/*.plist 2>/dev/null | head -n1)")"
+    if [ "$op" = "start" ]; then
+      launchctl kickstart "gui/$(id -u)/$label" 2>/dev/null \
+        || launchctl bootstrap "gui/$(id -u)" "$dest" 2>/dev/null \
+        || { echo "$PROG: failed to start $label." >&2; return 1; }
+      echo "started: $label"
+    else
+      launchctl bootout "gui/$(id -u)/$label" 2>/dev/null \
+        || launchctl bootout "gui/$(id -u)" "$dest" 2>/dev/null \
+        || { echo "$PROG: failed to stop $label." >&2; return 1; }
+      echo "stopped: $label"
+    fi
+  else
+    if ! command -v systemctl >/dev/null 2>&1; then
+      echo "$PROG: systemctl not available." >&2
+      return 1
+    fi
+    systemctl --user "$op" "$SYSTEMD_UNIT" \
+      || { echo "$PROG: systemctl --user $op $SYSTEMD_UNIT failed." >&2; return 1; }
+    echo "${op}ed: $SYSTEMD_UNIT"
+  fi
+}
+
+usage() {
+  cat <<USAGE
+$PROG -- local launcher for your Dogany agent
+
+Usage: $PROG [command]
+
+Commands:
+  (none) | chat    pick an agent, cd into it and open claude (the local door)
+  status           one-screen health (service / bridge / bot.log / routines)
+  logs [-f]        tail the bot log (-f to follow)
+  update           update the marker instance (repo's update.sh --root <instance>)
+  start            start the agent service (asks to confirm)
+  stop             stop the agent service (asks to confirm)
+  help             this message
+
+With several agents on this machine, chat/status/logs/start/stop ask which
+one (arrow-key list). update uses ~/.dogany/lite_instance or an explicit --root.
+USAGE
+}
+
+# --------------------------------------------------------------------------
+# Dispatch.
+# --------------------------------------------------------------------------
+main() {
+  local sub="${1:-chat}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    chat)           cmd_chat "$@" ;;
+    status)         cmd_status "$@" ;;
+    logs)           cmd_logs "$@" ;;
+    update)         cmd_update "$@" ;;
+    start)          cmd_start "$@" ;;
+    stop)           cmd_stop "$@" ;;
+    help|-h|--help) usage ;;
+    *)              echo "$PROG: unknown command: $sub" >&2; echo >&2; usage >&2; exit 1 ;;
+  esac
+}
+
+main "$@"

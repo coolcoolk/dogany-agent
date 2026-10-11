@@ -1,0 +1,9 @@
+[Unit]
+Description=dogany stale handoff backstop (__AGENT_NAME__)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash __PROJECT_ROOT__/routines/cron-guard.sh --label com.telegram-skill-bot.__AGENT_NAME__.handoff-stale-sweep --friendly-name handoff-stale-sweep --log __PROJECT_ROOT__/.telegram_bot/logs/handoff-stale-sweep.stdout.log -- /bin/bash __PROJECT_ROOT__/routines/handoff-stale-sweep.sh
+WorkingDirectory=__PROJECT_ROOT__
+Environment=HOME=__HOME__
+Environment=PATH=__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin

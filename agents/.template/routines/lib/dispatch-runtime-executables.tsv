@@ -1,0 +1,23 @@
+# dispatch-runtime-executables.tsv -- DGN-1673: dispatch runtime -> the local
+# CLI executable it spawns. DATA, not logic. routines/cli-updater.py reads it
+# to derive the nightly CLI watch set: every distinct runtime in
+# dispatch-tier-bindings.tsv is looked up here, so a runtime cannot start
+# being used without its binary entering the watch set. A runtime that is in
+# the tier table but has NO row here is reported (alert), never silently
+# skipped.
+#
+# Why a SIBLING file and not a 5th column on dispatch-tier-bindings.tsv: same
+# reason as dispatch-effort-bindings.tsv -- the tier table is keyed
+# (runtime, axis), the executable is a property of the runtime alone, and the
+# gate's parser of the tier table is not to be touched by this ticket.
+#
+# Columns (TAB-separated): runtime  executable  evidence
+#   executable = bare command name dispatch-detached.sh invokes via PATH.
+#                The install class (claude-native / codex-standalone / other)
+#                is NOT declared here: cli-updater.py classifies it from the
+#                realpath at run time, so a re-install under another method
+#                cannot leave a stale class in this file.
+claude-code	claude	dispatch-detached.sh worker spawns `claude -p` (bare name, PATH)
+codex	codex	dispatch-detached.sh worker spawns `codex exec` (bare name, PATH)
+cloud	claude	DGN-1726: the cloud runtime's local poll/launch turns are short `claude -p` runs on this host
+claude-api	claude	DGN-1963: the claude-code worker (`claude -p`) with the pool API key in its env

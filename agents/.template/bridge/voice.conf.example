@@ -1,0 +1,6 @@
+# Copy to ~/.dogany/voice.conf and customize. Read on bridge startup.
+# Instance LOCAL_WHISPER_MODEL / WHISPER_LANGUAGE override these defaults.
+model=large-v3-turbo
+# language=en  # omit to derive from each instance's LOCALE / AGENT_LANG
+# Comma-separated phrases. Instance WHISPER_VOCABULARY adds to this list.
+vocabulary="도가니, 메인, 서기, 라이프킷, 팩, 킷, 민팅, 착지, 브릿지, 텔레그램"

@@ -1,0 +1,968 @@
+{
+ "grid_mixed": {
+  "flows": [
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:r",
+      [
+       [
+        "text",
+        "two",
+        [
+         [
+          [
+           "k",
+           "idrill:abcd1234:2:k"
+          ],
+          [
+           "l",
+           "idrill:abcd1234:2:l"
+          ]
+         ],
+         [
+          [
+           "<<",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "back",
+      [
+       [
+        "text",
+        "grid",
+        [
+         [
+          [
+           "p",
+           "idrill:abcd1234:1:p"
+          ],
+          [
+           "q",
+           "idrill:abcd1234:1:q"
+          ]
+         ],
+         [
+          [
+           "r",
+           "idrill:abcd1234:1:r"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "1:q",
+      [
+       [
+        "text",
+        "two",
+        [
+         [
+          [
+           "k",
+           "idrill:abcd1234:2:k"
+          ],
+          [
+           "l",
+           "idrill:abcd1234:2:l"
+          ]
+         ],
+         [
+          [
+           "<<",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "2:l",
+      [
+       [
+        "text",
+        "Done: q",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "q",
+      "l"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:p",
+         "text": "p"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:q",
+         "text": "q"
+        }
+       ],
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:r",
+         "text": "r"
+        }
+       ]
+      ]
+     },
+     "text": "grid"
+    }
+   }
+  ],
+  "specs": {
+   "1": [
+    [
+     [
+      [
+       "p",
+       "idrill:abcd1234:1:p"
+      ],
+      [
+       "q",
+       "idrill:abcd1234:1:q"
+      ]
+     ],
+     [
+      [
+       "r",
+       "idrill:abcd1234:1:r"
+      ]
+     ]
+    ],
+    "grid"
+   ],
+   "2": [
+    [
+     [
+      [
+       "k",
+       "idrill:abcd1234:2:k"
+      ],
+      [
+       "l",
+       "idrill:abcd1234:2:l"
+      ]
+     ],
+     [
+      [
+       "<<",
+       "idrill:abcd1234:back"
+      ]
+     ]
+    ],
+    "two"
+   ]
+  }
+ },
+ "hold": {
+  "flows": [
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:30",
+      [
+       [
+        "markup",
+        [
+         [
+          [
+           "ok",
+           "idrill:abcd1234:2:ok"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "2:ok",
+      [
+       [
+        "text",
+        "held 45s",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "30",
+      "ok"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:30",
+         "text": "30"
+        }
+       ]
+      ]
+     },
+     "text": "hold"
+    }
+   }
+  ],
+  "specs": {
+   "1": [
+    [
+     [
+      [
+       "30",
+       "idrill:abcd1234:1:30"
+      ]
+     ]
+    ],
+    "hold"
+   ],
+   "2": [
+    [
+     [
+      [
+       "ok",
+       "idrill:abcd1234:2:ok"
+      ]
+     ]
+    ],
+    null
+   ]
+  }
+ },
+ "three_step_nav_fold": {
+  "flows": [
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:a",
+      [
+       [
+        "markup",
+        [
+         [
+          [
+           "X",
+           "idrill:abcd1234:2:x"
+          ],
+          [
+           "Y",
+           "idrill:abcd1234:2:y"
+          ]
+         ],
+         [
+          [
+           "Z",
+           "idrill:abcd1234:2:z"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "2:z",
+      [
+       [
+        "text",
+        "third",
+        [
+         [
+          [
+           "1",
+           "idrill:abcd1234:3:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:3:2"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "3:2",
+      [
+       [
+        "text",
+        "a-z-2\n<blockquote expandable>sum a\nbody z 2</blockquote>",
+        null,
+        "HTML"
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "a",
+      "z",
+      "2"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:a",
+         "text": "A"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:b",
+         "text": "B"
+        }
+       ]
+      ]
+     },
+     "text": "first {a}"
+    }
+   },
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:b",
+      [
+       [
+        "markup",
+        [
+         [
+          [
+           "X",
+           "idrill:abcd1234:2:x"
+          ],
+          [
+           "Y",
+           "idrill:abcd1234:2:y"
+          ]
+         ],
+         [
+          [
+           "Z",
+           "idrill:abcd1234:2:z"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "2:x",
+      [
+       [
+        "text",
+        "third",
+        [
+         [
+          [
+           "1",
+           "idrill:abcd1234:3:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:3:2"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "back",
+      [
+       [
+        "markup",
+        [
+         [
+          [
+           "X",
+           "idrill:abcd1234:2:x"
+          ],
+          [
+           "Y",
+           "idrill:abcd1234:2:y"
+          ]
+         ],
+         [
+          [
+           "Z",
+           "idrill:abcd1234:2:z"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ]
+       ]
+      ]
+     ],
+     [
+      "2:y",
+      [
+       [
+        "text",
+        "third",
+        [
+         [
+          [
+           "1",
+           "idrill:abcd1234:3:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:3:2"
+          ]
+         ],
+         [
+          [
+           "« Back",
+           "idrill:abcd1234:back"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "3:1",
+      [
+       [
+        "text",
+        "b-y-1\n<blockquote expandable>sum b\nbody y 1</blockquote>",
+        null,
+        "HTML"
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "b",
+      "y",
+      "1"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:a",
+         "text": "A"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:b",
+         "text": "B"
+        }
+       ]
+      ]
+     },
+     "text": "first {a}"
+    }
+   },
+   {
+    "arm_left": true,
+    "events": [
+     [
+      "back",
+      [
+       [
+        "text",
+        "Already at the first step.",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:a",
+         "text": "A"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:b",
+         "text": "B"
+        }
+       ]
+      ]
+     },
+     "text": "first {a}"
+    }
+   }
+  ],
+  "specs": {
+   "1": [
+    [
+     [
+      [
+       "A",
+       "idrill:abcd1234:1:a"
+      ],
+      [
+       "B",
+       "idrill:abcd1234:1:b"
+      ]
+     ]
+    ],
+    "first {a}"
+   ],
+   "2": [
+    [
+     [
+      [
+       "X",
+       "idrill:abcd1234:2:x"
+      ],
+      [
+       "Y",
+       "idrill:abcd1234:2:y"
+      ]
+     ],
+     [
+      [
+       "Z",
+       "idrill:abcd1234:2:z"
+      ]
+     ],
+     [
+      [
+       "BACK",
+       "idrill:abcd1234:back"
+      ]
+     ]
+    ],
+    null
+   ],
+   "3": [
+    [
+     [
+      [
+       "1",
+       "idrill:abcd1234:3:1"
+      ],
+      [
+       "2",
+       "idrill:abcd1234:3:2"
+      ]
+     ],
+     [
+      [
+       "BACK",
+       "idrill:abcd1234:back"
+      ]
+     ]
+    ],
+    "third"
+   ]
+  }
+ },
+ "two_step_flat": {
+  "flows": [
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:9",
+      [
+       [
+        "text",
+        "Then {w} second",
+        [
+         [
+          [
+           "0",
+           "idrill:abcd1234:2:0"
+          ],
+          [
+           "1",
+           "idrill:abcd1234:2:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:2:2"
+          ],
+          [
+           "pass",
+           "idrill:abcd1234:2:skip"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "2:2",
+      [
+       [
+        "text",
+        "9 / 2 done",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "s1",
+      "9",
+      "--x",
+      "2"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:8",
+         "text": "8"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:9",
+         "text": "9"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:10",
+         "text": "10"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:other",
+         "text": "etc"
+        }
+       ]
+      ]
+     },
+     "text": "Pick {1} first {x}"
+    }
+   },
+   {
+    "arm_left": false,
+    "events": [
+     [
+      "1:10",
+      [
+       [
+        "text",
+        "Then {w} second",
+        [
+         [
+          [
+           "0",
+           "idrill:abcd1234:2:0"
+          ],
+          [
+           "1",
+           "idrill:abcd1234:2:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:2:2"
+          ],
+          [
+           "pass",
+           "idrill:abcd1234:2:skip"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "2:skip",
+      [
+       [
+        "text",
+        "10 done (skipped)",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [
+     [
+      "/opt/kit/bin/record-entry",
+      "s1",
+      "10"
+     ]
+    ],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:8",
+         "text": "8"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:9",
+         "text": "9"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:10",
+         "text": "10"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:other",
+         "text": "etc"
+        }
+       ]
+      ]
+     },
+     "text": "Pick {1} first {x}"
+    }
+   },
+   {
+    "arm_left": true,
+    "events": [
+     [
+      "1:8",
+      [
+       [
+        "text",
+        "Then {w} second",
+        [
+         [
+          [
+           "0",
+           "idrill:abcd1234:2:0"
+          ],
+          [
+           "1",
+           "idrill:abcd1234:2:1"
+          ],
+          [
+           "2",
+           "idrill:abcd1234:2:2"
+          ],
+          [
+           "pass",
+           "idrill:abcd1234:2:skip"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ],
+     [
+      "back",
+      [
+       [
+        "text",
+        "Pick {1} first {x}",
+        [
+         [
+          [
+           "8",
+           "idrill:abcd1234:1:8"
+          ],
+          [
+           "9",
+           "idrill:abcd1234:1:9"
+          ],
+          [
+           "10",
+           "idrill:abcd1234:1:10"
+          ],
+          [
+           "etc",
+           "idrill:abcd1234:1:other"
+          ]
+         ]
+        ],
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:8",
+         "text": "8"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:9",
+         "text": "9"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:10",
+         "text": "10"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:other",
+         "text": "etc"
+        }
+       ]
+      ]
+     },
+     "text": "Pick {1} first {x}"
+    }
+   },
+   {
+    "arm_left": true,
+    "events": [
+     [
+      "1:other",
+      [
+       [
+        "text",
+        "Please type the value manually.",
+        null,
+        null
+       ]
+      ]
+     ]
+    ],
+    "fired": [],
+    "initial": {
+     "reply_markup": {
+      "inline_keyboard": [
+       [
+        {
+         "callback_data": "idrill:abcd1234:1:8",
+         "text": "8"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:9",
+         "text": "9"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:10",
+         "text": "10"
+        },
+        {
+         "callback_data": "idrill:abcd1234:1:other",
+         "text": "etc"
+        }
+       ]
+      ]
+     },
+     "text": "Pick {1} first {x}"
+    }
+   }
+  ],
+  "specs": {
+   "1": [
+    [
+     [
+      [
+       "8",
+       "idrill:abcd1234:1:8"
+      ],
+      [
+       "9",
+       "idrill:abcd1234:1:9"
+      ],
+      [
+       "10",
+       "idrill:abcd1234:1:10"
+      ],
+      [
+       "etc",
+       "idrill:abcd1234:1:other"
+      ]
+     ]
+    ],
+    "Pick {1} first {x}"
+   ],
+   "2": [
+    [
+     [
+      [
+       "0",
+       "idrill:abcd1234:2:0"
+      ],
+      [
+       "1",
+       "idrill:abcd1234:2:1"
+      ],
+      [
+       "2",
+       "idrill:abcd1234:2:2"
+      ],
+      [
+       "pass",
+       "idrill:abcd1234:2:skip"
+      ]
+     ]
+    ],
+    "Then {w} second"
+   ]
+  }
+ }
+}
