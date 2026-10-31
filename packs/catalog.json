@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "kit_life",
+      "name_ko": "Dogany 라이프킷",
+      "name_en": "Dogany Lifekit",
+      "tagline_ko": "식단·운동·약속·관계 등 생활 전반을 구조화 기록으로 관리하는 킷",
+      "tagline_en": "The life-management kit: structured records for diet, workouts, appointments, and relationships",
+      "kind": "kit",
+      "provides_kit": "kit_life",
+      "deploy_owner": "skull",
+      "package_dir": "../../dogany-lifekit",
+      "source_url": "https://github.com/coolcoolk/dogany-kit-life.git",
+      "source_url_note": "DGN-1818: the PUBLIC remote of this kit (curated export, one orphan snapshot per published pack tag, written only by the canonical kit publisher). Read only when the package_dir sibling checkout is absent (a public install): pack_install.sh clones it once into <shared home>/pack-src/<id> and checks out the newest stable pack/<id>/vX.Y.Z tag (pack_coords.sh pack_source_fetch); update_seed.sh registers that clone and update_plan.sh tag-fetches it before planning. This field is the ONE place the public repo name lives (repo name = owner gate; dogany-lifekit itself stays private).",
+      "package_dir_note": "DGN-803 LS-5 e2: kit-class row. The lifekit pack lives in its OWN repo (sibling checkout convention: <agent-repo-parent>/dogany-lifekit); package_dir resolves relative to this catalog file. pack_version is NOT duplicated here -- the pack repo's pack-manifest.json is authoritative (pack_install.sh falls back to it). status flipped scaffold->published at the first pack publish signoff (LS-6, DGN-783, pack/lifekit/v1.1.0). kind='kit' keeps this row out of the public installer domain-pack menu (install.sh MINOR-2 kit filter): kits are activated post-mint via pack_install.sh, never minted as a domain agent. DGN-1143 M3 / dec-145: the pack's INSTALL IDENTITY was renamed lifekit -> kit_life (pack repo commit 5fdb24e) and this row was the last holdout -- catalog id + provides_kit now mirror pack-manifest.json (id=kit_life, provides_kit=kit_life) as the D-D counter-signature requires. NO old-id alias: the catalog id is a lookup key joined by EXACT match in five places (compat-lint D-D, pack_coords.pack_catalog_row, skill_collision_check --restrict, update.sh fw-reqfw-guard backfill, update_seed.sh registry seeding) and a second accepted spelling would re-introduce the two-rules-for-one-fact shape pack_coords.sh (DGN-1079) exists to remove. Measured before the rename: DOGANY_PACK_ID=lifekit was already unreachable (install.sh catalog_entries filters kind=='kit' in BOTH scopes, install.sh:2050-2053, so scope=all never yields this row), and every instance-side record had already moved: the mounted instances carry config/packs/kit_life.requires_framework + DOGANY_PACKS=kit_life@<ver>, the shared pack-sources registry keys on kit_life.repo=, and the health-trainer manifest declares requires_kit.kit=kit_life. NAME/repo are deliberately NOT renamed: product name (Lifekit / 라이프킷), repo dogany-lifekit and the dogany-lifekit-setup skill name are protected surfaces. Lockstep is mechanized by scripts/tests/test-catalog-manifest-lockstep.sh.",
+      "domains": [],
+      "status": "published"
+    },
+    {
+      "id": "pack_health",
+      "kind": "pack",
+      "name_ko": "Dogany 헬스 트레이너",
+      "name_en": "Dogany Health Trainer",
+      "tagline_ko": "운동 프로그램 설계, 세션 진행, 식단 관리",
+      "tagline_en": "Health trainer: weight-training program design, live sessions, diet management",
+      "role_prose_ko": "헬스 트레이너: 목표에 맞는 운동 프로그램을 설계하고, 헬스장 세션을 옆에서 진행하며, 식단을 관리한다",
+      "role_prose_en": "Health trainer: designs weight-training programs toward the user's goal, runs live gym sessions alongside the user, and manages diet",
+      "includes_ko": [
+        "운동 프로그램 설계: 목표에 맞는 헬스 루틴을 짜드려요.",
+        "운동 세션 진행: 설계한 헬스 루틴을 실행해요. 종목별 세트를 진행하며 기록하고 자세를 알려줘요.",
+        "식단 관리: 식단 목표를 설정하고, 매일 사진과 간단한 대화로 칼로리를 관리해요."
+      ],
+      "emoji_hints": [
+        "💪",
+        "🏋️"
+      ],
+      "tone_presets_ko": [
+        "빡세게 몰아붙이는 코치형",
+        "따뜻하게 격려하는 트레이너형",
+        "군더더기 없는 전문가형"
+      ],
+      "migration_tooling": "database/migrations/health_to_warg.py",
+      "knowledge_ko": "지식창고 kimwog 스냅샷 동봉 (릴리스 핀)",
+      "package_dir": "../../dogany-agentpack-health-trainer",
+      "source_url": "https://github.com/coolcoolk/dogany-pack-health.git",
+      "source_url_note": "dec-251 (2026-10-06): the PUBLIC remote of this pack (curated export, one orphan snapshot per published pack tag, written only by the canonical kit publisher). Read only when the package_dir sibling checkout is absent (a public install); same fetch path as kit_life. The private source repo stays private.",
+      "package_dir_note": "DGN-681 S4b Metal 후속 액션#2: independent-repo agentpack row (이중 좌표 정정). The health-trainer pack lives in its OWN repo (sibling checkout convention: <agent-repo-parent>/dogany-agentpack-health-trainer, coolcoolk/dogany-agentpack-health-trainer); package_dir resolves relative to this catalog file (lifekit LS-5 e2 선례 동형). pack_version is NOT duplicated here -- the pack repo's own pack-manifest.json is authoritative (pack_install.sh falls back to it, DGN-227 B3/P6 supplement, pack_install.sh:247-255). status='published' here mirrors manifest status='published' (flipped draft->published at publish signoff, D-D counter-signature pair) -- this row is also the D-D counter-signature anchor (compat-lint.sh D-D gate); keep both in lockstep.",
+      "domains": [
+        "health",
+        "헬스",
+        "운동",
+        "식단",
+        "다이어트",
+        "트레이닝"
+      ],
+      "status": "published"
+    },
+    {
+      "id": "dev",
+      "name_ko": "Dogany 개발 에이전트",
+      "name_en": "Dogany Dev Agent",
+      "tagline_ko": "코딩·시스템·자동화·인프라를 전담하는 개발 스페셜리스트",
+      "tagline_en": "A development specialist dedicated to coding, systems, automation, and infrastructure",
+      "role_prose_ko": "개발 스페셜리스트 -- 코딩/시스템/자동화/인프라 (developer specialist)",
+      "role_prose_en": "Developer specialist -- coding/systems/automation/infrastructure",
+      "includes_ko": [
+        "티켓 규율 (worklog 기반, 슬러그 파생 ID)",
+        "설계 그릴 워크플로 (adversarial review)",
+        "스펙 우선 패칭 + 위임 규율",
+        "커밋 체크포인트 + 시크릿 스윕/사용량 확인 스크립트"
+      ],
+      "emoji_hints": [
+        "⚙️",
+        "🛠️"
+      ],
+      "tone_presets_ko": [
+        "군더더기 없는 엔지니어형",
+        "친절하게 설명하는 페어 프로그래머형",
+        "직설적인 코드 리뷰어형"
+      ],
+      "package_dir": "../../dogany-agentpack-dev",
+      "package_dir_note": "DGN-945/dec-138: pack lives in its OWN repo (sibling checkout convention: <agent-repo-parent>/dogany-agentpack-dev); package_dir resolves relative to this catalog file (lifekit LS-5 e2 / health-trainer S4b precedent, pack_coords.sh DGN-1079). DGN-1049: contract-adopted row (kind=pack, behavior-pack profile DGN-1018 §5-B). pack_version is NOT duplicated here -- the pack repo's own pack-manifest.json is authoritative (pack_install.sh falls back to it, DGN-227 B3/P6). status='published' mirrors manifest status='published' -- this row is the D-D counter-signature anchor (compat-lint.sh D-D gate; lifekit/health-trainer precedent). menu_visible=false (owner decision 2026-08-23, reversing the DGN-1049 SS3 open item): this is the stateless dev discipline-script pack (builder-side tooling for Metal/Skull), not an end-user domain-agent choice -- devkit-the-KIT (crew-shared ticket/decision DB) does not exist yet and would never belong in this menu even once built. install.sh MINOR-2 excludes menu_visible=false rows from the interactive 'which specialist' menu but a DOGANY_PACK_ID=dev preset still installs it (hidden != forbidden); post-mint pack_install.sh from a canonical checkout stays a consumption path (Metal sole-owner lane, Skull = first consumer).",
+      "domains": [
+        "dev",
+        "개발",
+        "코딩",
+        "인프라",
+        "자동화"
+      ],
+      "status": "published",
+      "menu_visible": false
+    },
+    {
+      "id": "pack_ledger",
+      "kind": "pack",
+      "name_ko": "Dogany 가계부",
+      "name_en": "Dogany Household Ledger",
+      "tagline_ko": "가계부: 지출 기록과 카드 문자 가져오기",
+      "tagline_en": "Household ledger: spending records and card text import",
+      "menu_visible": false,
+      "package_dir": "../../dogany-agentpack-ledger",
+      "package_dir_note": "DGN-1882: add-on pack mounted next to kit_life on a kit-class instance (not a new-agent pack, hence menu_visible false). Own repo, sibling checkout convention like pack_health; no public source_url until the pack goes public (owner gate).",
+      "domains": [
+        "ledger",
+        "가계부",
+        "지출"
+      ],
+      "status": "retired",
+      "absorbed_by": {
+        "kit": "kit_life",
+        "range": ">=2.46.0"
+      },
+      "retired_note": "DGN-1922 (owner decision 2026-10-07): pack_ledger folded into kit_life as module_ledger at kit 2.46.0. The row stays for the record. status=retired takes it out of the publish universe and the install-side D-D gate refuses a fresh install (catalog status != manifest status). update_plan.sh emits a RETIRE item for every instance still mounting it once kit_life on that instance is (or is planned to be) inside absorbed_by.range; update_apply.sh runs pack_install.sh --retire pack_ledger."
+    }
+  ]
+}

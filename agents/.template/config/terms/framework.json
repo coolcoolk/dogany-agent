@@ -1,0 +1,52 @@
+{
+  "format": "dogany-term-dict/1",
+  "layer": "framework",
+  "owner": "framework",
+  "note": "DGN-1500 framework layer: structural terms (bridge / module / kit / pack / skill). Owner rule (sot/ESTATE-TAXONOMY.md section 4, 2026-09-17): technical terms stay in the original or a transliteration, never a Korean paraphrase. Read by the bridge send seat (routines/lib/term_dict.py), never injected into model context. Count-first: no entry here is rewrite-safe -- every form is also an ordinary Korean word, so each one is counted only, and the ambiguous ones only when a cue word sits in the same sentence (cues tuned on the 2026-09-30 transcript replay). A kit/module layer that uses one of these words in its plain meaning lists it under 'allow' (a health agent's legs).",
+  "allow": [],
+  "entries": [
+    {
+      "id": "bridge",
+      "canonical": "브릿지",
+      "forbidden": ["다리", "교량", "가교"],
+      "context_any": ["기동", "코드", "재시작", "프로세스", "봇", "텔레그램", "telegram", "런타임", "서버", "pid", "벤더", "어댑터", "크래시"],
+      "rewrite": false,
+      "approved": "owner 2026-09-17 (ESTATE-TAXONOMY section 4: bridge not exposed; transliteration only, never a paraphrase)",
+      "note": "Incident 2026-09-15: 'bridge' written as the Korean word for a river bridge/leg. Ambiguous word -> cue-gated, counted only."
+    },
+    {
+      "id": "kit",
+      "canonical": "킷",
+      "forbidden": ["키트", "도구상자", "도구 상자", "도구모음", "도구 모음", "연장통"],
+      "rewrite": false,
+      "approved": "owner 2026-09-12 (kit_life display name = 라이프킷)",
+      "note": "Transliteration drift and paraphrases of kit. Counted only: the transliteration variant is also a general word (test kit)."
+    },
+    {
+      "id": "pack",
+      "canonical": "팩",
+      "forbidden": ["꾸러미"],
+      "rewrite": false,
+      "approved": "owner 2026-09-17 (paraphrase ban, all rows)",
+      "note": "Paraphrase of pack. Counted only."
+    },
+    {
+      "id": "module",
+      "canonical": "모듈",
+      "forbidden": ["묶음"],
+      "context_any": ["module_", "requires_modules"],
+      "rewrite": false,
+      "approved": "owner 2026-09-16 08:07 (DGN-1500 example: module -> bundle is a twist)",
+      "note": "The bundle word is ordinary Korean (replay: 17/17 plain uses in kit/pack talk), so it only counts beside a module identifier."
+    },
+    {
+      "id": "skill",
+      "canonical": "스킬",
+      "forbidden": ["기술"],
+      "context_any": ["SKILL.md", "skills-bundle"],
+      "rewrite": false,
+      "approved": "owner 2026-09-17 (paraphrase ban, all rows)",
+      "note": "No leak observed in the replay; the technique/ability words are ordinary Korean, so this only counts beside a skill file identifier."
+    }
+  ]
+}

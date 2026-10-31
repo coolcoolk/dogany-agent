@@ -1,0 +1,46 @@
+# dispatch-effort-bindings.tsv -- DGN-1770: (runtime, axis, model) -> measured
+# reasoning-effort default. DATA, not logic: dispatch-detached.sh
+# resolve_effort() reads this file when --effort is omitted, exactly as
+# bottleneck_gate() reads dispatch-tier-bindings.tsv when --model is omitted.
+#
+# Why a SIBLING file and not a 5th column on dispatch-tier-bindings.tsv: the
+# tier table is keyed (runtime, axis) -> model LIST; effort is a property of
+# ONE model on that axis (opus and sonnet share the accuracy row but measured
+# differently). A per-model key does not fit a per-row column, and the tier
+# rows' model columns are not to be touched by this ticket.
+#
+# Columns (TAB-separated): runtime  axis  model  effort  evidence
+#   model  = the dispatch alias (fable|opus|sonnet|haiku), same vocabulary as
+#            the tier table; codex slugs come from dispatch-model-display.tsv.
+#   effort = low|medium|high  -> passed to the runtime, EFFORT_SOURCE=table
+#            -                -> MEASURED, effort changed nothing: no flag,
+#                                CLI default, EFFORT_SOURCE=no-effect
+#   Routing rule (docs/AGENT-RATIONALE.md, Model routing): pick the LOWEST
+#   effort with no measured loss. So a measured-flat cell is written as `low`,
+#   not `-` -- `-` would hand the run to the CLI default, which is the
+#   expensive end. `-` stays available for a flat cell where low itself is
+#   unverified; no row uses it today (leader review 2026-09-28).
+#   No row -> UNMEASURED: no flag, CLI default, EFFORT_SOURCE=unmeasured. A
+#   guessed value never goes here; an unmeasured cell stays out of the file.
+#
+# Evidence source: effort bench (docs/bench on branch dsp/dgn1750,
+# results/scored.json; claude n=5 on a1/a2/c3, n=2 elsewhere; codex n=3).
+# Tasks: a1/a3 small-evidence verify, a2 large-evidence verify (1347 paths,
+# 43 claims), c1/c2/c3 small-population coverage. NO tool use in any task, so
+# these are reasoning-only measurements.
+#
+# Not measured anywhere, so deliberately absent:
+#   judgment axis (every runtime) -- no re-derivable answer set exists
+#     (DGN-1666); fable was excluded from the bench (cost).
+#   cloud runtime -- same Claude models as claude-code, but the cloud launcher
+#     has no verified effort control, so a default would be recorded and never
+#     applied (DGN-1770 item 5: record-only).
+claude-code	accuracy	sonnet	low	a1/a3 small-evidence verify: no effort effect (a1 .79/.79/.80). a2 large-evidence: low .930 5/5 done, medium .948 4/5, high .953 2/5 (3 timeouts) -- effort buys sonnet no accuracy and costs completion
+claude-code	accuracy	opus	medium	a2 large-evidence verify: low .856, medium .972, high .967 (5/5 done at every effort; low loses 12 points, high adds nothing over medium). a1/a3 no effort effect
+claude-code	coverage	opus	low	c1/c2/c3 recall 1.000 and precision 1.000 at low/medium/high (small populations, no tool use) -- no effort effect measured
+codex	accuracy	fable	high	gpt-6-astra a2: low .953 (72s), medium .961 (229s), high .977 3/3 zero spread (232s); a1/a3 flat. medium costs the same wall time as high and scores near low -> high (owner dec-200, 2026-09-28 09:31)
+codex	coverage	fable	low	gpt-6-astra c3 recall 1.000 at low/medium/high (c1/c2 at ceiling) -- no effort effect measured
+codex	coverage	opus	low	gpt-6-sol c3 recall 1.000 at low/medium/high -- no effort effect measured
+claude-api	accuracy	sonnet	low	DGN-1963: same claude -p worker as claude-code -- mirrors its measured row
+claude-api	accuracy	opus	medium	DGN-1963: same claude -p worker as claude-code -- mirrors its measured row
+claude-api	coverage	opus	low	DGN-1963: same claude -p worker as claude-code -- mirrors its measured row

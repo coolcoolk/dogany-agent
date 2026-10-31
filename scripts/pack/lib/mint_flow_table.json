@@ -1,0 +1,486 @@
+{
+ "schema": 1,
+ "doc": "DGN-1683 WP1 exhaustive mint verb state table (grill fix 6). The verb emits ONLY these rows; mint_flow.emit() fails closed to BLOCKED for anything else. screen_delivered is true iff note is SCREEN_SENT_END_TURN. agent_utterance: 'none' = say nothing beyond ending the turn; 'N13' = the agent may say the one approved fallback sentence (screen delivery could not be confirmed) and nothing else. State DELIVERY_PENDING, IDLE, BLOCKED and NOT_IMPLEMENTED are emission-only; flow_states are the states persisted in config/mint-flow.json (DELIVERY_PENDING is the emitted view of any flow whose current screen is unconfirmed). agent_utterance 'EXPLAIN' (DGN-1698) = no screen was sent and the owner must not be left in silence: the agent says, in its own words, the emission's explain.why and explain.next (no fixed owner copy). DGN-1702 (dec-182): a make-open starts in WAIT_CONTEXT (nothing sent) and the agent asks, in its own words, what situation the new agent is for; the catalog follows only after the owner's context is recorded. agent_utterance 'consult' (note ASK_OWNER, only on the emission that enters or extends WAIT_CONTEXT; a later status in WAIT_CONTEXT is WAITING_ON_OWNER/'none' because the question is already out) = ask that question (or one follow-up); fact answers_left = owner answers still accepted before the next one closes the consult. The consult close never decides fit by substring: the closing `next` needs --fit <pack_id>|none (BLOCKED/FIT_REQUIRED, nothing written, fact packs = id/name_ko/tagline_ko per eligible pack; an unknown id is INPUT_NOT_ACCEPTED, nothing written); --fit none ends as NO_FIT. 'no_fit' = tell the owner in your own words that no ready agent fits what they described; 'occupied' = tell the owner an agent for this already exists (emission fact occupied.agent), point to it and stop. Each utterance code is a machine-granted permission to speak at that moment; 'none' stays silence. DGN-1702 round 3 (owner rehearsal 2026-09-26): a make-open with request words carries the agent's --fit judged from the request: one pack id -> the catalog goes out at once (WAIT_CHOICE/SCREEN_SENT_END_TURN; needs a confirm --lead; a single-pack card ends with the owner-approved free-text invitation), several ids (comma-joined) -> those candidates, 'consult' -> WAIT_CONTEXT/ASK_OWNER (the ambiguous case only), 'none' -> CANCELLED/NO_FIT; missing -> BLOCKED/FIT_REQUIRED. The lead is judged once when the step is recorded and rendered verbatim in the card's own message. Owner free words at a catalog are a consult answer (the agent re-judges --fit or asks with --more); an expiry/restart button tap is never kept as a consult answer (WAIT_CONTEXT: ASK_OWNER again; WAIT_CHOICE: INPUT_NOT_ACCEPTED). DGN-1844: WAIT_TOKEN -> FAILED_EMPTY is the accepted-token failure before any build starts (the build plan cannot be resolved; reason build_plan_failed): nothing was created, the owner gets the problem screen N11 and a new open starts over.",
+ "states": [
+  "IDLE",
+  "WAIT_CONTEXT",
+  "WAIT_CHOICE",
+  "WAIT_CONFIRM",
+  "WAIT_TOKEN",
+  "BUILDING",
+  "VERIFYING",
+  "RECORDING",
+  "DONE",
+  "ABORT_PENDING",
+  "CLEANING",
+  "EXPIRED",
+  "CANCELLED",
+  "FAILED_EMPTY",
+  "FAILED_WITH_ARTIFACTS",
+  "CLEANUP_BLOCKED",
+  "DELIVERY_PENDING",
+  "BLOCKED",
+  "NOT_IMPLEMENTED"
+ ],
+ "flow_states": [
+  "WAIT_CONTEXT",
+  "WAIT_CHOICE",
+  "WAIT_CONFIRM",
+  "WAIT_TOKEN",
+  "BUILDING",
+  "VERIFYING",
+  "RECORDING",
+  "DONE",
+  "ABORT_PENDING",
+  "CLEANING",
+  "EXPIRED",
+  "CANCELLED",
+  "FAILED_EMPTY",
+  "FAILED_WITH_ARTIFACTS",
+  "CLEANUP_BLOCKED"
+ ],
+ "waiting_for": [
+  "context",
+  "choice",
+  "confirm",
+  "token",
+  "none"
+ ],
+ "notes": [
+  "SCREEN_SENT_END_TURN",
+  "WAITING_ON_OWNER",
+  "ASK_OWNER",
+  "INPUT_NOT_ACCEPTED",
+  "BUILD_RUNNING",
+  "NO_FLOW",
+  "FLOW_ENDED",
+  "DELIVERY_FAILED",
+  "DELIVERY_UNCERTAIN",
+  "CLEANUP_IN_PROGRESS",
+  "CLEANUP_BLOCKED",
+  "FAILED_ARTIFACTS_PRESERVED",
+  "FAILED_ARTIFACTS_EXPLAIN",
+  "FAILED_EMPTY_EXPLAIN",
+  "WORKER_PROBE_EXPLAIN",
+  "NOT_IMPLEMENTED",
+  "STATE_UNVERIFIABLE",
+  "LOCK_BUSY",
+  "BAD_REQUEST",
+  "LEAD_REQUIRED",
+  "FIT_REQUIRED",
+  "NO_FIT",
+  "DOMAIN_OCCUPIED"
+ ],
+ "utterances": [
+  "none",
+  "N13",
+  "EXPLAIN",
+  "consult",
+  "no_fit",
+  "occupied"
+ ],
+ "routes": [
+  "WAIT_CONFIRM",
+  "WAIT_TOKEN",
+  "OPEN",
+  "END_N6",
+  "END_N7",
+  "END_N12"
+ ],
+ "screens": [
+  "catalog",
+  "handover",
+  "token_prompt",
+  "bot_confirm",
+  "handoff",
+  "N2",
+  "N3",
+  "N4",
+  "N5",
+  "N6",
+  "N7",
+  "N8",
+  "N9",
+  "N10",
+  "N11",
+  "N12"
+ ],
+ "transitions": {
+  "WAIT_CONTEXT": [
+   "WAIT_CHOICE",
+   "WAIT_TOKEN",
+   "CANCELLED",
+   "EXPIRED"
+  ],
+  "WAIT_CHOICE": [
+   "WAIT_CONTEXT",
+   "WAIT_CONFIRM",
+   "WAIT_TOKEN",
+   "CANCELLED",
+   "EXPIRED"
+  ],
+  "WAIT_CONFIRM": [
+   "WAIT_CONTEXT",
+   "WAIT_TOKEN",
+   "CANCELLED",
+   "EXPIRED"
+  ],
+  "WAIT_TOKEN": [
+   "BUILDING",
+   "CANCELLED",
+   "EXPIRED",
+   "FAILED_EMPTY"
+  ],
+  "BUILDING": [
+   "VERIFYING",
+   "ABORT_PENDING",
+   "FAILED_EMPTY",
+   "FAILED_WITH_ARTIFACTS",
+   "CLEANING"
+  ],
+  "VERIFYING": [
+   "RECORDING",
+   "ABORT_PENDING",
+   "FAILED_WITH_ARTIFACTS",
+   "CLEANING"
+  ],
+  "RECORDING": [
+   "DONE",
+   "ABORT_PENDING",
+   "FAILED_WITH_ARTIFACTS",
+   "CLEANING"
+  ],
+  "ABORT_PENDING": [
+   "CLEANING",
+   "FAILED_WITH_ARTIFACTS",
+   "CLEANUP_BLOCKED",
+   "EXPIRED",
+   "CANCELLED"
+  ],
+  "CLEANING": [
+   "EXPIRED",
+   "CANCELLED",
+   "CLEANUP_BLOCKED"
+  ],
+  "DONE": [],
+  "EXPIRED": [],
+  "CANCELLED": [],
+  "FAILED_EMPTY": [],
+  "FAILED_WITH_ARTIFACTS": [
+   "CLEANING",
+   "CANCELLED",
+   "EXPIRED"
+  ],
+  "CLEANUP_BLOCKED": []
+ },
+ "rows": [
+  {
+   "state": "IDLE",
+   "waiting_for": "none",
+   "note": "NO_FLOW",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CONTEXT",
+   "waiting_for": "context",
+   "note": "ASK_OWNER",
+   "screen_delivered": false,
+   "agent_utterance": "consult"
+  },
+  {
+   "state": "WAIT_CONTEXT",
+   "waiting_for": "context",
+   "note": "WAITING_ON_OWNER",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CONTEXT",
+   "waiting_for": "context",
+   "note": "INPUT_NOT_ACCEPTED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CHOICE",
+   "waiting_for": "choice",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CHOICE",
+   "waiting_for": "choice",
+   "note": "WAITING_ON_OWNER",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CHOICE",
+   "waiting_for": "choice",
+   "note": "INPUT_NOT_ACCEPTED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CONFIRM",
+   "waiting_for": "confirm",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CONFIRM",
+   "waiting_for": "confirm",
+   "note": "WAITING_ON_OWNER",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_CONFIRM",
+   "waiting_for": "confirm",
+   "note": "INPUT_NOT_ACCEPTED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_TOKEN",
+   "waiting_for": "token",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_TOKEN",
+   "waiting_for": "token",
+   "note": "WAITING_ON_OWNER",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "WAIT_TOKEN",
+   "waiting_for": "token",
+   "note": "INPUT_NOT_ACCEPTED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "DELIVERY_PENDING",
+   "waiting_for": "none",
+   "note": "DELIVERY_FAILED",
+   "screen_delivered": false,
+   "agent_utterance": "N13"
+  },
+  {
+   "state": "DELIVERY_PENDING",
+   "waiting_for": "none",
+   "note": "DELIVERY_UNCERTAIN",
+   "screen_delivered": false,
+   "agent_utterance": "N13"
+  },
+  {
+   "state": "BUILDING",
+   "waiting_for": "none",
+   "note": "BUILD_RUNNING",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BUILDING",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "VERIFYING",
+   "waiting_for": "none",
+   "note": "BUILD_RUNNING",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "RECORDING",
+   "waiting_for": "none",
+   "note": "BUILD_RUNNING",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "DONE",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "DONE",
+   "waiting_for": "none",
+   "note": "FLOW_ENDED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "EXPIRED",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "EXPIRED",
+   "waiting_for": "none",
+   "note": "FLOW_ENDED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "CANCELLED",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "CANCELLED",
+   "waiting_for": "none",
+   "note": "FLOW_ENDED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "CANCELLED",
+   "waiting_for": "none",
+   "note": "NO_FIT",
+   "screen_delivered": false,
+   "agent_utterance": "no_fit"
+  },
+  {
+   "state": "CANCELLED",
+   "waiting_for": "none",
+   "note": "DOMAIN_OCCUPIED",
+   "screen_delivered": false,
+   "agent_utterance": "occupied"
+  },
+  {
+   "state": "FAILED_EMPTY",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "FAILED_EMPTY",
+   "waiting_for": "none",
+   "note": "FLOW_ENDED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "FAILED_WITH_ARTIFACTS",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "FAILED_WITH_ARTIFACTS",
+   "waiting_for": "none",
+   "note": "FAILED_ARTIFACTS_PRESERVED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "FAILED_WITH_ARTIFACTS",
+   "waiting_for": "none",
+   "note": "FAILED_ARTIFACTS_EXPLAIN",
+   "screen_delivered": false,
+   "agent_utterance": "EXPLAIN"
+  },
+  {
+   "state": "EXPIRED",
+   "waiting_for": "none",
+   "note": "WORKER_PROBE_EXPLAIN",
+   "screen_delivered": false,
+   "agent_utterance": "EXPLAIN"
+  },
+  {
+   "state": "FAILED_EMPTY",
+   "waiting_for": "none",
+   "note": "FAILED_EMPTY_EXPLAIN",
+   "screen_delivered": false,
+   "agent_utterance": "EXPLAIN"
+  },
+  {
+   "state": "CLEANUP_BLOCKED",
+   "waiting_for": "none",
+   "note": "SCREEN_SENT_END_TURN",
+   "screen_delivered": true,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "CLEANUP_BLOCKED",
+   "waiting_for": "none",
+   "note": "CLEANUP_BLOCKED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "ABORT_PENDING",
+   "waiting_for": "none",
+   "note": "CLEANUP_IN_PROGRESS",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "CLEANING",
+   "waiting_for": "none",
+   "note": "CLEANUP_IN_PROGRESS",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BLOCKED",
+   "waiting_for": "none",
+   "note": "STATE_UNVERIFIABLE",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BLOCKED",
+   "waiting_for": "none",
+   "note": "LOCK_BUSY",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BLOCKED",
+   "waiting_for": "none",
+   "note": "BAD_REQUEST",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BLOCKED",
+   "waiting_for": "none",
+   "note": "LEAD_REQUIRED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "BLOCKED",
+   "waiting_for": "none",
+   "note": "FIT_REQUIRED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  },
+  {
+   "state": "NOT_IMPLEMENTED",
+   "waiting_for": "none",
+   "note": "NOT_IMPLEMENTED",
+   "screen_delivered": false,
+   "agent_utterance": "none"
+  }
+ ]
+}
