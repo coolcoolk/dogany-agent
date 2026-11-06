@@ -1,0 +1,7 @@
+decision: publish
+-----
+10/09(금) 00:30
+
+quote::
+[콘솔액션] (실패 act 있음)
+quote::end

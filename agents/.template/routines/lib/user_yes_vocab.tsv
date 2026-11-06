@@ -1,0 +1,39 @@
+# user_yes vocabulary (v2.7 D3/D4 prototype, reworked after the grill F4/F24).  Data, not code.
+# kind<TAB>lang<TAB>python regex (matched case-insensitive on the owner text)
+# kinds (a `yes` alternation lists longer words first: leftmost-first match):
+#   yes      a short affirmative; anchored at the start of the owner text
+#   hold     any hit anywhere vetoes a yes and a direct intent; riders
+#            (but / except / only / -man / ppaego) and temporal deferrals
+#            (tomorrow / tonight / naeil / itta) included (R2-3, R2-4)
+#   inspect  any hit vetoes a direct intent (asking to SEE, not to DO)
+#   act      an imperative-action token; a direct intent needs one
+#   cls:<c>[/<verb>]  path B (direct intent) object phrase for class <c>; a
+#            service phrase names its verb (R2-4: restart never covers
+#            bootout / disable / kill / self-update; user_yes.PATH_B_VERBS).  Only
+#            service, baseline and owner-file have one (user_yes.PATH_B_CLASSES):
+#            destructive / push / tag / release / gate-switch are path A only
+#            (the exact command shown, then the owner's next turn says yes).
+#            A phrase names the OBJECT, never a bare class verb: no
+#            "업데이트", "정리해", "save", "name", "rule" (grill F4).
+#   procedure  owner-file lint (D4 HF23): IMPERATIVE rule / procedure forms
+#            only ("always answer ...", "항상 표로 답해"), never a fact that
+#            happens to use "never" / "must" / "매번" (grill F24)
+yes	ko	^(그렇게\s*해줘|그렇게\s*해|진행해|진행|해줘|해|응|ㅇㅇ|ㅇㅋ|웅|어|넵|넹|네|예|그래|좋아|오케이|오키|고고|ㄱㄱ|하자|가자|승인|콜)
+yes	en	^(go ahead|do it|ship it|okay|ok|yes|yep|yeah|yup|sure|go|approved|approve|lgtm|confirmed?)\b
+hold	ko	아니|아뇨|아냐|잠깐|잠시만|멈춰|스톱|하지\s*마|말고|빼고|안\s*돼|보류|나중에|취소|기다려|그만|내일|모레|이따|저녁에|오늘\s*밤|주말에|다음에|\S만(?=\s|$|[.,!?~])
+hold	en	\b(no|nope|don't|dont|do not|not yet|wait|hold|stop|cancel|later|never|but|except|only|tomorrow|tonight|after|next week)\b
+inspect	ko	보여|알려|설명|어때|확인만|상태|미리보기|드라이\s*런|뭐야|왜
+inspect	en	\b(show|explain|status|preview|dry[- ]?run|what|why|check only)\b
+act	ko	해줘|해 ?줘|해라|해$|해\.|하자|진행|돌려|실행|내자|올려|날려|지워|꺼|켜|다시\s*띄워|가자|추가|넣어|바꿔|기억해
+act	ko	(?:^|\s)출시(?=\s*[.!]?\s*$)
+act	en	\b(do it|go|run|ship|please|now|execute|proceed|add|change|set)\b
+cls:service/restart	ko	(브릿지|브리지|봇|에이전트)\s*(을|를)?\s*(재시작|리스타트|재기동|다시\s*띄워|껐다\s*켜)
+cls:service/self-update	ko	(프레임워크|셀프|도가니)\s*업데이트
+cls:service/restart	en	\b(restart|reboot|relaunch)\s+(the\s+)?(bridge|bot|agent)\b|\b(bridge|bot)\s+restart\b
+cls:service/self-update	en	\bself-update\b|\bupdate the framework\b|\bframework update\b
+cls:baseline	ko	페르소나|역할(에|을|를)|워크플로|호칭|말투|유머
+cls:baseline	en	\b(persona|workflow|tone|humor)\b|\b(my|your|the agent's)\s+role\b|\brole\s+(to|of)\b
+cls:owner-file	ko	기억해
+cls:owner-file	en	\bremember (this|that|it)\b
+procedure	ko	(항상|매번|늘|앞으로)\s*(\S+\s*){0,2}(답해|답변|대답|응답|써|작성|보내|정리해|요약해|해줘|하기)|할\s*때마다|하지\s*말|해야\s*(해|함|한다)|하도록
+procedure	en	\b(always|never|whenever|every time)\s+(reply|answer|respond|use|write|format|send|ask|start|end|include|add)\b|\b(must|should)\s+(reply|answer|respond|use|write|format|send|include)\b|\bstep \d|\bif .+ then\b

@@ -1,0 +1,257 @@
+{
+  "source": "CJJQ9JYY evidence, verbatim trademark reply 2026-10-12 13:57 KST; remaining cases are boundary fixtures.",
+  "cases": [
+    {
+      "name": "ag-trademark-verbatim",
+      "text": "[[OPTIONS: 대체 도메인 조회 | 일단 여기까지]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "labeled-일단 여기까지",
+      "text": "Choose.\n[[OPTIONS: A | 일단 여기까지 | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "numbered-일단 여기까지",
+      "text": "Choose.\n1. A\n2. 일단 여기까지\n[[OPTIONS]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "trailing-일단 여기까지",
+      "text": "Choose.\n[[OPTIONS]]\nA\n일단 여기까지\nB",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "labeled-나중에",
+      "text": "Choose.\n[[OPTIONS: A | 나중에 | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "numbered-나중에",
+      "text": "Choose.\n1. A\n2. 나중에\n[[OPTIONS]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "trailing-나중에",
+      "text": "Choose.\n[[OPTIONS]]\nA\n나중에\nB",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "labeled-그만",
+      "text": "Choose.\n[[OPTIONS: A | 그만 | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "numbered-그만",
+      "text": "Choose.\n1. A\n2. 그만\n[[OPTIONS]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "trailing-그만",
+      "text": "Choose.\n[[OPTIONS]]\nA\n그만\nB",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "labeled-다음에",
+      "text": "Choose.\n[[OPTIONS: A | 다음에 | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "numbered-다음에",
+      "text": "Choose.\n1. A\n2. 다음에\n[[OPTIONS]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "trailing-다음에",
+      "text": "Choose.\n[[OPTIONS]]\nA\n다음에\nB",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "all-denied",
+      "text": "[[OPTIONS: 나중에 | 그만 | 다음에]]",
+      "hits": 3,
+      "options": []
+    },
+    {
+      "name": "whitespace-markup-rec",
+      "text": "[[OPTIONS: A | **일단   여기까지** (추천) | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "rec-english",
+      "text": "[[OPTIONS: A | `나중에` (rec) | B]]",
+      "hits": 1,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "near-miss-나중에 설치",
+      "text": "[[OPTIONS: A | 나중에 설치]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "나중에 설치"
+      ]
+    },
+    {
+      "name": "near-miss-다음에 발송",
+      "text": "[[OPTIONS: A | 다음에 발송]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "다음에 발송"
+      ]
+    },
+    {
+      "name": "near-miss-그만두기 신청",
+      "text": "[[OPTIONS: A | 그만두기 신청]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "그만두기 신청"
+      ]
+    },
+    {
+      "name": "near-miss-일단 여기까지 검토",
+      "text": "[[OPTIONS: A | 일단 여기까지 검토]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "일단 여기까지 검토"
+      ]
+    },
+    {
+      "name": "near-miss-그만큼 확대",
+      "text": "[[OPTIONS: A | 그만큼 확대]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "그만큼 확대"
+      ]
+    },
+    {
+      "name": "near-miss-보류",
+      "text": "[[OPTIONS: A | 보류]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "보류"
+      ]
+    },
+    {
+      "name": "near-miss-취소",
+      "text": "[[OPTIONS: A | 취소]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "취소"
+      ]
+    },
+    {
+      "name": "near-miss-진행 중지",
+      "text": "[[OPTIONS: A | 진행 중지]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "진행 중지"
+      ]
+    },
+    {
+      "name": "single-confirmation",
+      "text": "[[OPTIONS: 승인]]",
+      "hits": 0,
+      "options": [
+        "승인"
+      ]
+    },
+    {
+      "name": "prose-only",
+      "text": "일단 여기까지. 나중에 다시 봐요.",
+      "hits": 0
+    },
+    {
+      "name": "numbered-no-marker",
+      "text": "1. A\n2. 나중에",
+      "hits": 0
+    },
+    {
+      "name": "quoted-marker",
+      "text": "> [[OPTIONS: 대체 도메인 조회 | 일단 여기까지]]",
+      "hits": 0
+    },
+    {
+      "name": "code-example",
+      "text": "```\n[[OPTIONS: 대체 도메인 조회 | 일단 여기까지]]\n```",
+      "hits": 0
+    },
+    {
+      "name": "inline-example",
+      "text": "Example: [[OPTIONS: A | 나중에]]",
+      "hits": 0
+    },
+    {
+      "name": "unrelated-body",
+      "text": "1. 나중에\n2. 그만\n[[OPTIONS: A | B]]",
+      "hits": 0,
+      "options": [
+        "A",
+        "B"
+      ]
+    },
+    {
+      "name": "empty-labeled-numbered-fallback",
+      "text": "Choose.\n1. A\n2. 나중에\n[[OPTIONS: ]]",
+      "hits": 1,
+      "options": []
+    },
+    {
+      "name": "no-fallback-to-unrelated-body",
+      "text": "1. X\n2. Y\n[[OPTIONS: 대체 도메인 조회 | 일단 여기까지]]",
+      "hits": 1,
+      "options": []
+    }
+  ]
+}

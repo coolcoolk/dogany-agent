@@ -1,0 +1,13 @@
+{
+ "what": "AMEND-2 FR12: consumer outputs with no turn asks, pinned on the pre-AMEND-2 base",
+ "sha256": {
+  "head": "054c864de08bd5f13db5985c9d95e7ef60453b2716086b01d49647108cc29e77",
+  "work_whys": "f44360a75e3d003b9e80e9aca661f56d92e964a01eec150bfadb07a9bc9fba4e",
+  "gate": "fc7fd82f24349ee660281233d504e49d70d7ba5965ecc1b8cd33474209cfa3f1",
+  "board": "6af489ca90d0b5a4e01be17365b8cc5c0be3a7a5c15014ece340010c83fcebd3",
+  "open_readings": "8b9103276a45ee9af8fdedaff1f656ae9569303e3123d174eef17783e85b0780",
+  "tcorr": "7a10331adced469c704c2c21c0d6021653504caafbf90bb859a84392f20ae4e7",
+  "retro_read": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "statuses": "18e5e4d79489b2c0e2154924053bea7d3683d9aca4c9ad6ef4feed367fc8035c"
+ }
+}

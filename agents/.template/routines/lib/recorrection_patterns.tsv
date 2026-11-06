@@ -1,0 +1,58 @@
+# recorrection_patterns.tsv -- pattern data for the AC5 owner re-correction
+# predicate (routines/lib/recorrection.py). The ONLY file of this feature that
+# carries Korean; code stays English/ASCII.
+#
+# Format: <kind> TAB <name> TAB <python regex>. '#' lines and blanks ignored.
+#
+# kinds (applied in this order):
+#   drop_line  a line of the owner turn matching this is removed first. Used
+#              for pasted agent/bot speech (owner speech to the agent is
+#              informal; pasted assistant output is polite-ending prose).
+#   mask       removed from the whitespace-free text before cue matching
+#              (owner self-correction, idioms that contain a cue but are not
+#              aimed at the agent).
+#   cue        a match on the whitespace-free, masked text = re-correction /
+#              re-explanation signal. A turn hits when ANY cue matches.
+#
+# Matching runs on the text with ALL whitespace removed, because owner speech
+# drops spacing freely ("그게아니라" == "그게 아니라").
+#
+# Changing this file changes the measurement. Bump PREDICATE_VERSION in
+# recorrection.py and re-run the labelled evaluation (--eval) on every edit.
+
+# ---- pasted assistant / bot prose (polite endings) -------------------------
+drop_line	polite-ending	(요|니다|세요|까요|어요|에요|습니다)[.!?~)"'\s]*$
+
+# ---- masks ----------------------------------------------------------------
+# the owner retracting their own idea, not correcting the agent ("아니다 ... 고민이네")
+mask	self-retract	^아니다
+# "아니면" = "or else", a new alternative, not a correction
+mask	or-else	아니면
+# "아니고는" / "아닐까" style hedges
+mask	hedge	아닐까|아닌지
+
+# ---- cues: direct negation of the agent's take ------------------------------
+# turn opens with a flat "no" ("아니 ...", "ㄴㄴ ...")
+cue	open-no	^(아니(?![다면])|ㄴㄴ|노노)
+# "A가 아니라 B" / "그게 아니잖아" / "~거 아니었나?" anywhere
+cue	not-but	아니라|그게아니|그거아니|아니잖|아니었|아녀\?|아니냐
+# ---- cues: owner points at what he already said -----------------------------
+cue	said-before	내질문|(만들|하|했|정하|말하)지않았|했잖|말했잖|물었잖|줬잖|얘기했잖|하기로했잖|하지않았나|했었잖|내가말한|내말은|내가물|말했듯|얘기했듯|저번에|아까얘기|아까말|아까내가|기억안나|다시말하지만|몇번(을|이나)?말|몇번째
+# quote-back endings: "...냐고", "...라고(요)?" closing a clause = re-saying
+cue	quote-back	냐고|라니까|다니까|냐니까|(하라고|해달라고|달라고)(\.|\?|!|$|…)
+# "-잖아/-잖어": owner states something the agent should already hold
+cue	you-know	잖아|잖어|잖냐
+# ---- cues: persistent drift -------------------------------------------------
+cue	again	매번|(?<!이)제발|미뤄|미룬거|다시튀어|다시나온|해결했던|자꾸|아직도|또이러|또냅|또그러|또안|맨날|계속안
+cue	deviate	어디서나온|뭐래|원하는지모르|어디갔|다르잖|다른데|원본이랑|사실과다|이탈|빼먹|빠졌잖|빼놓지마|미루지마|하지말라|똑바로|좁은이해|무책임|이상한거얘기|놀리냐
+# "isn't it ...?" challenge to the agent's claim ("~거 아니야?", "모르지 않나")
+cue	isnt-it	(거|게|건)(아니야|아닌가|아냐)(\?|$)|아닌가$|지않나\?|지않나$
+# prohibition aimed at the agent ("넘기지 마", "미루지 마") and "do it properly"
+cue	dont	[가-힣]지마|좀잘[가-힣]|잘좀
+# "what are you talking about" FOLLOWED by a counter-claim (bare confusion
+# like "뭔소리야" alone is a different signal and does not count)
+cue	counter-claim	(뭔|먼|무슨)소리(야|여|냐|지)[.?!~]*[가-힣A-Za-z0-9]{4,}
+# "why did you (bother to) ..." aimed at a choice the agent made
+cue	why-choice	왜(굳이|남겨|따로|바꼈|바꿨|바꾼|빼|미뤄)
+# rhetorical "why didn't you" aimed at the agent's own action
+cue	why-not	왜.{0,24}(안|못)[가-힣]{0,6}(냐|해\?|했냐|하냐|해줘\?|주냐)

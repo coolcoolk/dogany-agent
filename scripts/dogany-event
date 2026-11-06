@@ -1,0 +1,855 @@
+#!/usr/bin/env python3
+"""dogany-event -- framework event dispatcher (v2.7 T6 P4, DGN-1825, dec-319).
+
+The app receiver execs this with one event JSON on stdin (companion file
+callback, transport "exec"). It is installed as ~/.dogany/bin/dogany-event,
+a single self-contained file (stdlib only): it must run after being copied
+out of the checkout.
+
+Dispatch (design section 5.4):
+  1. read stdin JSON, validate payload_schema_version, dedup on
+     (kind, event_id) (fallback key: source,kind,id) in
+     ~/.dogany/integrations/events.ledger.sqlite. The kind is part of every
+     key: a visit_departure carries the same id as its visit_arrival and is
+     a second event, not a duplicate (DGN-1825);
+  2. route. A kind CLAIMED in the owners map (below) goes to its owner
+     instance only. Any other kind fans out to every instance whose
+     installed pack declares an event_handlers entry for the kind, except
+     entries flagged "claim_required": true, which receive an event only
+     when their instance owns the kind (a pack can ship such a handler
+     before the owner consents). Each handler gets the same stdin and
+     cwd = instance root, and runs under its own time budget: the record
+     field "timeout_s" (default 5, at most MAX_HANDLER_S), further capped
+     below the receiver's own exec timeout (companion callback.timeout_s)
+     so the receiver never kills the dispatcher first. A claimed kind whose
+     owner root no longer exists is released (logged) and routes unclaimed;
+
+Payload shape (owner-lane report 2026-10-09): the installed receiver sends
+only {source, kind, id, event_id} -- no payload_schema_version and no data.
+An event without payload_schema_version is read as the version the app
+connection file (com.moha.dogany.json) declares, else 1; an explicit
+version this dispatcher does not support is still refused (exit 2). stdin
+is a "go pull" signal carrying ids only: a handler reads the ids and pulls
+the record itself. The receiver fires once per NEW id (never on an update),
+so no handler may depend on update events. One exception by design:
+corelocation visits fire visit_arrival and later visit_departure for the
+same id (two kinds, two events).
+  3. exit 0 when every handler accepts, non-zero otherwise so the receiver
+     retries. The ledger records each ACCEPTED (event, handler) delivery, so
+     a retry re-runs only the handlers that did not accept.
+
+Handler declarations reach the instance through the install-side record
+config/packs/<pack-id>.event_handlers.json (written by pack_install.sh via
+the `record` verb below; the pack manifest itself is not reachable after
+install -- same proxy pattern as <id>.requires_framework). The framework
+holds NO kind -> pack map (invariant I4): which command runs for a kind
+always comes from the records. What the framework does hold is an
+instance-level OWNER map (kind -> instance, "who receives", never "which
+command"): an agent that links a source (watch, payment SMS) claims its
+kinds, and the map is recorded in the app-facing companion file
+integrations/com.moha.dogany.dogany.json under "owners":
+  {"<kind>": {"instance": ROOT, "agent": SLUG, "claimed_at": ISO}}
+A claimed kind is delivered to the owner instance's declared handler(s)
+only; an owner with no handler for it is logged and the dispatch exits
+non-zero so the receiver retries (never a silent drop). Unclaimed kinds keep
+the fan-out. FRAMEWORK_KINDS below names app kinds the framework subscribes
+to before any pack declares them (no pack, no handler): they join the
+companion top-level events list, and an unclaimed event of such a kind with
+no declared handler is logged and dropped with exit 0 (no retry). The
+advertised kinds are claimed U declared U FRAMEWORK_KINDS.
+
+Verbs:
+  dogany-event [--home H]                 dispatch one event from stdin
+  dogany-event kinds [--home H]           print the callback kinds: the
+                                          declared-kind union plus
+                                          FRAMEWORK_KINDS (comma list, for
+                                          connection_files sync --events)
+  dogany-event record ROOT PACK_ID MANIFEST
+                                          install-side: validate the manifest
+                                          event_handlers and write/remove the
+                                          instance record
+  dogany-event claim --instance ROOT KIND...
+                                          take ownership of kinds (idempotent;
+                                          another instance claiming moves them,
+                                          the previous owner is logged)
+  dogany-event release --instance ROOT KIND...
+                                          drop ROOT's claim on kinds
+  dogany-event owned-kinds ROOT PACK_ID [--home H]
+                                          read-only: kinds PACK_ID's record
+                                          declares that ROOT owns (space list)
+  dogany-event owner KIND [--home H]      JSON owner entry (exit 1: unclaimed)
+  dogany-event owners [--instance ROOT]   read-only JSON owners map
+  dogany-event install [--home H] [--src F]
+                                          copy this file to H/.dogany/bin
+  dogany-event retire-check [--home H]    read-only: is the legacy
+                                          ~/.transporter/config.json callback
+                                          still set to something other than
+                                          dogany-event?
+
+Exit codes (dispatch): 0 delivered (or nothing to deliver), 1 a handler
+failed or timed out, 2 invalid payload, 3 ledger/lock unavailable.
+"""
+import fcntl
+import glob
+import hashlib
+import contextlib
+import json
+import os
+import re
+import signal
+import sqlite3
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+
+SUPPORTED_PAYLOAD_SCHEMA = (1,)
+DEFAULT_PAYLOAD_SCHEMA = 1
+APP_FILE = "com.moha.dogany.json"
+COMPANION_FILE = "com.moha.dogany.dogany.json"
+COMPANION_LOCK = COMPANION_FILE + ".lock"  # same lock connection_files sync takes
+BUDGET_S = 5.0          # default per-handler budget; also lock/ledger wait
+MAX_HANDLER_S = 15.0    # ceiling for a record's timeout_s
+RECEIVER_MARGIN_S = 0.4  # kept below the receiver's exec timeout
+RECEIVER_DEFAULT_S = 5.0  # receiver timeout assumed when the companion has none
+LEDGER_NAME = "events.ledger.sqlite"
+LOCK_DIR_NAME = "events.locks"
+RECORD_SUFFIX = ".event_handlers.json"
+KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# App kinds subscribed without a pack declaration (DGN-1825, receiver 0.4.1):
+# kind -> source. Delivered to declared handlers like any kind; with none
+# declared yet they are logged and dropped (exit 0).
+FRAMEWORK_KINDS = {"visit_arrival": "corelocation",
+                   "visit_departure": "corelocation"}
+EXIT_OK, EXIT_HANDLER, EXIT_PAYLOAD, EXIT_LEDGER = 0, 1, 2, 3
+
+
+def log(msg):
+    sys.stderr.write("[dogany-event] %s\n" % msg)
+
+
+def _home(argv_home=None):
+    return argv_home or os.environ.get("HOME") or os.path.expanduser("~")
+
+
+def integrations_dir(home):
+    return os.path.join(home, ".dogany", "integrations")
+
+
+# ---------------------------------------------------------------------------
+# estate discovery -- the scripts/pack/lib/discover_instances.sh rule
+# (registry, lite_instance pointer, fixed-depth scan; .instance.conf
+# required; physical-path dedup). Same test seam:
+# DOGANY_DISCOVER_INSTANCES_OVERRIDE="name:root,...".
+# ---------------------------------------------------------------------------
+def _read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def estate_roots(home):
+    override = os.environ.get("DOGANY_DISCOVER_INSTANCES_OVERRIDE")
+    if override:
+        cands = [e.split(":", 1)[1] for e in override.split(",") if ":" in e]
+    else:
+        dot = os.path.join(home, ".dogany")
+        cands = []
+        for line in _read(os.path.join(dot, "instances")).splitlines():
+            cols = line.split("\t")
+            if len(cols) >= 2 and cols[1].startswith("/"):
+                cands.append(cols[1])
+        lines = _read(os.path.join(dot, "lite_instance")).splitlines()
+        if lines and lines[0].strip().startswith("/"):
+            cands.append(lines[0].strip())
+        for pat in (".dogany/main/", ".dogany/agents/*/", "dogany/*/",
+                    "dogany/*/agents/*/", "dogany/*/poc/*/"):
+            cands.extend(sorted(glob.glob(os.path.join(home, pat))))
+    seen, roots = set(), []
+    for d in cands:
+        if not os.path.isfile(os.path.join(d, ".instance.conf")):
+            continue
+        phys = os.path.realpath(d)
+        if phys not in seen:
+            seen.add(phys)
+            roots.append(phys)
+    return sorted(roots)
+
+
+# ---------------------------------------------------------------------------
+# declarations
+# ---------------------------------------------------------------------------
+def validate_handlers(val):
+    """Manifest event_handlers shape: non-empty list of {kind, command,
+    [claim_required], [timeout_s]}.
+    command is a path relative to the payload root (installed at the same
+    path under the instance root): no absolute path, no '~', no '.'/'..'/
+    empty segment. Returns the list or raises ValueError."""
+    if not isinstance(val, list) or not val:
+        raise ValueError("must be a non-empty list of {kind, command} objects")
+    seen = set()
+    for i, h in enumerate(val):
+        if not isinstance(h, dict):
+            raise ValueError("[%d] is not an object" % i)
+        extra = set(h) - {"kind", "command", "claim_required", "timeout_s"}
+        if extra:
+            raise ValueError("[%d] unknown field(s): %s (allowed: kind, command, "
+                             "claim_required, timeout_s)" % (i, ", ".join(sorted(extra))))
+        if "claim_required" in h and not isinstance(h["claim_required"], bool):
+            raise ValueError("[%d] claim_required must be true or false" % i)
+        if "timeout_s" in h:
+            t = h["timeout_s"]
+            if isinstance(t, bool) or not isinstance(t, (int, float)) \
+                    or not 0 < t <= MAX_HANDLER_S:
+                raise ValueError("[%d] timeout_s must be a number in (0, %g]"
+                                 % (i, MAX_HANDLER_S))
+        kind, cmd = h.get("kind"), h.get("command")
+        if not isinstance(kind, str) or not KIND_RE.match(kind):
+            raise ValueError("[%d] kind %r is not a token (%s)" % (i, kind, KIND_RE.pattern))
+        if not isinstance(cmd, str) or not cmd:
+            raise ValueError("[%d] missing string field 'command'" % i)
+        if cmd.startswith("/") or cmd.startswith("~"):
+            raise ValueError("[%d] command '%s' is absolute -- declare a payload-relative path"
+                             % (i, cmd))
+        parts = cmd.split("/")
+        if ".." in parts or "." in parts or "" in parts:
+            raise ValueError("[%d] command '%s' contains traversal or empty path segments"
+                             % (i, cmd))
+        if (kind, cmd) in seen:
+            raise ValueError("[%d] duplicate declaration (%s, %s)" % (i, kind, cmd))
+        seen.add((kind, cmd))
+    return val
+
+
+def instance_handler_specs(root):
+    """[(pack_id, kind, command, spec)] from
+    root/config/packs/*.event_handlers.json; spec is the raw record entry.
+    A malformed record is skipped with a log line (it was validated at
+    install; a damaged one must not block the other packs)."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(root, "config", "packs", "*" + RECORD_SUFFIX))):
+        pid = os.path.basename(path)[:-len(RECORD_SUFFIX)]
+        try:
+            with open(path, encoding="utf-8") as f:
+                hs = validate_handlers(json.load(f))
+        except (OSError, ValueError) as e:
+            log("skip malformed record %s: %s" % (path, e))
+            continue
+        out.extend((pid, h["kind"], h["command"], h) for h in hs)
+    return out
+
+
+def instance_handlers(root):
+    """[(pack_id, kind, command)] -- instance_handler_specs without the spec."""
+    return [t[:3] for t in instance_handler_specs(root)]
+
+
+def declared_kinds(home):
+    # claim_required entries are not advertised until a claim adds the kind
+    return sorted({k for r in estate_roots(home)
+                   for _, k, _, h in instance_handler_specs(r)
+                   if not h.get("claim_required")})
+
+
+def callback_kinds(home):
+    """The companion top-level events list: claimed + declared +
+    FRAMEWORK_KINDS."""
+    return sorted(set(declared_kinds(home)) | set(FRAMEWORK_KINDS)
+                  | set(read_owners(home)))
+
+
+# ---------------------------------------------------------------------------
+# owner map (FDGN-591): kind -> instance that receives it
+# ---------------------------------------------------------------------------
+def _companion_path(home):
+    return os.path.join(integrations_dir(home), COMPANION_FILE)
+
+
+def _read_companion(home):
+    """The companion doc as a dict, {} when absent or unreadable."""
+    try:
+        with open(_companion_path(home), "rb") as f:
+            doc = json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def read_owners(home):
+    """{kind: entry} from the companion; malformed entries are ignored."""
+    owners = _read_companion(home).get("owners")
+    if not isinstance(owners, dict):
+        return {}
+    return {k: v for k, v in owners.items()
+            if isinstance(k, str) and isinstance(v, dict)
+            and isinstance(v.get("instance"), str) and v["instance"]}
+
+
+@contextlib.contextmanager
+def _companion_lock(home):
+    d = integrations_dir(home)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, COMPANION_LOCK), "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+def _conf_value(root, key):
+    for line in _read(os.path.join(root, ".instance.conf")).splitlines():
+        if line.startswith(key + "="):
+            return line.split("=", 1)[1].strip().strip("'\"")
+    return ""
+
+
+def _check_kinds(kinds):
+    if not kinds:
+        raise ValueError("at least one KIND is required")
+    for k in kinds:
+        if not KIND_RE.match(k):
+            raise ValueError("kind %r is not a token (%s)" % (k, KIND_RE.pattern))
+
+
+def _write_companion(home, doc):
+    _atomic_write(_companion_path(home),
+                  (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+
+
+def claim(home, root, kinds):
+    """Make ROOT the owner of kinds. Idempotent (an unchanged claim keeps its
+    claimed_at and writes nothing); another instance's claim is moved and the
+    previous owner is logged. Raises ValueError on bad input."""
+    _check_kinds(kinds)
+    root = os.path.realpath(root)
+    if not os.path.isfile(os.path.join(root, ".instance.conf")):
+        raise ValueError("%s is not an instance root (.instance.conf missing)" % root)
+    agent = _conf_value(root, "DOGANY_AGENT_NAME")
+    if not agent:
+        raise ValueError("%s: no DOGANY_AGENT_NAME in .instance.conf" % root)
+    with _companion_lock(home):
+        doc = _read_companion(home)
+        owners = doc.get("owners")
+        owners = dict(owners) if isinstance(owners, dict) else {}
+        changed = False
+        for k in kinds:
+            cur = owners.get(k)
+            if isinstance(cur, dict) and cur.get("instance") == root \
+                    and cur.get("agent") == agent:
+                continue
+            if isinstance(cur, dict) and cur.get("instance") not in (None, root):
+                log("kind=%s: owner moved %s (%s) -> %s (%s)"
+                    % (k, cur.get("agent"), cur.get("instance"), agent, root))
+            owners[k] = {"instance": root, "agent": agent, "claimed_at": _now()}
+            changed = True
+        if changed:
+            doc["owners"] = owners
+            if isinstance(doc.get("events"), list):
+                doc["events"] = sorted(set(doc["events"]) | set(kinds))
+            doc.setdefault("schema_version", 1)
+            _write_companion(home, doc)
+    return {k: owners[k] for k in kinds}
+
+
+def release(home, root, kinds):
+    """Drop ROOT's claim on kinds; a kind owned by someone else (or by
+    nobody) is left alone. Returns the list of kinds actually released."""
+    _check_kinds(kinds)
+    root = os.path.realpath(root)
+    with _companion_lock(home):
+        doc = _read_companion(home)
+        owners = doc.get("owners")
+        if not isinstance(owners, dict):
+            return []
+        gone = [k for k in kinds if isinstance(owners.get(k), dict)
+                and owners[k].get("instance") == root]
+        for k in kinds:
+            if k not in gone:
+                log("kind=%s: not owned by %s; left as is" % (k, root))
+        if gone:
+            doc["owners"] = {k: v for k, v in owners.items() if k not in gone}
+            _write_companion(home, doc)
+    return gone
+
+
+def owned_kinds(home, root, pack_id):
+    """Kinds pack_id's record under root declares that root owns."""
+    root = os.path.realpath(root)
+    kinds = {k for pid, k, _, _ in instance_handler_specs(root) if pid == pack_id}
+    owners = read_owners(home)
+    return sorted(k for k in kinds if owners.get(k, {}).get("instance") == root)
+
+
+def release_owned(home, root, kinds):
+    """release() limited to kinds ROOT really owns, so an install with
+    nothing claimed never touches the companion or its lock."""
+    root = os.path.realpath(root)
+    owners = read_owners(home)
+    mine = [k for k in sorted(set(kinds)) if owners.get(k, {}).get("instance") == root]
+    if not mine:
+        return []
+    return release(home, root, mine)
+
+
+def resolve_command(root, rel):
+    """Absolute handler path, or (None, reason). The resolved real path must
+    stay inside the real instance root, be a regular executable file, and be
+    neither group- nor other-writable."""
+    try:
+        validate_handlers([{"kind": "x", "command": rel}])
+    except ValueError as e:
+        return None, str(e)
+    real_root = os.path.realpath(root)
+    path = os.path.realpath(os.path.join(real_root, rel))
+    if not path.startswith(real_root + os.sep):
+        return None, "escapes the instance root"
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None, "not found"
+    if not stat.S_ISREG(st.st_mode):
+        return None, "not a regular file"
+    if not os.access(path, os.X_OK):
+        return None, "not executable"
+    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return None, "group/other-writable"
+    return path, None
+
+
+# ---------------------------------------------------------------------------
+# payload + ledger
+# ---------------------------------------------------------------------------
+def default_payload_schema(home):
+    """The payload version a bare receiver event carries: the app connection
+    file's payload_schema_version when it declares one, else 1. An absent or
+    unreadable app file never blocks dispatch."""
+    if home is None:
+        return DEFAULT_PAYLOAD_SCHEMA
+    try:
+        with open(os.path.join(integrations_dir(home), APP_FILE), "rb") as f:
+            doc = json.loads(f.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return DEFAULT_PAYLOAD_SCHEMA
+    if isinstance(doc, dict) and "payload_schema_version" in doc:
+        return doc["payload_schema_version"]
+    return DEFAULT_PAYLOAD_SCHEMA
+
+
+def parse_payload(raw, home=None):
+    """(event_doc, kind, dedup_key) or raises ValueError. The key always
+    includes the kind (see legacy_key for the pre-DGN-1825 form)."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise ValueError("BOM not allowed")
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise ValueError("invalid JSON: %s" % e)
+    if not isinstance(doc, dict):
+        raise ValueError("payload root must be an object")
+    if "payload_schema_version" in doc:
+        v = doc["payload_schema_version"]
+    else:
+        v = default_payload_schema(home)
+    if isinstance(v, bool) or not isinstance(v, int) or v not in SUPPORTED_PAYLOAD_SCHEMA:
+        raise ValueError("payload_schema_version %r unsupported (supported: %s)"
+                         % (v, ",".join(map(str, SUPPORTED_PAYLOAD_SCHEMA))))
+    kind = doc.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("payload has no string 'kind'")
+    eid = doc.get("event_id")
+    if isinstance(eid, str) and eid:
+        key = "kind_event_id:" + json.dumps([kind, eid], ensure_ascii=True)
+    else:
+        src, oid = doc.get("source"), doc.get("id")
+        if src is None or oid is None:
+            raise ValueError("payload has neither event_id nor (source, kind, id)")
+        key = "sko:" + json.dumps([src, kind, oid], sort_keys=True, ensure_ascii=True)
+    return doc, kind, key
+
+
+def legacy_key(doc):
+    """Pre-DGN-1825 ledger key (event_id alone) so a retry that straddles
+    the upgrade still skips handlers that already accepted; None when the
+    event has no event_id (the fallback key already carried the kind)."""
+    eid = doc.get("event_id")
+    if isinstance(eid, str) and eid:
+        return "event_id:" + eid
+    return None
+
+
+def _ledger(home):
+    idir = integrations_dir(home)
+    os.makedirs(idir, exist_ok=True)
+    db = sqlite3.connect(os.path.join(idir, LEDGER_NAME), timeout=BUDGET_S)
+    db.execute("CREATE TABLE IF NOT EXISTS delivered ("
+               " event_key TEXT NOT NULL, target TEXT NOT NULL,"
+               " kind TEXT NOT NULL, at TEXT NOT NULL,"
+               " PRIMARY KEY (event_key, target))")
+    return db
+
+
+def _event_lock(home, key, deadline):
+    """Per-event flock so concurrent duplicate deliveries never run the same
+    handler twice. Returns the open fd or None when the budget runs out."""
+    d = os.path.join(integrations_dir(home), LOCK_DIR_NAME)
+    os.makedirs(d, exist_ok=True)
+    fh = open(os.path.join(d, hashlib.sha256(key.encode()).hexdigest()[:32]), "a")
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fh
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                fh.close()
+                return None
+            time.sleep(0.05)
+
+
+def _now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _kill(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    p.wait()
+
+
+def receiver_timeout(home):
+    """The exec timeout the receiver applies to us: companion
+    callback.timeout_s, else RECEIVER_DEFAULT_S."""
+    cb = _read_companion(home).get("callback")
+    t = cb.get("timeout_s") if isinstance(cb, dict) else None
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or t <= 0:
+        return RECEIVER_DEFAULT_S
+    return float(t)
+
+
+def handler_timeout(home, spec, default):
+    """Per-handler budget in seconds. An unset timeout_s keeps the default;
+    an explicit one is clamped to MAX_HANDLER_S and to just below the
+    receiver's exec timeout."""
+    t = spec.get("timeout_s")
+    if t is None:
+        return default
+    cap = max(receiver_timeout(home) - RECEIVER_MARGIN_S, 0.1)
+    return min(float(t), MAX_HANDLER_S, cap)
+
+
+def dispatch(home, raw, budget=BUDGET_S):
+    deadline = time.monotonic() + budget
+    try:
+        doc, kind, key = parse_payload(raw, home)
+    except ValueError as e:
+        log("rejected payload: %s" % e)
+        return EXIT_PAYLOAD
+    targets = []
+    owner = read_owners(home).get(kind)
+    if owner is not None and not os.path.isdir(owner["instance"]):
+        log("kind=%s: owner %s root %s no longer exists; releasing the claim"
+            % (kind, owner.get("agent"), owner["instance"]))
+        try:
+            release(home, owner["instance"], [kind])
+        except (ValueError, OSError) as e:
+            log("kind=%s: release failed: %s" % (kind, e))
+        owner = None
+    if owner is not None:
+        # claimed kind: the owner instance only, never the fan-out
+        oroot = owner["instance"]
+        targets = [(oroot, pid, rel, h) for pid, k, rel, h in instance_handler_specs(oroot)
+                   if k == kind]
+        if not targets:
+            log("kind=%s: owner %s (%s) has no handler for it; retry later"
+                % (kind, owner.get("agent"), oroot))
+            return EXIT_HANDLER
+    else:
+        for root in estate_roots(home):
+            for pid, k, rel, h in instance_handler_specs(root):
+                if k == kind and not h.get("claim_required"):
+                    targets.append((root, pid, rel, h))
+    if not targets:
+        if kind in FRAMEWORK_KINDS:
+            log("kind=%s source=%s: subscribed, no handler declared yet; dropped"
+                % (kind, doc.get("source")))
+        else:
+            log("kind=%s: no installed handler declares it (nothing to deliver)" % kind)
+        return EXIT_OK
+    try:
+        lock = _event_lock(home, key, deadline)
+    except OSError as e:
+        log("event lock unavailable: %s" % e)
+        return EXIT_LEDGER
+    if lock is None:
+        log("kind=%s: event busy in another dispatch; retry later" % kind)
+        return EXIT_LEDGER
+    try:
+        db = _ledger(home)
+    except (OSError, sqlite3.Error) as e:
+        lock.close()
+        log("ledger unavailable: %s" % e)
+        return EXIT_LEDGER
+    try:
+        old = legacy_key(doc)
+        done = {r[0] for r in db.execute(
+            "SELECT target FROM delivered WHERE event_key=?", (key,))}
+        if old is not None:
+            # a legacy row only counts for the same kind it recorded
+            done |= {r[0] for r in db.execute(
+                "SELECT target FROM delivered WHERE event_key=? AND kind=?",
+                (old, kind))}
+        failed = 0
+        procs = []
+        for root, pid, rel, spec in targets:
+            target = "%s|%s|%s" % (root, pid, rel)
+            if target in done:
+                continue
+            path, why = resolve_command(root, rel)
+            if path is None:
+                log("kind=%s pack=%s root=%s: handler '%s' refused: %s"
+                    % (kind, pid, root, rel, why))
+                failed += 1
+                continue
+            # stdin/stderr through files: a handler that never reads, or
+            # writes a lot, can never stall the dispatcher on a pipe.
+            sin, serr = tempfile.TemporaryFile(), tempfile.TemporaryFile()
+            sin.write(raw)
+            sin.seek(0)
+            try:
+                p = subprocess.Popen([path], cwd=root, stdin=sin,
+                                     stdout=subprocess.DEVNULL, stderr=serr,
+                                     start_new_session=True)
+            except OSError as e:
+                log("kind=%s pack=%s: spawn failed: %s" % (kind, pid, e))
+                serr.close()
+                failed += 1
+                continue
+            finally:
+                sin.close()
+            tmo = handler_timeout(home, spec, budget)
+            procs.append((p, target, pid, serr, time.monotonic() + tmo, tmo))
+        # poll all handlers together: each is killed at its own deadline, and
+        # one that finishes late is never mistaken for a punctual one
+        results = {}
+        pending = list(range(len(procs)))
+        while pending:
+            for i in list(pending):
+                p, _t, _pid, _serr, pdeadline, _tmo = procs[i]
+                rc = p.poll()
+                if rc is not None:
+                    results[i] = rc
+                    pending.remove(i)
+                elif time.monotonic() >= pdeadline:
+                    _kill(p)
+                    results[i] = None
+                    pending.remove(i)
+            if pending:
+                time.sleep(0.01)
+        for i, (p, target, pid, serr, pdeadline, tmo) in enumerate(procs):
+            rc = results[i]
+            if rc is None:
+                serr.close()
+                log("kind=%s pack=%s: handler timed out (budget %.1fs)" % (kind, pid, tmo))
+                failed += 1
+                continue
+            serr.seek(0)
+            err = serr.read().decode("utf-8", "replace").strip()
+            serr.close()
+            if rc == 0:
+                try:
+                    db.execute("INSERT OR IGNORE INTO delivered VALUES (?,?,?,?)",
+                               (key, target, kind, _now()))
+                    db.commit()
+                except sqlite3.Error as e:
+                    log("kind=%s pack=%s: accepted but ledger write failed: %s"
+                        % (kind, pid, e))
+                    failed += 1
+            else:
+                log("kind=%s pack=%s: handler exit %d%s"
+                    % (kind, pid, rc, (": " + err[-300:]) if err else ""))
+                failed += 1
+        return EXIT_HANDLER if failed else EXIT_OK
+    finally:
+        db.close()
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+# ---------------------------------------------------------------------------
+# install-side record, self-install, retirement check
+# ---------------------------------------------------------------------------
+def _atomic_write(path, data):
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _release_dropped(home, root, pack_id, old_kinds, new_kinds):
+    """Release kinds the pack no longer declares (and no other record of the
+    instance still does) that root owns."""
+    gone = set(old_kinds) - set(new_kinds)
+    gone -= {k for pid, k, _, _ in instance_handler_specs(root) if pid != pack_id}
+    try:
+        freed = release_owned(home, root, gone)
+    except (ValueError, OSError) as e:
+        log("release after upgrade failed: %s" % e)
+        return
+    if freed:
+        print("  event_handlers: released kinds no longer declared: %s" % ",".join(freed))
+
+
+def record(root, pack_id, manifest, home=None):
+    """Absent/null event_handlers removes any stale record; malformed or a
+    command missing from the installed instance is an install error. Kinds a
+    removed or shrunk record declared are released when root owned them."""
+    home = _home(home)
+    path = os.path.join(root, "config", "packs", pack_id + RECORD_SUFFIX)
+    old_kinds = {k for pid, k, _, _ in instance_handler_specs(root) if pid == pack_id}
+    with open(manifest, encoding="utf-8") as f:
+        val = json.load(f).get("event_handlers")
+    if val is None:
+        if os.path.exists(path):
+            os.remove(path)
+        _release_dropped(home, root, pack_id, old_kinds, ())
+        print("  event_handlers: %s manifest declares none -- no record written" % pack_id)
+        return 0
+    try:
+        validate_handlers(val)
+    except ValueError as e:
+        print("event_handlers: %s %s" % (pack_id, e), file=sys.stderr)
+        return 1
+    for h in val:
+        if not os.path.isfile(os.path.join(root, h["command"])):
+            print("event_handlers: %s command '%s' not found in the installed instance"
+                  " -- dead declaration" % (pack_id, h["command"]), file=sys.stderr)
+            return 1
+    data = (json.dumps(val, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    _atomic_write(path, data)
+    _release_dropped(home, root, pack_id, old_kinds, {h["kind"] for h in val})
+    print("  event_handlers recorded: %s -> %s (%s)"
+          % (pack_id, ",".join(sorted({h["kind"] for h in val})), path))
+    return 0
+
+
+def install(home, src):
+    dst = os.path.join(home, ".dogany", "bin", "dogany-event")
+    with open(src, "rb") as f:
+        data = f.read()
+    try:
+        with open(dst, "rb") as f:
+            if f.read() == data and (os.stat(dst).st_mode & 0o777) == 0o755:
+                print("unchanged %s" % dst)
+                return 0
+    except OSError:
+        pass
+    _atomic_write(dst, data)
+    os.chmod(dst, 0o755)
+    print("installed %s" % dst)
+    return 0
+
+
+def retire_check(home):
+    """Read-only. The legacy callback lives in the app-owned
+    ~/.transporter/config.json; this never writes it (design 5.4: a rewrite
+    needs a developer OK). Exit 0 = already dogany-event or no callback,
+    4 = legacy callback still active, 1 = unreadable."""
+    path = os.path.join(home, ".transporter", "config.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            cb = json.load(f).get("callback")
+    except FileNotFoundError:
+        print("absent")
+        return 0
+    except (OSError, ValueError, AttributeError) as e:
+        print("unreadable: %s" % e)
+        return 1
+    if cb is None:
+        print("no-callback")
+        return 0
+    target = os.path.join(home, ".dogany", "bin", "dogany-event")
+    if target in json.dumps(cb, ensure_ascii=False):
+        print("retired")
+        return 0
+    print("legacy-active")
+    return 4
+
+
+def _opt(args, name):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            v = args[i + 1]
+            del args[i:i + 2]
+            return v
+    return None
+
+
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    home = _home(_opt(args, "--home"))
+    verb = args.pop(0) if args and not args[0].startswith("-") else "dispatch"
+    if verb == "dispatch":
+        return dispatch(home, sys.stdin.buffer.read())
+    if verb == "kinds":
+        print(",".join(callback_kinds(home)))
+        return 0
+    if verb == "record" and len(args) == 3:
+        return record(*args, home=home)
+    if verb == "install":
+        return install(home, _opt(args, "--src") or os.path.abspath(__file__))
+    if verb == "retire-check":
+        return retire_check(home)
+    if verb in ("claim", "release"):
+        root = _opt(args, "--instance")
+        if not root:
+            log("usage: dogany-event %s --instance ROOT KIND..." % verb)
+            return 64
+        try:
+            if verb == "claim":
+                res = claim(home, root, args)
+            else:
+                res = release(home, root, args)
+        except (ValueError, OSError) as e:
+            log("%s: %s" % (verb, e))
+            return 1
+        print(json.dumps(res, indent=2, sort_keys=True))
+        return 0
+    if verb == "owned-kinds" and len(args) == 2:
+        print(" ".join(owned_kinds(home, args[0], args[1])))
+        return 0
+    if verb == "owner" and len(args) == 1:
+        entry = read_owners(home).get(args[0])
+        print(json.dumps({"kind": args[0], "owner": entry}, sort_keys=True))
+        return 0 if entry else 1
+    if verb == "owners":
+        root = _opt(args, "--instance")
+        owners = read_owners(home)
+        if root:
+            root = os.path.realpath(root)
+            owners = {k: v for k, v in owners.items() if v["instance"] == root}
+        print(json.dumps(owners, indent=2, sort_keys=True))
+        return 0
+    log("usage: dogany-event [dispatch|kinds|record ROOT PACK_ID MANIFEST|claim|release --instance ROOT KIND...|owned-kinds ROOT PACK_ID|owner KIND|owners [--instance ROOT]|install|retire-check] [--home H]")
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main())

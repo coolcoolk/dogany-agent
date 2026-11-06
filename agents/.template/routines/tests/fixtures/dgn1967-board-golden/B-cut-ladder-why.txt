@@ -1,0 +1,41 @@
+n_live=00 units=3652 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x7
+n_live=01 units=3660 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | **[백그라운드 작업]** x4 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x6
+n_live=02 units=3652 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | **[백그라운드 작업]** x7 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x5
+n_live=03 units=3644 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | **[백그라운드 작업]** x10 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x4
+n_live=04 units=3636 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | **[백그라운드 작업]** x13 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x3
+n_live=05 units=3797 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x8 | **[백그라운드 작업]** x16 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x3
+n_live=06 units=3706 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x6 | **[백그라운드 작업]** x19 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x3
+n_live=07 units=3741 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x5 | **[백그라운드 작업]** x22 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x3
+n_live=08 units=3776 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x4 | **[백그라운드 작업]** x25 | quote:: x9 | quote:: x6 | quote:: x7 | quote:: x3
+n_live=09 units=3158 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x28 | quote:: x9 | quote:: x6 | quote:: x3
+n_live=10 units=3319 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x31 | quote:: x9 | quote:: x6 | quote:: x3
+n_live=11 units=3480 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x34 | quote:: x9 | quote:: x6 | quote:: x3
+n_live=12 units=3641 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x37 | quote:: x9 | quote:: x6 | quote:: x3
+n_live=13 units=2563 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x40 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=14 units=2724 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x43 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=15 units=2885 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x46 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=16 units=3046 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x49 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=17 units=3207 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x52 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=18 units=3368 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=19 units=3529 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x58 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=20 units=3690 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x61 | quote:: x5 | quote:: x6 | quote:: x3
+n_live=21 units=3792 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x58 | fold:: 2건 x4 | quote:: x6 | quote:: x3
+n_live=22 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 4건 x5 | quote:: x6 | quote:: x3
+n_live=23 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 5건 x5 | quote:: x6 | quote:: x3
+n_live=24 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 6건 x5 | quote:: x6 | quote:: x3
+n_live=25 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 7건 x5 | quote:: x6 | quote:: x3
+n_live=26 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 8건 x5 | quote:: x6 | quote:: x3
+n_live=27 units=3648 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 9건 x5 | quote:: x6 | quote:: x3
+n_live=28 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 10건 x5 | quote:: x6 | quote:: x3
+n_live=29 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 11건 x5 | quote:: x6 | quote:: x3
+n_live=30 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 12건 x5 | quote:: x6 | quote:: x3
+n_live=31 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 13건 x5 | quote:: x6 | quote:: x3
+n_live=32 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 14건 x5 | quote:: x6 | quote:: x3
+n_live=33 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 15건 x5 | quote:: x6 | quote:: x3
+n_live=34 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 16건 x5 | quote:: x6 | quote:: x3
+n_live=35 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 17건 x5 | quote:: x6 | quote:: x3
+n_live=36 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 18건 x5 | quote:: x6 | quote:: x3
+n_live=37 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 19건 x5 | quote:: x6 | quote:: x3
+n_live=38 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 20건 x5 | quote:: x6 | quote:: x3
+n_live=39 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 21건 x5 | quote:: x6 | quote:: x3
+n_live=40 units=3649 :: 10/09(금) 00:30 x1 | quote:: x6 | quote:: x3 | **[백그라운드 작업]** x55 | fold:: 22건 x5 | quote:: x6 | quote:: x3

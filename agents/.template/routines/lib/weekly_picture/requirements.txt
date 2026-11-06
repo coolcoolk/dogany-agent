@@ -1,0 +1,4 @@
+# Optional H2 renderer dependencies, for pack_deps_provision.sh --requirements.
+numpy
+Pillow
+scipy

@@ -1,0 +1,16 @@
+{
+  "schema": "devkit-product-mode/1",
+  "product": "dogany-agent",
+  "mode": "bootstrap",
+  "legacy_gate_required": true,
+  "switch_marker": ".devkit/switch.json",
+  "controller": {
+    "pack": "kit_dev",
+    "entry": "ci"
+  },
+  "adapters": {
+    "integration": "git-hooks/devkit-ci.sh",
+    "cloud": "ci/devkit-ci.sh",
+    "cut": "scripts/devkit-cut.sh"
+  }
+}

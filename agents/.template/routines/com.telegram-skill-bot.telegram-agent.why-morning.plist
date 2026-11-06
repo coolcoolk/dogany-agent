@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- v2.7 T1 Why net morning asks (spec 4.3): an opt-in FALLBACK. It
+         sends only when WHY_MORNING_FALLBACK=on (default off); otherwise
+         queued asks wait for the retro slot or an inline gate. Loaded per
+         instance at cutover (deferred in plists.defer). rc 4 = window/never-ask
+         refusal, a designed outcome, mapped to 0 so cron-guard stays silent. -->
+    <key>Label</key>
+    <string>com.telegram-skill-bot.__AGENT_NAME__.why-morning</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.__AGENT_NAME__.why-morning</string>
+        <string>--friendly-name</string>
+        <string>why-morning</string>
+        <string>--log</string>
+        <string>__PROJECT_ROOT__/.telegram_bot/logs/why-morning.stdout.log</string>
+        <string>--</string>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>/usr/bin/python3 "$0" morning; rc=$?; [ "$rc" -eq 4 ] &amp;&amp; exit 0; exit "$rc"</string>
+        <string>__PROJECT_ROOT__/routines/why-net.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/why-morning.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/why-morning.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+</dict>
+</plist>

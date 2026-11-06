@@ -1,0 +1,48 @@
+{
+ "emoji": "⚙️",
+ "live": [
+  {
+   "kind": "model",
+   "model": "Claude Opus 5.5 (Cloud)",
+   "runtime": "cloud",
+   "alias": "opus",
+   "text": "잠자기 뒤 텔레그램 연결 스스로 회복하기",
+   "ago_min": 1,
+   "clock": "17:40"
+  },
+  {
+   "kind": "bg",
+   "slot": "dev push",
+   "command": "bash ./release.sh dev.6",
+   "text": "dev push (검사 수정, 용어 수정)",
+   "ago_min": 8,
+   "clock": "17:33"
+  }
+ ],
+ "plugin_sections": [
+  {
+   "key": "products",
+   "variants": [
+    [
+     "**[제품]**",
+     "quote::",
+     "**Dogany (dogany-agent)**",
+     "v2.6.4 ▸ v2.7.0-dev.5 (ship 23/75)",
+     "• 프레임워크(3/5): merge 끝난 수정 push 중",
+     "• 출시: dev.6 대기 (push 뒤 다시 cut)",
+     "quote::end",
+     "quote::",
+     "**Dogany PO 팩 (dogany-agentpack-po)**",
+     "v0.1.1 (미배포)",
+     "• 자동 이어 돌리기: 할 일 꺼내는 장치 실제 크루 연결 (DGN-2141)",
+     "quote::end",
+     "quote::",
+     "**Telegram 브릿지 (claude-code-telegram)**",
+     "v2.1.0 ▸ v2.1.1",
+     "quote::end"
+    ]
+   ],
+   "pinned": true
+  }
+ ]
+}

@@ -1,0 +1,4 @@
+{
+  "owner_ask.fact.schedule": "\\b(?:schedule|calendar|appointments?|events?)\\b",
+  "owner_ask.fact.roster": "\\b(?:roster|attendees?|guest\\s+list)\\b"
+}

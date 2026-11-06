@@ -1,0 +1,1 @@
+../../../../scripts/pack/lib/instance_class.sh
