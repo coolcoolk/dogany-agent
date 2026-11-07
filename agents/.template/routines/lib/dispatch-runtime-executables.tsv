@@ -1,0 +1,5 @@
+# Local runtime -> CLI executable, used by the CLI updater.
+# Columns: runtime, executable, evidence (tab separated).
+claude-code	claude	dispatch model worker
+codex	codex	dispatch model worker
+claude-api	claude	API-account worker

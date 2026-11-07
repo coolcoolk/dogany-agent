@@ -1,0 +1,18 @@
+{
+  "visible": false,
+  "age": 60,
+  "entries": [
+    {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call-1",
+            "content": "Command running in background with ID: bg-job_1."
+          }
+        ]
+      }
+    }
+  ]
+}

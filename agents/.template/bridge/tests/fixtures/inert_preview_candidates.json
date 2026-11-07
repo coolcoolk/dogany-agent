@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "candidates": [
+    {
+      "v": 1,
+      "candidate_id": "fdgn576-20261026-A",
+      "text": "이 입금은 어떤 돈인가요?\n\n<blockquote>• 날짜: 2026.10.25\n• 금액: 100,000원\n• 계좌: 예시 통장</blockquote>",
+      "buttons": [[{"text": "내 계좌에서 옮긴 돈", "callback_data": "synthetic:transfer"}], [{"text": "수입", "callback_data": "synthetic:income"}]]
+    },
+    {
+      "v": 1,
+      "candidate_id": "fdgn576-20261026-B",
+      "text": "입금 내역을 확인해 주세요.\n\n<blockquote>• 날짜: 2026.10.25\n• 금액: 100,000원\n• 계좌: 예시 통장</blockquote>\n\n어떤 돈인지 골라 주세요.",
+      "buttons": [[{"text": "내 계좌에서 옮긴 돈", "callback_data": "synthetic:transfer"}], [{"text": "수입", "callback_data": "synthetic:income"}]]
+    }
+  ],
+  "pick": "입금 질문은 A를 추천합니다. 질문이 바로 보여요.\n\n[[OPTIONS]]\nA\nB"
+}

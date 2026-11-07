@@ -1,0 +1,15 @@
+{
+  "_comment": "DGN-1962 recall supersession lexicon (data, not code). groups: subject -> lowercase substrings; two recalled lines naming the same entity and the same group are on the same subject (newest wins), and a kit fact whose text hits a group covers that subject. expectation_markers: substrings that make a line a future expectation (stale once its date passes). entities: instance names (name -> aliases) that key supersession besides kit entities; prompt words never do. fraction_units: a word right after N/M that makes it a fraction, not a month/day (ASCII words match whole, others by prefix).",
+  "groups": {
+    "birth": ["출산", "임신", "예정일", "태어", "출생", "아기", "birth", "born", "pregnan", "due date", "baby"],
+    "wedding": ["결혼", "웨딩", "약혼", "wedding", "married", "engaged"],
+    "move": ["이사", "이전했", "moved", "moving", "relocat"],
+    "job": ["입사", "퇴사", "이직", "취업", "new job", "hired", "resign"],
+    "health": ["수술", "입원", "퇴원", "진단", "surgery", "hospital", "diagnos"],
+    "school": ["입학", "졸업", "합격", "admission", "graduat"],
+    "death": ["별세", "돌아가", "사망", "장례", "passed away", "funeral"]
+  },
+  "expectation_markers": ["예정", "예상", "할 것", "하기로", "곧 ", "expected", "expecting", "due ", "upcoming", "planned", "will "],
+  "entities": {},
+  "fraction_units": ["cup", "cups", "tsp", "tbsp", "teaspoon", "teaspoons", "tablespoon", "tablespoons", "oz", "ounce", "ounces", "lb", "lbs", "pound", "pounds", "kg", "g", "gram", "grams", "ml", "l", "liter", "liters", "litre", "litres", "inch", "inches", "mile", "miles", "km", "hour", "hours", "of", "portion", "portions", "serving", "servings", "slice", "slices", "컵", "스푼", "큰술", "작은술", "인분", "조각", "쪽", "시간", "정도", "만큼", "이상", "이하", "씩"]
+}

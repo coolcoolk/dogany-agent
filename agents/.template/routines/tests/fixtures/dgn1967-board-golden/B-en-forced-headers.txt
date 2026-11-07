@@ -1,0 +1,14 @@
+10/09(Fri) 00:30
+
+quote::
+[Pending decisions]
+- d
+quote::end
+
+quote::
+[Console actions] (failed act present)
+quote::end
+
+quote::
+[Unpark candidates] (scan 2026-10-07 18:30 -- stale)
+quote::end

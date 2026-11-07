@@ -1,0 +1,2107 @@
+{
+  "schema": 1,
+  "files": {
+    "routines/in-session-dispatch-gate.py": {
+      "hook": true,
+      "sha256": [
+        "585e26426241c5b66e9b399eb095de648342092664dcd49bc18847c900502dde",
+        "80bd93432c9981924713d9672b8bc5d7f6e9a992865e21695a3c476591fcf78b",
+        "abcd45061a40cb1559d0c15d482cd2a4071bda50085ec5da8a048ae6348058ee"
+      ]
+    },
+    "routines/live-test-suite-gate.py": {
+      "hook": true,
+      "sha256": [
+        "dd39a16b869443530ac3360583f4c2d918a1031ab0a2c413235e438464556b14"
+      ]
+    },
+    "routines/lib/cloud_account.py": {
+      "hook": false,
+      "sha256": [
+        "15c4c2811a1f390c32be8c9cc99c44f30af42b51ac599e64240f81da0a36959d"
+      ]
+    },
+    "routines/lib/cloud_completion.sh": {
+      "hook": false,
+      "sha256": [
+        "1f7f67fc40598a931638f6502b3e8ab25a1fb97de92ce0cb634f32b31babcc86"
+      ]
+    },
+    "routines/lib/cloud_credit.py": {
+      "hook": false,
+      "sha256": [
+        "92ea09268d35e85eaa124fff14d5ccdcc0623ea123acb35987f1e945561e09ce"
+      ]
+    },
+    "routines/lib/cloud_credit_capacity.py": {
+      "hook": false,
+      "sha256": [
+        "280e75f64be6d72203d7118f6b1c2cee806bde6e5a46c167d17036fc8c6925cf"
+      ]
+    },
+    "routines/lib/cloud_routine.py": {
+      "hook": false,
+      "sha256": [
+        "76286ee7403710dc49cbf3e08869ce5d80ff30bade75552079a9d82c4a981438",
+        "91628520ea0b06cf773497c25113b675e4f90a72393625a5f4039519cd1cb28f"
+      ]
+    },
+    "routines/lib/codex_cloud.py": {
+      "hook": false,
+      "sha256": [
+        "9e1f2611d8013186d7304ffdb7a33ac503a0b60d6490831d6184b24690f1391b"
+      ]
+    },
+    "routines/lib/dispatch_artifacts.py": {
+      "hook": false,
+      "sha256": [
+        "f9a1647362454ea7bd218bd10a27c98b86a311e01b8ff37885423912b0412d8a"
+      ]
+    },
+    "routines/lib/problem_cards.py": {
+      "hook": false,
+      "sha256": [
+        "b57328442b00281941dcce80b7eba7ca3a7b0cbc5d86d057b6e2672c889e6e74"
+      ]
+    },
+    "routines/lib/review_evidence.py": {
+      "hook": false,
+      "sha256": [
+        "38bda26493efa5d96e1ea3ff9009fb27c8daaf79962f53ef573ebd8bd667daa3"
+      ]
+    },
+    "routines/lib/runtime_loss.py": {
+      "hook": false,
+      "sha256": [
+        "229ef9230159f680d44ad876c9d3d938a0ade47620b49cd09509a3a3f91cdccd",
+        "8480cf86d83317d7fe25da8b351ccf50dc8094222d58e3e41e446feb1126e1b4"
+      ]
+    },
+    "routines/lib/stage_judge.py": {
+      "hook": false,
+      "sha256": [
+        "5103d4ee32e1ceca6ef1eb0303a323e9168ddc087b8fd18a2655a004cc50680c"
+      ]
+    },
+    "routines/lib/ticket_receipts.py": {
+      "hook": false,
+      "sha256": [
+        "c18c12220c66b7ab1711607a4a5c75119e45baf3b8bb9d448039ca00e371cceb"
+      ]
+    },
+    "routines/lib/worklog_intake.py": {
+      "hook": false,
+      "sha256": [
+        "5dde57545e0801e95de6a529a9e1516eb3913bd48dfa93a26722073814729812"
+      ]
+    },
+    "routines/stage-judge.py": {
+      "hook": true,
+      "sha256": [
+        "dc4db6ff12e924d6434ab4eb3a20b21d545af4a1a1913cc4ce27b9b292818ff4"
+      ]
+    },
+    "routines/worklog-intake.py": {
+      "hook": true,
+      "sha256": [
+        "4677b062f0b7c5bdd10a73af9e5c4983675654b7b8110a6877f9e9473cbf8b68"
+      ]
+    },
+    "routines/lib/dispatch_routing.py": {
+      "hook": false,
+      "sha256": [
+        "5c78e4ca3781742db1962c09a45c36017fa22128e80d5c041b0fd6d7b5df1f2d"
+      ]
+    },
+    "routines/lib/seat_review_budget.py": {
+      "hook": false,
+      "sha256": [
+        "9f58efdd08fe564b1ae152f5288ab09a3032dd9c3274ba2862fa557b552cf7ec"
+      ]
+    },
+    "routines/lib/dispatch-tier-bindings.tsv": {
+      "hook": false,
+      "sha256": [
+        "0d2d6a084fc1ac01ab88ec332d443abc09465ced2b1fd254a5cb0b9316534f36",
+        "4829b21b9c91513e5fb8a9327d7d3f94d6e5a422cbe2c8f46698161c8a3d426d"
+      ]
+    },
+    "routines/lib/dispatch-effort-bindings.tsv": {
+      "hook": false,
+      "sha256": [
+        "7f8c0b444928c4db4d93d3cbd0bfd97754e9ef286bfa6616d6e6f425ad83a87d",
+        "99fd17947dc234633e07efe28d01612253b6996b17f9455279c34e20c94cb442"
+      ]
+    },
+    "scripts/secret-sweep.sh": {
+      "hook": false,
+      "sha256": [
+        "34ceb63c73c4b77330cf40df58b322ee1a2fc946b3e9caa6368f73533e75111c",
+        "a2140dcfe1617568b255ca66530e3c83ba5125ed24769b81a87c0d94301c32bd"
+      ]
+    },
+    "scripts/sweep-identity.example": {
+      "hook": false,
+      "sha256": [
+        "cc9cfdb2f7d1560f26cea7b33aa818927d41c47a2985255e1f392bd5fb854f72"
+      ]
+    },
+    "scripts/tests/test-secret-sweep.sh": {
+      "hook": false,
+      "sha256": [
+        "147fdbf18ac8fd188b9518fd8ec9e518f48eede016f0c96b3e1df4dd1a74d89b",
+        "91c5d02ff2b36874ff2aaa1f3add2c4d1efa0b68a95d2f0b842186814268afe3"
+      ]
+    },
+    "git-hooks/pre-commit": {
+      "hook": false,
+      "sha256": [
+        "185796718fc1ba3b0492ff48f09a3206ad5f1485cd3004c91a8f4124536d24d5",
+        "ea636e467ced678ec86d8bc5f1925bb77326553cf48fe9e4a45424588443b763"
+      ]
+    },
+    "git-hooks/pre-push": {
+      "hook": false,
+      "sha256": [
+        "e57817ef26076a55dc7a085f3cc8023a2db8b61133d9183b4b6537c76f470b4b",
+        "a1a3c05cb3db9b9b1f8f4d4f8c758cafb64e4f5f5c0a629f29ef44536ed05186"
+      ]
+    },
+    "git-hooks/reference-transaction": {
+      "hook": false,
+      "sha256": [
+        "830f5d97b95be46c1d5c584905bd7e2b3098ff4455128ab97c07da8b3bce83d4"
+      ]
+    },
+    "git-hooks/live-lease.sh": {
+      "hook": false,
+      "sha256": [
+        "818aefbad3c9273702365800f12582a18dc38046c139f0fe7c29ce9c5c32edd6"
+      ]
+    },
+    "git-hooks/crew_lease.sh": {
+      "hook": false,
+      "sha256": [
+        "09e584efe454167f3b2bc00723cffdcbb670a9f5f7d00dcc5a2627500288d23a"
+      ]
+    },
+    "git-hooks/merge-gate.py": {
+      "hook": false,
+      "sha256": [
+        "4d92a6879bcaedc8d393f57176c1a097c8f2e0f1c4ce7b834d21c604a03a963f"
+      ]
+    },
+    "git-hooks/devkit-ci.sh": {
+      "hook": false,
+      "sha256": []
+    },
+    "git-hooks/red-push.py": {
+      "hook": false,
+      "sha256": [
+        "c14027b276ca8594581c579eb1e3d5b6be2a28b6125f449a88fce4aa57a5d38c"
+      ]
+    },
+    "git-hooks/post-update-tests.py": {
+      "hook": false,
+      "sha256": [
+        "d7a50e7596d10429253d84f74e22f3ad30c4b851ee2dc92c51c593823d8c0fa2"
+      ]
+    },
+    "git-hooks/lib/remote_runner.py": {
+      "hook": false,
+      "sha256": [
+        "a51111d194494f7a474fe939447329d55ff032c8f87fdfba574c3946d9170f83"
+      ]
+    },
+    "git-hooks/lib/remote_runner.sh": {
+      "hook": false,
+      "sha256": [
+        "52e0f698a3d9cb4a35692bb3ef3232231572bd04de098b82ffa3a1312cd3c15a"
+      ]
+    },
+    "git-hooks/lib/test_lint.py": {
+      "hook": false,
+      "sha256": [
+        "0e7abd4000ef2e4efbbc6248f7f283d8baf00b141ee959d93569de0c29fe3212"
+      ]
+    },
+    "git-hooks/lib/test_temp_cleanup.baseline": {
+      "hook": false,
+      "sha256": [
+        "a189ebca372ba327a42678c644b7551283ba9295c578e4ef7a6f1863269ef015"
+      ]
+    },
+    "routines/test-codex-hook-adapter.py": {
+      "hook": false,
+      "sha256": [
+        "adac9e031802bfcfc116a42ecd13f3b189bca7621d4b11230f08bb347f9a8d89",
+        "c6cc213d3c3827dbd754f8fdc99e76945fd84024a4d1fb3ecaddc777c7188db2"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/attachment-close.json": {
+      "hook": false,
+      "sha256": [
+        "78e3098e6da928f8e557aa4819bef46792550e409003e0a2e05c3ddae6ee38da"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/attachment-text-close.json": {
+      "hook": false,
+      "sha256": [
+        "6bf41591d90e5db3ac6bc29d9346d906c13e02683aa4a92b54daec27c88ae549"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/auto.json": {
+      "hook": false,
+      "sha256": [
+        "673ae500dca2a7791bfd02d3f0b646e6d8639da3b1581ccee01591cf97acc5e4"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/closed.json": {
+      "hook": false,
+      "sha256": [
+        "9ba24959d5c3a26fb2cfbed739ded362c215cddb032f976e054eb8914e871c64"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/cron-excluded.json": {
+      "hook": false,
+      "sha256": [
+        "6b224da390a59653f5ff1b1e15c15344a4196fbc634989a876d7f5701dfac1f4"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/failed-launch.json": {
+      "hook": false,
+      "sha256": [
+        "90a1d097a7bc2a137ec7b6aff7cdf349681df19dd5c82ccf7528661c70062638"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/flag-only.json": {
+      "hook": false,
+      "sha256": [
+        "411309442eb5bbdd720e558d0ed34d62ca4ce16f53ca4bb290ff86f639465caa"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/foreground.json": {
+      "hook": false,
+      "sha256": [
+        "da20c50d5dde47ef88753836b4b206f7394b48296a085d4f506bd357d10788dc"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/manual.json": {
+      "hook": false,
+      "sha256": [
+        "f8a81bb684e0e44221aba738625261276eb782ce859cccafcc738988b473561d"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/message-moved.json": {
+      "hook": false,
+      "sha256": [
+        "51d8a29eaa797d3a115351bcabff48d7c9cc71492ba1f81aee14d6b9d75c706a"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/missing-time.json": {
+      "hook": false,
+      "sha256": [
+        "a6b924227394eefd2f59d72e2d634c05a72828c0a3c6dc0d603ad470ada5e59e"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/monitor-closed.json": {
+      "hook": false,
+      "sha256": [
+        "f7c3acc7d525dc62785f5abc97643fcfd1111e22bfb020315d387b9fa7f8ec44"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/monitor.json": {
+      "hook": false,
+      "sha256": [
+        "d6dd7ba0608a35171264d177f2e4f7015d4fe2642e2b2638d87b84f8d9826c0b"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/open.json": {
+      "hook": false,
+      "sha256": [
+        "f26119d3568e4662a64f3cf3ec19a0b33183427af3ea0811977c662e53c48668"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/prior-close.json": {
+      "hook": false,
+      "sha256": [
+        "ad1b3dbd0600a3a194da3ada515256c73bb45c7463bfdccfaec17dc7aa051c34"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/queue-operation-close.json": {
+      "hook": false,
+      "sha256": [
+        "330ca7009a2dbb7c61ec4428e974a435a4a895f07921d58791de70df0847e883"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/queued-command-close.json": {
+      "hook": false,
+      "sha256": [
+        "36e46f00193694b68f9b75efe924d92d23ea8dcaaa7d0023333e511faa3ed984"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/stale.json": {
+      "hook": false,
+      "sha256": [
+        "ecf29eab3580a26030c61c09b5a0b73a977ad10cc8e691e6a5343f58aedf5c50"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/system-close.json": {
+      "hook": false,
+      "sha256": [
+        "ed37b3d66164fd9e7527a1d0c21aa183a6bfdafd8fbebbbf6179454fd06521c0"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/unpaired.json": {
+      "hook": false,
+      "sha256": [
+        "cfc5ca124f3047d6215c8dea2a024a0c7cd212a9b5594477f852a55b587fe524"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/unrelated-close.json": {
+      "hook": false,
+      "sha256": [
+        "748d663bcec9e0786246954d4f4c4308aa1c6aad94206c66d7fd0102e5084345"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/workflow-closed.json": {
+      "hook": false,
+      "sha256": [
+        "0570fc07458bd4b3e685f2d5f596297f08b976c6001cdda58f6d16eb03e51ef7"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/workflow-event.json": {
+      "hook": false,
+      "sha256": [
+        "c0d2d5841d52332206e8ffada6b97448870e8ebbc8f15a54c8ceb1d15b5c07dd"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/workflow-local.json": {
+      "hook": false,
+      "sha256": [
+        "02b88c8f416176154d7e2d84d210f63c5424ace67d5aed6ad7c7f5a06faf2edd"
+      ]
+    },
+    "routines/tests/fixtures/footer-background/workflow-remote.json": {
+      "hook": false,
+      "sha256": [
+        "56646ea5a61d456f361f1579abbcb1b8d9c08eca11f3f45d647f2e3bdf74673b"
+      ]
+    },
+    "routines/tests/fixtures/sandbox-standins.sh": {
+      "hook": false,
+      "sha256": [
+        "05f681e27e30da6ca86f0ba838427768099f1c52580413099de577366720b87c",
+        "a15331a4d2b72823412779bf32170c02597e670e19d6f89bb6cb060702828f9d"
+      ]
+    },
+    "routines/tests/fixtures/sandbox_exec_model.py": {
+      "hook": false,
+      "sha256": [
+        "948ef28604fa027eccbf36ee36cc6e869add587edf22eea77932667ec2dc4d6a"
+      ]
+    },
+    "routines/tests/measure-dgn1331-handoff-corpus.py": {
+      "hook": false,
+      "sha256": [
+        "39e299daf501e06b963aa70da32dacf326ce477f83b76276c397db764f341149"
+      ]
+    },
+    "routines/tests/test-baseline-authoring-lint.py": {
+      "hook": false,
+      "sha256": [
+        "f35571ba5177a492ed59d872c3a7eb352e6f3d740f8cabd9a66ae63f0dfbea03"
+      ]
+    },
+    "routines/tests/test-bg-job-notice.py": {
+      "hook": false,
+      "sha256": [
+        "73cd17a72f49c8c21b61c5164a535344754c0ce3d6c273c306faa513ce5dc850",
+        "384b9f3f9cb38fb6b221a025712c06a67cedbd3ddb064b887701a28504d00f2e"
+      ]
+    },
+    "routines/tests/test-classify-inbox-chunked.sh": {
+      "hook": false,
+      "sha256": [
+        "7b5122c6f4e672f5af9eb7b4f8a6ffe17275473e8ffd2ffbe8514e47dde59a08"
+      ]
+    },
+    "routines/tests/test-codex-hook-launcher.py": {
+      "hook": false,
+      "sha256": [
+        "507a6779081bc1cdc048602033fefe5c96c8118608a7af2eb904b017fa80a72a",
+        "35c8b3e229aea323ad9e143c9d25801f5cda5aa0b00d45f1937cdc202d7f38a9"
+      ]
+    },
+    "routines/tests/test-codex-observe.py": {
+      "hook": false,
+      "sha256": [
+        "2fb25b6156c0142df5dd3eb5c3fe5fceb2fae8260eea49619ac634d5bedd9e0e",
+        "bf92ffeb7a84756233983ce493f0b7acf8760dd1689def094799af7978a63a5e"
+      ]
+    },
+    "routines/tests/test-consolidate-usage-defer.sh": {
+      "hook": false,
+      "sha256": [
+        "82f57a466be764fd68eee9b3c9f7fdb47a790fc6b86cbe660fad1b96cd25e6e4"
+      ]
+    },
+    "routines/tests/test-cron-guard-queue.sh": {
+      "hook": false,
+      "sha256": [
+        "d903996bafb9ebd2aecd9327734a6647c56c7cd93328d9ce03d4461dce5bc465"
+      ]
+    },
+    "routines/tests/test-cron-guard-usage-defer.sh": {
+      "hook": false,
+      "sha256": [
+        "8386ff850a3047f6782a6796a213c56b3dfaeefb7e67ddcfcf08a66da738c984"
+      ]
+    },
+    "routines/tests/test-cron-guard.sh": {
+      "hook": false,
+      "sha256": [
+        "182be19ede8087c11c343383c726e0abd340b2da19fbbb0aef0506ba3e3701a5",
+        "880c9bc17e3d90f0b8e92203f3aceb8e0868e5831415315a2de673815e77827c"
+      ]
+    },
+    "routines/tests/test-design-tokens-cardparity.py": {
+      "hook": false,
+      "sha256": [
+        "e6dbf692735ca0286018e6ba10f55e16662e2af41bed04bd5b7d208c2a2530d5"
+      ]
+    },
+    "routines/tests/test-design-tokens.py": {
+      "hook": false,
+      "sha256": [
+        "f60b6b82aae0c1f49b81bc79d0d8750ffdef0aea060f170d433a42b17ef17e43",
+        "8b2fa6c6fbfb9b064563b38c06ec813456a499d4b8005257bd0a6c2e4d55241c"
+      ]
+    },
+    "routines/tests/test-dgn1006-enforcement-claim-lint.sh": {
+      "hook": false,
+      "sha256": [
+        "435232a15363096e19bc6cad7967f91dd694099cf5f984c4896bf2763077cb8b",
+        "be0a8e717bcee909f07c2d9bd2322885752cdceb1fbb7ae1d05708fd497dec55"
+      ]
+    },
+    "routines/tests/test-dgn1009-done-claim-gate.py": {
+      "hook": false,
+      "sha256": [
+        "7d87336772f50f14803fe3de80e5ba3e157ebf5757319436992e6ebca6aa32e8",
+        "e8de2984930ef35c5433a0d521ec6c9841347dc0b1218cf4b673c395b6a930c6"
+      ]
+    },
+    "routines/tests/test-dgn1009-done-claim-scan.py": {
+      "hook": false,
+      "sha256": [
+        "54d6673cb044fa45c73aac08d96962891e5235e30a3a5f1bba906de0a78cd763"
+      ]
+    },
+    "routines/tests/test-dgn1009-done-claim-ticket-glob.py": {
+      "hook": false,
+      "sha256": [
+        "bd342b9279285d34ce840f3cc49a6ad56f21be06556590e3d5ff41de30ace20b"
+      ]
+    },
+    "routines/tests/test-dgn1012-terminal-guarantee.sh": {
+      "hook": false,
+      "sha256": [
+        "8218c6af3b49de4b5069b502b72d06b10886b6289957049b38470b8b7a1f1e04",
+        "db0f91c11b5ebd24fc70117118b784b593ae7b05d1f49b4e326915b845c92fb4"
+      ]
+    },
+    "routines/tests/test-dgn1020-pin-ownership.sh": {
+      "hook": false,
+      "sha256": [
+        "9cea44b329c694cb82b41b8bebd2a28a1ce87a33c18f4bac95608bcb681b32b8",
+        "4d9b6696e8e28b628d34b51b48f8fe41e7186ff8a7682f1f7814610258cf05f3"
+      ]
+    },
+    "routines/tests/test-dgn1020-workbench-base.py": {
+      "hook": false,
+      "sha256": [
+        "39e88d4a151773539e2959758f947012c4103f6b6707a695fcfa930b361f64f7",
+        "3ebb990260dffc57872e446a5dde14188a16a2ae6503493357f1f1f442a2dc02"
+      ]
+    },
+    "routines/tests/test-dgn1142-loader-manifest.py": {
+      "hook": false,
+      "sha256": [
+        "03f91e8d9ce5675f7a74f1bc15f6d7b5b9caecb661c175fa12767d62c2552f10"
+      ]
+    },
+    "routines/tests/test-dgn1168-output-gate-fp1.py": {
+      "hook": false,
+      "sha256": [
+        "850c7de4e60bb6e07ae3de4bbc419ec070904c001286349eb7ad15fb21fc1367"
+      ]
+    },
+    "routines/tests/test-dgn1218-dispatch-gate.sh": {
+      "hook": false,
+      "sha256": [
+        "fc75c8475d7755e9a3130c632b4a6ad26ec3386adbcdc7d2d9d6276acdd4d361",
+        "eae863327d326c3242b62281c2bfbc3d504efde63943c1768561456c075fcd8e"
+      ]
+    },
+    "routines/tests/test-dgn1227-failopen.sh": {
+      "hook": false,
+      "sha256": [
+        "9c745e27ae3ff4ef308acca9fc8723fd9f45bb716bd10524de4e2f1d942e912b",
+        "e0c15487e968a250d9a2821f2ff968543f5ee4f03849aecd45bc6c15fd3e004a"
+      ]
+    },
+    "routines/tests/test-dgn1227-model-display.py": {
+      "hook": false,
+      "sha256": [
+        "84f41ed51c8072aa750892ee728ec8f4ddb2ee6152c658bc1ce95856befeec11",
+        "73c3d43ec908d77e0d80854ffaeaf43d1c840efc52a79d0a3c7139b2aff65540"
+      ]
+    },
+    "routines/tests/test-dgn1279-idle-promise-block.py": {
+      "hook": false,
+      "sha256": [
+        "09f61a219c60f9a5cc7f2f86a6b2eaf5fcd642aff9311fa96acd5725a3acbf80",
+        "cfc8a0213f337f351b4a826dbb76a3a15d586c5a0ce1ab560df55ef39e5fc545"
+      ]
+    },
+    "routines/tests/test-dgn1293-anchor-class-predicate.py": {
+      "hook": false,
+      "sha256": [
+        "aaef80dbdb06d1527b7a54f518a16620361268785ebe5492d758b1e3f70558f8"
+      ]
+    },
+    "routines/tests/test-dgn1301-fable-death-catch.sh": {
+      "hook": false,
+      "sha256": [
+        "1d2b000b25b875df7740d2039cdf52eb81907af1ab49f9c9db390bf590109b4d"
+      ]
+    },
+    "routines/tests/test-dgn1308-idle-promise-carrier.py": {
+      "hook": false,
+      "sha256": [
+        "7a357bec2b19e6f57d63a743b2179acc98c134407768ebc1f1b4aabdc0c92908",
+        "16d8e8a83fcd992a66427f1fc9a2a9c7318da26b0822ea571e8acfea511cd60f"
+      ]
+    },
+    "routines/tests/test-dgn1331-claim-source-gate.py": {
+      "hook": false,
+      "sha256": [
+        "ccc0366a85d512a2f7cb3b13d895482989fcd9f617edf0b298b5791a1fab2f46"
+      ]
+    },
+    "routines/tests/test-dgn1379-consume-entrypoint.py": {
+      "hook": false,
+      "sha256": [
+        "30a000ee3676e54b5a10726a7dbdc8170aaa5cf7ee60f9d65204d8b9f812d2e5",
+        "825909659bd9f0ca27fbb24731870edb7060d660c6a4a13a4334a7a2b5157a5d"
+      ]
+    },
+    "routines/tests/test-dgn1379-handoff-lib-landing.py": {
+      "hook": false,
+      "sha256": [
+        "9d11e9a81c547f760a25fbfb8a7ff28dc099585afd55374746ee5b33430c5c62"
+      ]
+    },
+    "routines/tests/test-dgn1379-r2-watch-plist-and-seed.py": {
+      "hook": false,
+      "sha256": [
+        "b9762d271fc5027191808916d226d3f93b766ec046bda35f0e54e3931fd33700"
+      ]
+    },
+    "routines/tests/test-dgn1379-slug-consume-layer.py": {
+      "hook": false,
+      "sha256": [
+        "18b6ef9fec6971c95dbd2f1835c0fbb8f70d125c95177dcf32360d8fe00d1705"
+      ]
+    },
+    "routines/tests/test-dgn1394-skill-landing-gate.py": {
+      "hook": false,
+      "sha256": [
+        "4666884b5f95f1c1828c10476fb0bf9319e611d4db71eac4bde19f2ab2f31d03",
+        "b5805988b7fcdcc881d78af359c135a891e04e2ab071962eb8064943a07aef92"
+      ]
+    },
+    "routines/tests/test-dgn1414-in-session-dispatch-gate.py": {
+      "hook": false,
+      "sha256": [
+        "7ca7740e50579d18ad860fb28f6129f323217661720527e93eb9ef813eb5e5a1"
+      ]
+    },
+    "routines/tests/test-dgn1417-estate-notice-request.py": {
+      "hook": false,
+      "sha256": [
+        "d1c1661ebe2da686e7a073c29575ea8510719042d19b493147b2097566fae64a",
+        "f7f40cc6fb8ae998c5a059da56ddaa09db47cf1f95fce0ef2896b8a1dc7702cf"
+      ]
+    },
+    "routines/tests/test-dgn1425-font-resolver.py": {
+      "hook": false,
+      "sha256": [
+        "d0cc04be8ca64824e873977079239b18d956f8f755eb183a65bb3506c9251f39"
+      ]
+    },
+    "routines/tests/test-dgn1430-access-mode.py": {
+      "hook": false,
+      "sha256": [
+        "160cd1b6252ed5c8a7b9bfb5dbc4d2c1cb727cbfae418c6d8ccfc3c62df1b271",
+        "be71d1ead74f92ceeeade8fb74ee2144712ffe7ef5b2b3500728e84daf958c8b"
+      ]
+    },
+    "routines/tests/test-dgn1433-preserve-product.sh": {
+      "hook": false,
+      "sha256": [
+        "7d64d8cda6e186394741c66c7bb8d90555abbaf75bd19643db9006e43a43e30b",
+        "05dd995192223ef0c1cd1539c59bbddb1e4fecbff7827cfafe3d1f400e0002c7"
+      ]
+    },
+    "routines/tests/test-dgn1434-dynamic-cap.sh": {
+      "hook": false,
+      "sha256": [
+        "8ec063f40bea0aacbee6ccb860e047480cda1dc797d459414fee6b64e76e64f5",
+        "9bdb8b8b3e4f30a364ed35e3d7ab4fe5fd31d6be4f7fd0f79210241ef49e271b"
+      ]
+    },
+    "routines/tests/test-dgn1440-fable-release-path.sh": {
+      "hook": false,
+      "sha256": [
+        "61157ca2ec4ba23202a4d68ea4a8e8096e03bdb28de0cb770e1fecaaca2d59a9",
+        "fcae85bc524f1d926264e7131e847b1b16a6af713d84ef72e068ef624c7d3f4e"
+      ]
+    },
+    "routines/tests/test-dgn1446-skill-stub.py": {
+      "hook": false,
+      "sha256": [
+        "5795d6b565bcf3a692d5196ceeaaa4735f3c52859673fbefb47911d54614e0c4",
+        "b925badf6cb2f79820a5d3ff3927fe70c7d7bf359ab58eb5db5b73929a5975bd"
+      ]
+    },
+    "routines/tests/test-dgn1458-plan-lane.py": {
+      "hook": false,
+      "sha256": [
+        "bf8e5bae7d7bc289174eb4566bef8dc4462171b8ab95802ed248096f521ec4a5",
+        "5756966c8b3f16a63c5b1cbfda114dac798b03b4b68e6a1406def9bf77cd6d16"
+      ]
+    },
+    "routines/tests/test-dgn1470-runtime-fallback.sh": {
+      "hook": false,
+      "sha256": [
+        "9c7abf0a99da9b8e42ec55b7a728fb68617e935f998b069bbc40959e950641a6",
+        "cb3c68d73a5a3dfc78925b94a28bdf9d01115f4548b6717ace5f685862445784"
+      ]
+    },
+    "routines/tests/test-dgn1488-handoff-provision.py": {
+      "hook": false,
+      "sha256": [
+        "cbaa6643dab0106aa71132e0c70821766e3b952525d07df0f433c8fe8d8ccdbf"
+      ]
+    },
+    "routines/tests/test-dgn1494-weekly-cap.py": {
+      "hook": false,
+      "sha256": [
+        "3c5f567d07d39d40d1a3056c9388400def56134fb2f9895dec4a1b1183c38763",
+        "e26fd2283be2984b30a1dbfc206d5d37d5d84d70250f14d8f7f4bb0974b33185"
+      ]
+    },
+    "routines/tests/test-dgn1504-write-isolation.sh": {
+      "hook": false,
+      "sha256": [
+        "4650686f86abf1b48b8f042df605c615d1d986e976e505aecc4113df96509ddb"
+      ]
+    },
+    "routines/tests/test-dgn1507-newline-and-mention.py": {
+      "hook": false,
+      "sha256": [
+        "89eb6f3cb6a1a798b0704cab40f3964497b58cf88afa7df96dc33ca651cd0fb2"
+      ]
+    },
+    "routines/tests/test-dgn1519-retire-prune.py": {
+      "hook": false,
+      "sha256": [
+        "56605f36bde07b71737f43b4afc90bbf2ce49f36234eda1624548acbabbc0aa8"
+      ]
+    },
+    "routines/tests/test-dgn1528-outbound-record.sh": {
+      "hook": false,
+      "sha256": [
+        "b9a1880c5e92f7ff5140a8bc6af1c5a38744689657afe1d4c5f93dcfd794cae3"
+      ]
+    },
+    "routines/tests/test-dgn1542-mood-and-negation.py": {
+      "hook": false,
+      "sha256": [
+        "9d84c802b9b0fb9a6da40a156f7339b5edd68259d4f5c1f3b6b9c0104cde5394"
+      ]
+    },
+    "routines/tests/test-dgn1582-dmq-exit-contract.sh": {
+      "hook": false,
+      "sha256": [
+        "ab9af4c20a55532b8f810fdc12d1d1e93f0c6886abd2ba5d72162f9bf0af2947"
+      ]
+    },
+    "routines/tests/test-dgn1592-runtime-selection.py": {
+      "hook": false,
+      "sha256": [
+        "b35ff38bdee7149eb7501fd0288f06b32117750533213ac28d4893ead88af3fe",
+        "e4d28164926d300ee2ebd438a1002a2fbc18a4731dec25d3efd9c8927730a21b"
+      ]
+    },
+    "routines/tests/test-dgn1606-onboarding-owner-gate.py": {
+      "hook": false,
+      "sha256": [
+        "091ba3592a3361bd2006d0a7e101d2a933b58e6e6c81aeb7a9810e45b1f5fd61",
+        "05c4bfc10a06db656a211dcd6283f2c6c12fd1431e9257599013c80ab9cc0d12"
+      ]
+    },
+    "routines/tests/test-dgn1632-onboarding-continuation.py": {
+      "hook": false,
+      "sha256": [
+        "549878b91a39b4781046e2a35c2820cdbd4be8d3e08fd6f27170dfe51f3cdbfd"
+      ]
+    },
+    "routines/tests/test-dgn1632-w3-onboarding.py": {
+      "hook": false,
+      "sha256": [
+        "fa8f23ede365c2602932cd22071c7de3853f28c04ea3d08ff851fcb2b4ef844e",
+        "83df19aa052b6ecae6d60b536b4c1e936068958efd82b3c4a823b2d34bca5778"
+      ]
+    },
+    "routines/tests/test-dgn1655-instance-drive.sh": {
+      "hook": false,
+      "sha256": [
+        "94473df62ecfc048dc5ad8485fc501b57aaeb46a9e50943555ec5b0548867a34",
+        "0e7f7b016a4867e4bddaecaf58395429a91e7fa1cd2fe898750ed61adc9848c0"
+      ]
+    },
+    "routines/tests/test-dgn1673-cli-updater.sh": {
+      "hook": false,
+      "sha256": [
+        "d2a39f2e1a6448e58ea093373b034d827a5f4ac9b7ddd3fef0fa35cd2bde320a",
+        "cbb52799496259615eb9bd20af0c2af97afb037e7b198a5e6612ecc9b29587fc"
+      ]
+    },
+    "routines/tests/test-dgn1680-gate-switch-registry-ext.py": {
+      "hook": false,
+      "sha256": [
+        "09440a4834bdd58f6fcfb949fd747ba1093d0d78957155d7505f585f2e4bec2f",
+        "b58ac303ae6a8cfebe19267a73ae4d1b3f256ce4c7265cf7e8bb2b1874ee0212"
+      ]
+    },
+    "routines/tests/test-dgn1687-dispatch-return-result-first.py": {
+      "hook": false,
+      "sha256": [
+        "994c28564ad8e7fde504f560657d4b5f221a42d1ee86c98292f6fa23f082a723"
+      ]
+    },
+    "routines/tests/test-dgn1715-dispatch-return-forcing.py": {
+      "hook": false,
+      "sha256": [
+        "583f5b5b2ed05c086e85f13c2a1289e57ea90dadf34d38389a799686a815d6ab"
+      ]
+    },
+    "routines/tests/test-dgn1715-options-marker-shapes.py": {
+      "hook": false,
+      "sha256": [
+        "de327aec08d3ebdb851a73c50f8cc3a294793af9b1d67fcce2d262c42736cfc2",
+        "6b22c3a8ebe43f616c39ef58e7c854ed6de00ace7023dea4593f29a79b0ce82e"
+      ]
+    },
+    "routines/tests/test-dgn1726-cloud-first.sh": {
+      "hook": false,
+      "sha256": [
+        "c8887d1c2a3eb775dcd609e3717bc58f84218c2cd3cfba6973dd2c0e5a7f9346",
+        "24385330a8b5fe8bda449049122629177a47c6da7aa28382c301da6c040f298d"
+      ]
+    },
+    "routines/tests/test-dgn1726-cloud-runtime.sh": {
+      "hook": false,
+      "sha256": [
+        "92d6c0d7b27bf8acdb86e3ffa22f36293ef2f3cf37297d1540e391b4db4975b8",
+        "fe1e87c4e568d8fdde339ef57779f0b360f46b09c18c60ce35d57c7c92a2ecce"
+      ]
+    },
+    "routines/tests/test-dgn1730-ledger-reconcile.sh": {
+      "hook": false,
+      "sha256": [
+        "6e884f45e1a844da0308efd923b6e77962144674718310ced2cbb6422dfed4fa"
+      ]
+    },
+    "routines/tests/test-dgn1730-ledger-review.py": {
+      "hook": false,
+      "sha256": [
+        "ceb378ece2dbf6dfe90618feb1c98534f8b4c0f1c3d70d2cac507638605c0629",
+        "0442a003f756d12a5f47c1209b72af9389f2d4a4ad5f23cae7a2dbe8a31d4472"
+      ]
+    },
+    "routines/tests/test-dgn1734-template-tests-skip-in-instance.py": {
+      "hook": false,
+      "sha256": [
+        "ea5ec2c1dd411b5756ffdef69ae71d68705eed89727d7c355434735b7718cc86"
+      ]
+    },
+    "routines/tests/test-dgn1754-display-title.py": {
+      "hook": false,
+      "sha256": [
+        "54d69044c63cf3a2dfa88f8ac90c9bed1a51d3f5ad48d3f8a30ef2c6facaa933"
+      ]
+    },
+    "routines/tests/test-dgn1768-pin-fresh.sh": {
+      "hook": false,
+      "sha256": [
+        "0ec60dec41b7801faf0d59c824e529f0d050f9595827854c31700d477c373bad"
+      ]
+    },
+    "routines/tests/test-dgn1770-effort-binding.sh": {
+      "hook": false,
+      "sha256": [
+        "ce11210e5c8ed4f056681da4767f21fadfd6ad0a26a828af37435b2370a198e0",
+        "d9fe45bde91f1df30c5f1c0ffd2bc3820bcdda8828acb148999f765e05dbdee7"
+      ]
+    },
+    "routines/tests/test-dgn1774-consume-notify.py": {
+      "hook": false,
+      "sha256": [
+        "948ddb54b94f51f23aa5a3d5846b39fddb08ad869efd24b5c129e3bf5bec32f9"
+      ]
+    },
+    "routines/tests/test-dgn1806-briefing-setter.sh": {
+      "hook": false,
+      "sha256": [
+        "c6fde121be4c057f1d232cc3fb1005ba59e50bbcff9098e30eebb4249636836a"
+      ]
+    },
+    "routines/tests/test-dgn1809-card-followup.py": {
+      "hook": false,
+      "sha256": [
+        "39608e102104d356f839951f0c99b096ab726e51e75ef7bdb6e5c47b2f71c2cf",
+        "a0b6ab65df30704040a1bc1b1a878be8425e8fa3f9ba4da2ebe357f031e5a726"
+      ]
+    },
+    "routines/tests/test-dgn1809-lifekit-handoff.py": {
+      "hook": false,
+      "sha256": [
+        "5ab3951f5df92f572e93fde15b5e7536334aeb88e5e5c808dc6a81156afcdd58",
+        "72360cc77d64f81bbd08542c05b7a4b69127065807c38b1cf30fa5362dd484ec"
+      ]
+    },
+    "routines/tests/test-dgn1810-briefing-setter-systemd.sh": {
+      "hook": false,
+      "sha256": [
+        "afc26006b850422f304384bfccc8ebed5ac90a54cd1a30bcec05daa47444f506"
+      ]
+    },
+    "routines/tests/test-dgn1834-codex-worktree-commit.py": {
+      "hook": false,
+      "sha256": [
+        "7858c8247e427f66ecc8b29a190c912e828209ec958cf4f0da40285b710ce121",
+        "aebf55cd17e5f6d12e16a7066da3552d4eb9876dd119dbe98213f4798199a03c"
+      ]
+    },
+    "routines/tests/test-dgn1837-first-contact-opener.py": {
+      "hook": false,
+      "sha256": [
+        "e6b6553d976d5a7a33ca87d3d65f9debf999d66b7f19cf0263be11b07ed785e4"
+      ]
+    },
+    "routines/tests/test-dgn1873-classify-retry-routing.sh": {
+      "hook": false,
+      "sha256": [
+        "f4e60bf6cd4fa6168c95a025720d82167a51124ee8bc14e62fc19035b4a7c5cf"
+      ]
+    },
+    "routines/tests/test-dgn1873-dawn-alarm.py": {
+      "hook": false,
+      "sha256": [
+        "d0b3ab40a6e0892647addf303208435f48e8d20beda11821da5bbb5c949cbd78"
+      ]
+    },
+    "routines/tests/test-dgn1874-runtime-headroom.py": {
+      "hook": false,
+      "sha256": [
+        "61dc7e0884d52c2c02f0c96252478f898565d3692e2fa08256e8effd6f456ec9",
+        "ef2d8565a9c2513c0581a425a38356c764edb48e924303d1bed0ccc1f4c0e515"
+      ]
+    },
+    "routines/tests/test-dgn1894-usage-snapshot.sh": {
+      "hook": false,
+      "sha256": [
+        "f976f919053db0c603627786780f9c35b7dce277794ee6f93292d6a5745b8001",
+        "15f87eeaf1c136a3fbb8040f6ce02a59d877fdb43bee37557e7e9225273b7c21"
+      ]
+    },
+    "routines/tests/test-dgn1897-dispatch-browser-web.sh": {
+      "hook": false,
+      "sha256": [
+        "59dea5048585860d3c1fb510251ddd1aec37c3a8194775f31a0635a4a84e59ae",
+        "b3ded33b59c9531a09fee63884ac99a777daaabea9fac4ded920c71b3486c862"
+      ]
+    },
+    "routines/tests/test-dgn1898-overload-fallback.sh": {
+      "hook": false,
+      "sha256": [
+        "905f287ba9f5a1775b1a354fc625413dae0931a3273fda7fcf37baee15617db2",
+        "5f94222bf2c98afc034e17c014c16de248c4f2324449ce9175b0cd4b4e60c8c4"
+      ]
+    },
+    "routines/tests/test-dgn1915-board-refresh.sh": {
+      "hook": false,
+      "sha256": [
+        "4fcaa9b6fa4f7fb0d5e27954355496a2f4076317e3508f507416e429a842bef5"
+      ]
+    },
+    "routines/tests/test-dgn1916-waiting-tail.sh": {
+      "hook": false,
+      "sha256": [
+        "9c8c969d140447be692fb9d48c01b3be4f5803141059f79c2f017abfc37c037d",
+        "8f99d2df7083d3519284204bacca788719fee7a0241a0f4898f36e27991ab4cc"
+      ]
+    },
+    "routines/tests/test-dgn1941-resume-after-open.py": {
+      "hook": false,
+      "sha256": [
+        "277a06d1cd210a851d7838fccf738bd7855282ee9b5fd48b41a944584a675301"
+      ]
+    },
+    "routines/tests/test-dgn1942-card-followup-multiline.py": {
+      "hook": false,
+      "sha256": [
+        "789e992a4401bbac7f7b20b0709b221f251c4b87edd2d29afb9a244aad8f15f3",
+        "187b1fd88c1e5a024cc86875e8379138dc0e7573e5cbc165eeb2421ac2c1f649"
+      ]
+    },
+    "routines/tests/test-dgn1963-api-credit-pool.py": {
+      "hook": false,
+      "sha256": [
+        "652231d815988222f8ed2701f0fb0096d4d0d897219e7f94be90938684d410ab",
+        "f4aee420290bc9733c50d4a1a215e89d23a8dbd1a49ec6c84d9df949067b1a95"
+      ]
+    },
+    "routines/tests/test-dgn1965-reset-passes.py": {
+      "hook": false,
+      "sha256": [
+        "b6224f0092ce36552014a56a35c5061cc7ce425a97306ced035ec9707d174b5e",
+        "d2944974e5394e0d9be8ec40b61eaa6569b5946f53daa44348c186e8a6d3474a"
+      ]
+    },
+    "routines/tests/test-dgn1978-console-truth.py": {
+      "hook": false,
+      "sha256": [
+        "924f88ab5eaa5bd461fb4559545722f047969067fdf41c286f493c267b7bf881",
+        "784b93feb2a92cd587bd5663789c988b074cb02b8ca0c767e468b23099af7b59"
+      ]
+    },
+    "routines/tests/test-dgn1978-r3-account-ledger.py": {
+      "hook": false,
+      "sha256": [
+        "395a494cf7c9b8664241f046960a4758e86061ca13ef9f2af98365c4eb7c3e69",
+        "154004fc7be1f367c6cac064c2b04a8fa74dd678d705bb8c0084650fe9ec71f9"
+      ]
+    },
+    "routines/tests/test-dgn635-maildir-handoff.sh": {
+      "hook": false,
+      "sha256": [
+        "a535634abfde02a027251d6c224ba7c5d2d0ae7091f9abc4e4c13959ae1a1675",
+        "69cf77c479a2cc5e831d1cb30348258cd1804ca0819143dc220f2747253cbb64"
+      ]
+    },
+    "routines/tests/test-dgn718-single-fold-notice.py": {
+      "hook": false,
+      "sha256": [
+        "fe034a1c3383bb2ac4a727f8f51c1ca1bff4f408f9ec1a1e91b6c56718d507e1"
+      ]
+    },
+    "routines/tests/test-dgn735-version-notice-durable.py": {
+      "hook": false,
+      "sha256": [
+        "ce8f82ea023034bf7aefc97935003e809b639480a5d1018692712afaf4c0092f"
+      ]
+    },
+    "routines/tests/test-dgn742-725-notice-features.py": {
+      "hook": false,
+      "sha256": [
+        "6dfa570c990cc2149febee414e48fdaf908294e227ced56553345c5170f495ea"
+      ]
+    },
+    "routines/tests/test-dgn768-card-accent.py": {
+      "hook": false,
+      "sha256": [
+        "df570bb9f94fe15433d4f2bd244109f0ec385abd01c9b3a739ee5050d5c49569"
+      ]
+    },
+    "routines/tests/test-dgn784-update-note-sanitize.py": {
+      "hook": false,
+      "sha256": [
+        "8496843ef77312db2c3d5bcf8774821faa68346968831033e1ce759c98581ad2"
+      ]
+    },
+    "routines/tests/test-dgn916-conf-reader.py": {
+      "hook": false,
+      "sha256": [
+        "ff62afc547eebdea4d159db819761b07209b0c75a198df22734fd8977c1f1b23",
+        "97f689f3b855069a8dc8264c64e209bf7aef845b501caa176c295625b1147dd8"
+      ]
+    },
+    "routines/tests/test-dgn935-tmp-retention-rescue.sh": {
+      "hook": false,
+      "sha256": [
+        "0c038f6e009048ead1bc24a31dbd66afb655546195d0cbe7ddfbaf84e5836dc2"
+      ]
+    },
+    "routines/tests/test-dgn986-e-pending-restart-check.py": {
+      "hook": false,
+      "sha256": [
+        "16833a0d3e9a4f3458e09ff774101fca6e179ce5f3d2c4b989d9de5d39e2f9d4"
+      ]
+    },
+    "routines/tests/test-dgn991-dispatch-detached.sh": {
+      "hook": false,
+      "sha256": [
+        "815c6d63ae2a241f9494ee36a2c19667db0d2c55ca2b92c7b57cbe0275807c6b",
+        "fcfb9083a392222c06ff7d484097d1292998c750d3a50c05ef38def8c68fbcdc"
+      ]
+    },
+    "routines/tests/test-dispatch-display-name.sh": {
+      "hook": false,
+      "sha256": [
+        "03b23cb5b846d046072ec4d2b7f9ee4dd4898146426644f22df9487e065be88c",
+        "294221e5dfed28bbdf891980e77c81e8213f8bc087d6d38f2c92c358798f0f9d"
+      ]
+    },
+    "routines/tests/test-dispatch-observe.sh": {
+      "hook": false,
+      "sha256": [
+        "0ab774d2eb111e109fd7469ee0bde6cad594c254735c7881d56a955e3d7398e1"
+      ]
+    },
+    "routines/tests/test-dispatch-start-notice.sh": {
+      "hook": false,
+      "sha256": [
+        "244b20f668fd40f2d8ed844052421bd9caa6df144cfed389f4b2d73727983e82",
+        "d830d0cdcb28f733255f234f601a789dbd5d5a29677e5bd680f7416854f7cd79"
+      ]
+    },
+    "routines/tests/test-footer-background.py": {
+      "hook": false,
+      "sha256": [
+        "7ce3561a05a51370d1e38ec359a798c080f3a01c36d501951a030540a1ec3253",
+        "d0dd0023299dca24c3814659dafeefdb6c73a6b9aec02f356302cf7c2f43ae95"
+      ]
+    },
+    "routines/tests/test-footer-desc.py": {
+      "hook": false,
+      "sha256": [
+        "634bfe3aaf88468057da694f9f80997466e6e254c88c2a3e3aaec8bc09ad90c0",
+        "ee01efbc79ec379c6d2c1cea6f9490a32222e4d1ddf1e5dc0217fdd49fd4c18a"
+      ]
+    },
+    "routines/tests/test-footer-liveness.py": {
+      "hook": false,
+      "sha256": [
+        "5784b212c05b822082f1cbc76f59e7e951e4fa8f03fdfc206d95b11b4b35723e"
+      ]
+    },
+    "routines/tests/test-footer-stopped-state.py": {
+      "hook": false,
+      "sha256": [
+        "893bf9698653b4eda025d971aa9c00758515ae707780a1fb6361efa056b1775c"
+      ]
+    },
+    "routines/tests/test-health-observer.py": {
+      "hook": false,
+      "sha256": [
+        "1f14cfa56bdbe8ed9e54e688e22b00c3582021690e92458947365f0e7b4377cb",
+        "637bcbf9bf33fec21d9c7e9bb38f1123765650cd987acbedadc6487b29df4aac",
+        "ab5b3906cfb7d819b26496aeb41aaf463b7192b8e309be589ecaed90cb2fe7a1"
+      ]
+    },
+    "routines/tests/test-loss-score-runtime.py": {
+      "hook": false,
+      "sha256": [
+        "16c5bd90d40a45ea0fd517c5de1601f663529b11eadc3cacbf5e0bfac8c68dc9",
+        "d187b11ccbf077c1ee08f4587f08a2c9c0a9b0a4edd022470496a48726bf7eb0"
+      ]
+    },
+    "routines/tests/test-onboarding-class-gate.py": {
+      "hook": false,
+      "sha256": [
+        "beb7551950f1736465eb30a5feec802b73c495dd10fb529dd090923b1b32745f",
+        "1e116b4283fd9224ab190d0cbc0b31774da2ea1557f4be7f14e1fe1fbded0034"
+      ]
+    },
+    "routines/tests/test-onboarding-gate-stop.py": {
+      "hook": false,
+      "sha256": [
+        "709b48cf47f9398a6130db07275d4767d0921ec62c743c536eeb188ec060cedb",
+        "0028d7a46636990d591623cc5126031a5ac9609772a04fdbe541e9e68e5eaa0a"
+      ]
+    },
+    "routines/tests/test-onboarding-persona-dual-accept.py": {
+      "hook": false,
+      "sha256": [
+        "cfb10f24cc4a964117a7e2857155e8597f9b6019bd23fa878b2411e3117da09c"
+      ]
+    },
+    "routines/tests/test-onboarding-post-mint-slot.py": {
+      "hook": false,
+      "sha256": [
+        "5b2fe3ab3bc4cd1738d22c5b9cd5394ef0f733d4642052760026bfb3f681e6a1",
+        "ca57ff70850b482f0813a74b1c3aa6beaa6511457745270d966576a61a7db276"
+      ]
+    },
+    "routines/tests/test-owner-notice-identifier-guard.py": {
+      "hook": false,
+      "sha256": [
+        "eba3929af672ece6c15294851d766a66d0bdc692f71764680e4431eb40bdf61a",
+        "2b9ab4e5af56bc9e73d27fab167a76b219abced2d9843f1c6579882ac8a668d7"
+      ]
+    },
+    "routines/tests/test-plist-comment-lint.py": {
+      "hook": false,
+      "sha256": [
+        "0aba61ea9daa69836be083af728f89d648cc6b4478b716cf69e8d4ab73c685ff",
+        "2e6ed9eb31364cf22dc837a7d3cc6ca001f9127d0492278d40eb23d197bb815a"
+      ]
+    },
+    "routines/tests/test-push-audience-route.sh": {
+      "hook": false,
+      "sha256": [
+        "c043ab3608266466d314ae328b42c4c19efde93ca7f250b529d353c7ab61efaf",
+        "fe0518ae65921ae4eb27d346d0715fe1d55f67fcff424a1fcf8ead97c87b445d"
+      ]
+    },
+    "routines/tests/test-push-button.sh": {
+      "hook": false,
+      "sha256": [
+        "31e57ed1c505dcc5db912ed6460a9387a3df2f208773c852592159eead3281ba"
+      ]
+    },
+    "routines/tests/test-push-edit-dgn1803.sh": {
+      "hook": false,
+      "sha256": [
+        "955a9da28b91c23dc1ef1e10c3b33331bbfc7edf4b338548dc285c8081e58734"
+      ]
+    },
+    "routines/tests/test-push-guard-dgn1122.sh": {
+      "hook": false,
+      "sha256": [
+        "892847af63b71a111dd5c7910cc03b67d440ef7df2b16648c86f828bf3d78af4"
+      ]
+    },
+    "routines/tests/test-push-identifier-guard.sh": {
+      "hook": false,
+      "sha256": [
+        "36a2aeae3e76f40bad231b14e6dba5946aebcf79f11e6afc0242d68412cf703a"
+      ]
+    },
+    "routines/tests/test-push-idrill-exitcode.sh": {
+      "hook": false,
+      "sha256": [
+        "a9b409a4df67ea07218572c2a4a723f70fd41b66066792a7e4a6b464ab88b069",
+        "67bcda2a2a9bab3add160e0bf916afd4f7630abe5bfa9d75e33274a80af704c1"
+      ]
+    },
+    "routines/tests/test-push-link-preview.sh": {
+      "hook": false,
+      "sha256": [
+        "5b3ea8f061b0d37eb06eb881c586109c8d1c847dc77d121307662751440ad19e"
+      ]
+    },
+    "routines/tests/test-push-owner-lock.sh": {
+      "hook": false,
+      "sha256": [
+        "7d08b64e0ce4c96aa8c66f0ee7f751a3e8ae216e09e0790f6ec4383589bd7b25"
+      ]
+    },
+    "routines/tests/test-push-record-scope.sh": {
+      "hook": false,
+      "sha256": [
+        "c7ffde82dcfcc1cda41067e8fc6fcd198f6b1caff567a70cbd47f8841db089a7"
+      ]
+    },
+    "routines/tests/test-push-retry.sh": {
+      "hook": false,
+      "sha256": [
+        "378b3571503760e51fbe3a7c9d55ce793ed3599acdaba81b69597bebc658e7ee"
+      ]
+    },
+    "routines/tests/test-recap-repetition-collapse.py": {
+      "hook": false,
+      "sha256": [
+        "1c1bfb6c28a7ff13b783bb7bd1f181c1c4df070e86cc0044175f7d22fcfc36ad"
+      ]
+    },
+    "routines/tests/test-routine-ctl-retire.sh": {
+      "hook": false,
+      "sha256": [
+        "c30451343a83f27c703d2fa2cfe82e7cdf7372b6cfede6dfe9cb0ccd2bdcfe99",
+        "aa5f425f8b7825816ebb4f3e749edf6256f8c7b184469661adaa84ae97bac25a",
+        "dd9e616d504d06978372e0bab662c0e883d8dc164737c2ac1f7421859221c817"
+      ]
+    },
+    "routines/tests/test-session-recap-size-log.sh": {
+      "hook": false,
+      "sha256": [
+        "e6405b62cd9e71e0e74482f485560ea6f786f8bd4f9dd7d63c47254e1ab7e22f",
+        "37eb972c72a9765e7b9ddde1c297f4cf79a142397e963875b5f6d035826e04da"
+      ]
+    },
+    "routines/tests/test-status-footer.sh": {
+      "hook": false,
+      "sha256": [
+        "9587dc5a906004d03ebe872f75de30679c83987fc7f421314d35389e886acc20",
+        "9d4519729e7bde9ead2d3f9d17402ca2c0e3c703349487532ed9607148cdf9f1"
+      ]
+    },
+    "routines/tests/test-usage-defer-retry.sh": {
+      "hook": false,
+      "sha256": [
+        "f953953519252ae8d92c3c5adb6db4d119436ac2555ba33fa484a65bb7df5b19",
+        "c9f5fa45f3aca4b1f13a5ffff390ed86ef1855dd262a0843bc9a9bef858d7442"
+      ]
+    },
+    "routines/tests/test-usage-gate-dgn835.py": {
+      "hook": false,
+      "sha256": [
+        "3fb38f33c1a09b45a728ab8e3226a2d592b68eb43eda82908ef9da3d04d7aea8",
+        "d4172ace7cc785a9bb1a651b340e16c9c9c0ce2f13f966e0f8f24a836da29e19"
+      ]
+    },
+    "routines/tests/test-v260-kit-offer-at-completion.py": {
+      "hook": false,
+      "sha256": [
+        "d10fda1e405b8f948bcf293309bbf311f19e9de4ed6b96ea8d45f6a00b9ba090"
+      ]
+    },
+    "scripts/tests/test-dgn1192-stream-render.sh": {
+      "hook": false,
+      "sha256": [
+        "51d20e836396fd8945af486da9562ce0817967e0c1958308290af9296c363920"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-confirmed-empty-plugin-quiet.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "3ecd155e45a6da3ecaf6bcb947ea9ba603e082606608b7cf3cbf5d46fd566d84"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-decisions-unreadable.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "45a218f5dd5b2767cdd5740fe4e1ed62d8b09c351469f904e6a3e52d2a351f73"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-en-full-plugin.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "92c08f859c116e150efad6c0684987d2e9908b09b9753eea0a871fb746ebf84e"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-full-plugin.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "024ae0acdb1db8d84ff2d673c2006a2cf0542704a8a40ef1f68a2f979cfb17ab"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-plugin-hides.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "024ae0acdb1db8d84ff2d673c2006a2cf0542704a8a40ef1f68a2f979cfb17ab"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-plugin-trigger-only.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "3ecd155e45a6da3ecaf6bcb947ea9ba603e082606608b7cf3cbf5d46fd566d84"
+      ]
+    },
+    "routines/tests/fixtures/dgn1967-board-golden/E-unpark-stale-hidden-by-plugin.ctx.json": {
+      "hook": false,
+      "sha256": [
+        "3ecd155e45a6da3ecaf6bcb947ea9ba603e082606608b7cf3cbf5d46fd566d84"
+      ]
+    },
+    "routines/tests/fixtures/dgn2032-owner-ask.json": {
+      "hook": false,
+      "sha256": [
+        "dd5fd08a0fa0ad9695c4013adab3be2ca4173dfd8aa23f5fff36d877e065281f"
+      ]
+    },
+    "routines/tests/fixtures/dgn2032-owner-procedure.json": {
+      "hook": false,
+      "sha256": [
+        "ccff7b55b5efafc66e5a5f210b8afccaae9426f8e6fd4a18930b3c36dbc9d8b8"
+      ]
+    },
+    "routines/tests/fixtures/dgn2116/framework-agent.json": {
+      "hook": false,
+      "sha256": [
+        "705f269a23a4bf25ac4ee6331fcc3b3ccc04e4621b24ee6df69c2aecbfd0a023"
+      ]
+    },
+    "routines/tests/fixtures/dgn2116/kit-agent.json": {
+      "hook": false,
+      "sha256": [
+        "90b8a094d93cd7cad4f07623f376fe7e6d5c174494f9c90d307ed1c979d57646"
+      ]
+    },
+    "routines/tests/fixtures/dispatch-env.sh": {
+      "hook": false,
+      "sha256": [
+        "69b11482f1d20efb6ffc2713b8ff3d0cbbdc80197d1c9819f8ac2bdfd93de42b"
+      ]
+    },
+    "routines/tests/fixtures/install-dispatch-policy.sh": {
+      "hook": false,
+      "sha256": [
+        "2192e2a5fff4460cfab89a0cd8e242c2523426a212ac6219a8e32f88f12f4583"
+      ]
+    },
+    "routines/tests/fixtures/live-test-20261027.json": {
+      "hook": false,
+      "sha256": [
+        "c24ffefc7533e898ab60b2ee72c7f8dd8bae4f4461fb0b0c17a4f90307785f0b"
+      ]
+    },
+    "routines/tests/fixtures/readable-facts-kit/pack-manifest.json": {
+      "hook": false,
+      "sha256": [
+        "31b8582b57e40cf36b05b7ab385e352a0c4a7e283a92a65f30484d9bf4c0a577"
+      ]
+    },
+    "routines/tests/fixtures/readable-facts-kit/payload/config/i18n/en.bundle.json": {
+      "hook": false,
+      "sha256": [
+        "24c7b5a4aa7b2f040d4eb560253cc5afc8c5abae909feaa1cc4e87269f64ff1f"
+      ]
+    },
+    "routines/tests/fixtures/readable-facts-kit/payload/config/i18n/ko.bundle.json": {
+      "hook": false,
+      "sha256": [
+        "d10794c41b781a5bf540af8cbbbc20cf8134e66d10b5abe37c3af68b0a971b52"
+      ]
+    },
+    "routines/tests/fixtures/stage-why.py": {
+      "hook": false,
+      "sha256": [
+        "bb2cf387beb3103081dad7e9199d671352f14bd2c86915228e1f36e663fac3bd"
+      ]
+    },
+    "routines/tests/fixtures/usage-max-5x.json": {
+      "hook": false,
+      "sha256": [
+        "ae76aceb70e6ef9bed21e6cb1b77df797e53cf4ae0df5ab731c9d9ed08417218"
+      ]
+    },
+    "routines/tests/fixtures/usage-ultra.json": {
+      "hook": false,
+      "sha256": [
+        "2bf4e9daf4727bdd0a3a8d122b9a3e170dc120e6b4fb9dd1e741cd59d6fd6e83"
+      ]
+    },
+    "routines/tests/fixtures/v27-d2/text-seat-fixtures.json": {
+      "hook": false,
+      "sha256": [
+        "a6a169f6cd43e973e582e17c262fac836477e871fa4b19c74e9eeb0edb87fc91"
+      ]
+    },
+    "routines/tests/fixtures/v27-d3d4/d3-bash-fixtures.json": {
+      "hook": false,
+      "sha256": [
+        "6ea2b1336f169ea76e79a627c62d6ad523810bee864a7f77afa7b63ee4be13e8",
+        "0e00ecc96a4e2b1861a1164fecc19ca6ab111f99c78f14f45bd8655604e3ea07"
+      ]
+    },
+    "routines/tests/fixtures/v27-d3d4/d4-write-fixtures.json": {
+      "hook": false,
+      "sha256": [
+        "3dccee758c335f830b97cb7f67a1ab054fc77b07ac02c2c499426663ab6db491"
+      ]
+    },
+    "routines/tests/fixtures/wb-quote/board-input.json": {
+      "hook": false,
+      "sha256": [
+        "5553ae2f4c2bda5746439f653adac4c64b11d6cb843787bb9813772f2fb3ce9b"
+      ]
+    },
+    "routines/tests/fixtures/why-net/amend2-fr12-golden.json": {
+      "hook": false,
+      "sha256": [
+        "bf07e897f3c52701e8d61c9b5b9aa7c2e8a6de75212280e7bb148e6830633f27"
+      ]
+    },
+    "routines/tests/fixtures/wiring-diff/2026-09-23-health/settings.json": {
+      "hook": false,
+      "sha256": [
+        "b70dc106aedfeeff9eaa57414f3314a238ccc36afafb3e8df4be961c9de9c009"
+      ]
+    },
+    "routines/tests/fixtures/wiring-diff/2026-09-23-health/settings.local.json": {
+      "hook": false,
+      "sha256": [
+        "a1db8517e6abcfe8959145f960891e61a026dd97541947dc88929e14304fcdc9"
+      ]
+    },
+    "routines/tests/legacy_why_fixtures.py": {
+      "hook": false,
+      "sha256": [
+        "5bfa49e47e20fac374b4a3dfd3fb352437f66b2b08bced111d718ab11611fe2d"
+      ]
+    },
+    "routines/tests/lib_usage_state_isolation.py": {
+      "hook": false,
+      "sha256": [
+        "47c6b2e8f41a77a4da1a83741c073406a577004bd6040ed5e8cf915329f66efc"
+      ]
+    },
+    "routines/tests/measure-dgn2032-owner-ask.py": {
+      "hook": false,
+      "sha256": [
+        "f17fef91cf33652950b08fe0a3cf8eec0e8122b6e4486983b625db334c6aa909"
+      ]
+    },
+    "routines/tests/measure-v27-d2-corpus.py": {
+      "hook": false,
+      "sha256": [
+        "e71692a2edf50aadb04f837b0913141a70cbae9da55e371c0b9895d6396f7250"
+      ]
+    },
+    "routines/tests/test-api-credit-pool-selection.py": {
+      "hook": false,
+      "sha256": [
+        "4adc6eec4df5f849e76be81c9428d21e3c885c82b66fb0bd971421caa871095d"
+      ]
+    },
+    "routines/tests/test-card-followup-marker.py": {
+      "hook": false,
+      "sha256": [
+        "38020ed1751b09152b4151c392776a65cb1f848dff177b100a266ec34c35a333"
+      ]
+    },
+    "routines/tests/test-classify-carryover.py": {
+      "hook": false,
+      "sha256": [
+        "3fa84088acf6abcc7155008c93479561c453c6e69105c9ee9a683c11eb681552"
+      ]
+    },
+    "routines/tests/test-cloud-if-configured.sh": {
+      "hook": false,
+      "sha256": [
+        "93399f8ddcc3d285e16a09b571cb59ed5dcc655cc4c5533ef5f5e962bc6ef1fd"
+      ]
+    },
+    "routines/tests/test-cloud-slot-overflow.py": {
+      "hook": false,
+      "sha256": [
+        "c38016cb2dfef382e8c993377e9f16e198c46081b99006d306037ce1f196bd3e"
+      ]
+    },
+    "routines/tests/test-confirm-mechanics.py": {
+      "hook": false,
+      "sha256": [
+        "3f8b23f751e744d672ed6d2eb6d6cb824cb9a3ed9398f752140c20588d9b45bb"
+      ]
+    },
+    "routines/tests/test-dec381-model-pin.py": {
+      "hook": false,
+      "sha256": [
+        "72af71e4be44dfe332412e4cec7c47fead6beb59a17f4de2d7e50a142b1818ca"
+      ]
+    },
+    "routines/tests/test-dec582-job-block-shape.py": {
+      "hook": false,
+      "sha256": [
+        "6feff309c1175491c5945ff5194bc769cec1f6c004632bb15972b6be50f5144e"
+      ]
+    },
+    "routines/tests/test-decision-validation.py": {
+      "hook": false,
+      "sha256": [
+        "712495cc2a1bc191e0e99208aa3d62cb89691bebc40a30fac9466d3f060c27d6"
+      ]
+    },
+    "routines/tests/test-dgn1390-owner-reach.py": {
+      "hook": false,
+      "sha256": [
+        "468c5d9115c1e9e8c8b542e1b92ed3c669048ac2b180310da85a9c5e79218696"
+      ]
+    },
+    "routines/tests/test-dgn1420-decision-handover.py": {
+      "hook": false,
+      "sha256": [
+        "a4cf894ac7988288767044e8a8290b26703dd8a132623c663ff367b617badfa8"
+      ]
+    },
+    "routines/tests/test-dgn1443-worklog-append.sh": {
+      "hook": false,
+      "sha256": [
+        "3818d485d94a6bb57ce5bd2095a931ea04da532081b5f709d26827f0aaa52706"
+      ]
+    },
+    "routines/tests/test-dgn1477-dispatch-detached-ascii.py": {
+      "hook": false,
+      "sha256": [
+        "3467777c10dbefa1756b5db81655b362a47ec00489e2b0575dbc723e6be4a5e4"
+      ]
+    },
+    "routines/tests/test-dgn1645-fence-cjk-grid.py": {
+      "hook": false,
+      "sha256": [
+        "68d01d7705e82024b9926513644d4b51f9179938f1244b4e37ad31fae5d090ba"
+      ]
+    },
+    "routines/tests/test-dgn1656-codex-model-probe.sh": {
+      "hook": false,
+      "sha256": [
+        "3e2fdee81cdcea24dda309bc291829bbc01bee9ef7410621fa4937fc56a14fdc"
+      ]
+    },
+    "routines/tests/test-dgn1751-brief-why-what.py": {
+      "hook": false,
+      "sha256": [
+        "60ae58f1337ac3ac1dc2a98b1711a1cbe962e696c1556be10d13a84a8b78ccb5"
+      ]
+    },
+    "routines/tests/test-dgn1812-mv-agent-root.py": {
+      "hook": false,
+      "sha256": [
+        "bd0c1f5037604afccf6b80628b340b39d7d387e0862511b517f56e5948943f6d"
+      ]
+    },
+    "routines/tests/test-dgn1836-plugin-marketplaces.py": {
+      "hook": false,
+      "sha256": [
+        "5ec56d263537a672a5292981b5ddb3a405de0bce3cfeea460ee0a142d4685b01"
+      ]
+    },
+    "routines/tests/test-dgn1891-persona-audit.py": {
+      "hook": false,
+      "sha256": [
+        "3299c6eb8ec1207e08ef1da0e796e6fdd62b48d8b8653ef1a252f1adc6f84284"
+      ]
+    },
+    "routines/tests/test-dgn1910-landing-cross-root.py": {
+      "hook": false,
+      "sha256": [
+        "270cd7a29ec129c982fe6930718501d432e8e8adf51e65608fe7e3377751c020"
+      ]
+    },
+    "routines/tests/test-dgn1910-secret-scan.py": {
+      "hook": false,
+      "sha256": [
+        "4e21c8428246d86ad35f44a90e549fe2c1deb98a8cbf556cec87654161b99564"
+      ]
+    },
+    "routines/tests/test-dgn1951-push-record-paths.sh": {
+      "hook": false,
+      "sha256": [
+        "cf0fbeac3266f4ebcdc13e6bd468f469637ded16390d74bbcadba5ac15dc388a"
+      ]
+    },
+    "routines/tests/test-dgn1952-decision-ledger.py": {
+      "hook": false,
+      "sha256": [
+        "d998fa1b28c0bd329ef769399159de18fcfe4cfdd6777b9bba962ea914601782"
+      ]
+    },
+    "routines/tests/test-dgn1966-watches.py": {
+      "hook": false,
+      "sha256": [
+        "42a62e5e619ad10c7b11cf3aa1f43e15b83130377b32b71ce4e2f4c273d639e7"
+      ]
+    },
+    "routines/tests/test-dgn1967-board-golden.py": {
+      "hook": false,
+      "sha256": [
+        "3610aff86177bd878af41d2e4719b6df429500711c79fae567497e2d30e128c4"
+      ]
+    },
+    "routines/tests/test-dgn1975-dispatch-flex.py": {
+      "hook": false,
+      "sha256": [
+        "94434a8e3b98854b02b7c2b3ca2dc15638e1dda2d60a8353db90f27d75418eef"
+      ]
+    },
+    "routines/tests/test-dgn1976-preview-switch.py": {
+      "hook": false,
+      "sha256": [
+        "1dccdcf1479e44db9adcf34048c9a44b603bc0bcfb6ebf232ad4ba14c69a7839"
+      ]
+    },
+    "routines/tests/test-dgn1978-interrupted-usage.py": {
+      "hook": false,
+      "sha256": [
+        "2b1e05e66f16749d943679c4c75cffea26b336967b7adc4eb6ef23c85847bbc2"
+      ]
+    },
+    "routines/tests/test-dgn1979-book-identity.py": {
+      "hook": false,
+      "sha256": [
+        "1229fe91804dc826f8e65d1840371897b9f7b2c1b62ff89b80fc278095bb50fd"
+      ]
+    },
+    "routines/tests/test-dgn1979-host-dispatcher.py": {
+      "hook": false,
+      "sha256": [
+        "76b7c08345cc2cb26712de06560292d8b1dcb525445be88631518154c7212553"
+      ]
+    },
+    "routines/tests/test-dgn1979-two-agents-e2e.sh": {
+      "hook": false,
+      "sha256": [
+        "a22d5918381715bef5eef4daa73e31db2b71a5f9744ec8d0fab0194ea6f95857"
+      ]
+    },
+    "routines/tests/test-dgn1981-secret-store.py": {
+      "hook": false,
+      "sha256": [
+        "25c99e89e927661f2f40e9fbb1a4424902737ee0cab420f619f4b8985084c1f1"
+      ]
+    },
+    "routines/tests/test-dgn1983-shared-passes.py": {
+      "hook": false,
+      "sha256": [
+        "ec2336e62f931b79fcbf2adcba3e0ca70e21bf843c2b564352eead7058918feb"
+      ]
+    },
+    "routines/tests/test-dgn1984-usage-onboarded.py": {
+      "hook": false,
+      "sha256": [
+        "7ae5db98c350c5667e0a7ccf3db8f58b632840a603d993baf58f9b106f511385"
+      ]
+    },
+    "routines/tests/test-dgn1985-codex-login.py": {
+      "hook": false,
+      "sha256": [
+        "cb618be9389bc9cfd24a911afd0f5e2354732b5e45d92f42237dda60261fd721"
+      ]
+    },
+    "routines/tests/test-dgn1995-owner-usage.py": {
+      "hook": false,
+      "sha256": [
+        "8800a39f1c8995df036a26a2260c9d4ffe70bc868927cfb10bc1ad1360bf2e09"
+      ]
+    },
+    "routines/tests/test-dgn1996-credit-replace.sh": {
+      "hook": false,
+      "sha256": [
+        "689ee42c2bdb99cdccbc6fd03150a8b4ef1225dda42e5d67bcdaf549f834cb55"
+      ]
+    },
+    "routines/tests/test-dgn2011-cap-queue.py": {
+      "hook": false,
+      "sha256": [
+        "604153d4198a3f717926d31992365a1866933416e1ee72ac9a3d48ca60689a12"
+      ]
+    },
+    "routines/tests/test-dgn2012-owner-question-class.py": {
+      "hook": false,
+      "sha256": [
+        "d66033cd6edb45399dfdb41d656aeac0e540516d3c5e4f61e214602b56e3159c"
+      ]
+    },
+    "routines/tests/test-dgn2032-owner-procedure.py": {
+      "hook": false,
+      "sha256": [
+        "09ebb6d45cf8dc4f0fa95c5427739397e181650223407e8f30a4208606749a2f"
+      ]
+    },
+    "routines/tests/test-dgn2033-exit-hatch.py": {
+      "hook": false,
+      "sha256": [
+        "ef751d4becb9eea0f8d88072824e51bfd582fc47d351178627427fabf0386212"
+      ]
+    },
+    "routines/tests/test-dgn2048-done-blocks.py": {
+      "hook": false,
+      "sha256": [
+        "1f667e0772b90084ffd4188304f22eb0e86232204e028cbe6c558b40dbfaf31f"
+      ]
+    },
+    "routines/tests/test-dgn2049-what-solo-pick.py": {
+      "hook": false,
+      "sha256": [
+        "4a23878d64a1689dd32ace1824c29fa2d71375b718f51f3d715896252192cdef"
+      ]
+    },
+    "routines/tests/test-dgn2060-usage-card.py": {
+      "hook": false,
+      "sha256": [
+        "0d5fb8b4867a7e507c95fbad2e345e7a3ae6fc00630d8fc7761ae94ce994d7ca"
+      ]
+    },
+    "routines/tests/test-dgn2086-codex-cloud-refusal.py": {
+      "hook": false,
+      "sha256": [
+        "38b944e3319e7c96d40b4837620f33adb020063ef344057243ae82708db11584"
+      ]
+    },
+    "routines/tests/test-dgn2102-secret-account-fallback.py": {
+      "hook": false,
+      "sha256": [
+        "2a9507aed1530dcbe2539ce73de757507fe271274d495ebdba1f2b75d6fc004b"
+      ]
+    },
+    "routines/tests/test-dgn2106-fixtures.sh": {
+      "hook": false,
+      "sha256": [
+        "970be16fce83388ec6f8a85edd7af7213ea32eaf1b249bee97540e3ddf925781"
+      ]
+    },
+    "routines/tests/test-dgn2106-set-status.sh": {
+      "hook": false,
+      "sha256": [
+        "6299b0a6f0d268cdcb518819b936514ac6055ad817d38ea312e19b3b8174f153"
+      ]
+    },
+    "routines/tests/test-dgn479-memory-write-guard.py": {
+      "hook": false,
+      "sha256": [
+        "7de57b85d20a7c7e770d38c823e90e62b4dc0ecf6282e9a8a6d80aab097b877e"
+      ]
+    },
+    "routines/tests/test-dispatch-archive.py": {
+      "hook": false,
+      "sha256": [
+        "8d6c98eb235da93cf5b69522a9930443f8784290d97c74d98295ea3e02203c57"
+      ]
+    },
+    "routines/tests/test-dispatch-pools.py": {
+      "hook": false,
+      "sha256": [
+        "8f0cf086fd97509d582c2bd5d3b0d512f86e9cad2d343ef6b4eb2c9dc9cd1dfa"
+      ]
+    },
+    "routines/tests/test-dispatch-script-job.sh": {
+      "hook": false,
+      "sha256": [
+        "744984a8c9d959257942022dc63eaccbbb81c86ede9b1fb2a4cd52790caea556"
+      ]
+    },
+    "routines/tests/test-dispatch-stall-replay.py": {
+      "hook": false,
+      "sha256": [
+        "8c8f0ae14464116b2a4141234e84292db572de7d7ff15d97a6629ce69adb00fa"
+      ]
+    },
+    "routines/tests/test-fdgn621-owner-term-gates.py": {
+      "hook": false,
+      "sha256": [
+        "3ef37415715fb6a2f81bff66b8d1eff293eed1625480ac71fc883828942ac381"
+      ]
+    },
+    "routines/tests/test-fdgn622-in-flow-skill-proposals.py": {
+      "hook": false,
+      "sha256": [
+        "8bff447ecee20e9d74599fd9d70387850f6f863fc306812f3983b89940c0ff94"
+      ]
+    },
+    "routines/tests/test-fdgn623-stopped-watchdog.sh": {
+      "hook": false,
+      "sha256": [
+        "5f0a9b9267032c9d656dd6814a71af2b6cbc689df50c33ce3e5d5ad70889158d"
+      ]
+    },
+    "routines/tests/test-host-dispatcher-reapers.py": {
+      "hook": false,
+      "sha256": [
+        "cd0625c1a5ee6addf4ef7afc02b084a7e18947f30b6a455bdfdeecdd42c6b067"
+      ]
+    },
+    "routines/tests/test-launch-host.py": {
+      "hook": false,
+      "sha256": [
+        "e5ce911e7b2ecfad62e40ec1d1123d44d0eb13476d8e6e11c27f1984fe81ee19"
+      ]
+    },
+    "routines/tests/test-live-test-suite-gate.py": {
+      "hook": false,
+      "sha256": [
+        "c011d15e11e69d7e2d638d21f8729f5c1fa17e864de9cccc4be58b54a1bc61c2"
+      ]
+    },
+    "routines/tests/test-local-suite-dispatch.py": {
+      "hook": false,
+      "sha256": [
+        "678211b3eb25646918b1f98c42b65e463e6b322ec135176508ce3a65f5f7f9a9"
+      ]
+    },
+    "routines/tests/test-m14-g9-far-urgency-gate.py": {
+      "hook": false,
+      "sha256": [
+        "b36a46d40e16303e19807d05a673f1dc291f4a562b47ea9a28de347f04b52da2"
+      ]
+    },
+    "routines/tests/test-memory-classification-carryover.py": {
+      "hook": false,
+      "sha256": [
+        "b5018288492c1495f44eb815eb539d9451f737a9a463bb57564653078af825aa"
+      ]
+    },
+    "routines/tests/test-operator-route.sh": {
+      "hook": false,
+      "sha256": [
+        "0cef531092f62d8ec40bca02a48fdbc3f7e35eba185d3c193f2c16779419d1c5"
+      ]
+    },
+    "routines/tests/test-owner-ask-gate.py": {
+      "hook": false,
+      "sha256": [
+        "328339ff68a0b4fc96170e986d7a90739fdec073ad9d6a54a10d6bc540b3df95"
+      ]
+    },
+    "routines/tests/test-refusal-accepted-paths.py": {
+      "hook": false,
+      "sha256": [
+        "73d9772c1a8293e23473a443a628d43b70a4495a4a2db8dae5c2c368ae5e3ab0"
+      ]
+    },
+    "routines/tests/test-retro-slot.py": {
+      "hook": false,
+      "sha256": [
+        "a9f3f8a0ed991ac8f623c9fa0f3ce3e7272dce424412569ce2914e06f5a5271b"
+      ]
+    },
+    "routines/tests/test-return-route.py": {
+      "hook": false,
+      "sha256": [
+        "562db5c7e47e87f2a944c158c0264ffafeee7a18ba704f8b70b3d4f40f86d9ff",
+        "1c5ba21e9f8039759a790f40ecb7505ff5ba36be7901782e86475c74c0418fe5"
+      ]
+    },
+    "routines/tests/test-review-evidence-cli.py": {
+      "hook": false,
+      "sha256": [
+        "4d11de2860c6c087e9082b95514ecb17a0def507a3804266f4a332f36d960e98"
+      ]
+    },
+    "routines/tests/test-review-evidence.py": {
+      "hook": false,
+      "sha256": [
+        "7163f12b38b6881e820d3087d6f23a9cc63ec8f9a7f0f245f60b51a8b9358718"
+      ]
+    },
+    "routines/tests/test-rework-c-what-override.sh": {
+      "hook": false,
+      "sha256": [
+        "0aeef5573dd5f5a391b71961aabfc16acb059c88960669ba5cfd38a9c011d9a8"
+      ]
+    },
+    "routines/tests/test-run-block-terms.py": {
+      "hook": false,
+      "sha256": [
+        "61cc3838071908a672b76113ab61b6252e4c65b4df3fa94866598957ebdfa44b"
+      ]
+    },
+    "routines/tests/test-run-env-utf8.py": {
+      "hook": false,
+      "sha256": [
+        "5b4a7726e386c5b883818fe4a2612efb064cfd7ed0421321774b8329a83dd93c"
+      ]
+    },
+    "routines/tests/test-runtime-move-policy.py": {
+      "hook": false,
+      "sha256": [
+        "c13f976ed894b63f5aca8b5b512849c619121fcb0f767fbf8b33ce66a38a404e"
+      ]
+    },
+    "routines/tests/test-runtime-pace-pick.py": {
+      "hook": false,
+      "sha256": [
+        "ae632c6f2f7d1a4265f653fb9c797ddd54fbf0d597592412ba7fb7b2e9315ced"
+      ]
+    },
+    "routines/tests/test-runtime-selector-selection.py": {
+      "hook": false,
+      "sha256": [
+        "224d77fff61f1f245363b0e35a3312f7d2698833d140dd9f3667847f18ffa742"
+      ]
+    },
+    "routines/tests/test-skill-update-contract.py": {
+      "hook": false,
+      "sha256": [
+        "ea7f2ca7fb4437b170dd7e65e4650b6daf382004bcce7184106cb7996990effb"
+      ]
+    },
+    "routines/tests/test-stage-judge.py": {
+      "hook": false,
+      "sha256": [
+        "d69770a43f61b13bb95befb3d32b1b8db3dbb5863d4c9a07dfb0745192ca60f6"
+      ]
+    },
+    "routines/tests/test-stage-replay.py": {
+      "hook": false,
+      "sha256": [
+        "b716f7002f153b59b90ded51a933922354736016192b9e653c380ae285e35a0e"
+      ]
+    },
+    "routines/tests/test-steward-env.sh": {
+      "hook": false,
+      "sha256": [
+        "d252fd0db5f84ae2cd08dfa0cd947107631945d1bc82bf3e8827964c8317e26d"
+      ]
+    },
+    "routines/tests/test-ticket-edit-routing.py": {
+      "hook": false,
+      "sha256": [
+        "f0879747aa04d98123c402ba6a19008eae75b4893159ac4053a390ad4c52f080"
+      ]
+    },
+    "routines/tests/test-ticket-receipt-boundary.py": {
+      "hook": false,
+      "sha256": [
+        "f78bc79bc0a3dd45a6ca38d8b0cbe770c547bf421969b64d8c91fcdb72a68d1e"
+      ]
+    },
+    "routines/tests/test-ticket-receipts.py": {
+      "hook": false,
+      "sha256": [
+        "93e5917805bcdd7270eba69130bd88ee63665fa162afe81418401d7a30646333"
+      ]
+    },
+    "routines/tests/test-token-gate.py": {
+      "hook": false,
+      "sha256": [
+        "e168f3334eb46ed9a2db1890c51f27e6df1b2f6219c2d89e658678dcaf6f86ec"
+      ]
+    },
+    "routines/tests/test-v27-d2-text-seat.py": {
+      "hook": false,
+      "sha256": [
+        "0dca0f138c7d43024a44e4c852db285a799e7597d88e04b56ca175fb0c6eff60"
+      ]
+    },
+    "routines/tests/test-v27-d3-bash-gate.py": {
+      "hook": false,
+      "sha256": [
+        "8a04343c24b960bff9702086a555a3cb3c2b3e33affa72a32542154810099ea9",
+        "65f6e515970b33e6819af560e8a454865d696141a48ca3972ced9f4d6f5a36e0"
+      ]
+    },
+    "routines/tests/test-v27-d34-script-devices.py": {
+      "hook": false,
+      "sha256": [
+        "ee49d5f807e9718da4201b91d2b50aaa0037bf0e62d92621132992dbff3fa12d"
+      ]
+    },
+    "routines/tests/test-v27-d4-write-paths.py": {
+      "hook": false,
+      "sha256": [
+        "4374f77b5aac467dca6e30e8992b75556ec633da18461e34602b1219fd60f1e0"
+      ]
+    },
+    "routines/tests/test-v27-durable-write-pointer.py": {
+      "hook": false,
+      "sha256": [
+        "77b207a3ffb741c13e9ab379223029999ed831bb4f7acf274dd09641860d0fdf"
+      ]
+    },
+    "routines/tests/test-v27-template-gate-wiring.py": {
+      "hook": false,
+      "sha256": [
+        "ec572ad54c8bf466879f0c7ba49cbf451e2a2153f07be0d0fb9805bcaa82e9f8"
+      ]
+    },
+    "routines/tests/test-v27-text-layer-pointer.py": {
+      "hook": false,
+      "sha256": [
+        "bff9f6f77f883eea98d28f6fcfea3b890e0beaaeab859bcde87c76848097db14"
+      ]
+    },
+    "routines/tests/test-wb-quote-areas.py": {
+      "hook": false,
+      "sha256": [
+        "bf837b66e2b811a337b042e1968a77c8058c2b8307224b7cebcf12dd0dd3cabf"
+      ]
+    },
+    "routines/tests/test-why-link-review.py": {
+      "hook": false,
+      "sha256": [
+        "5f0ea8e9bb6401e9767e05ba52011f8764201634965e61dbe68249e700dbd198"
+      ]
+    },
+    "routines/tests/test-why-net-amend1.py": {
+      "hook": false,
+      "sha256": [
+        "ee7f52f17059ec5e902f96069af83fc1c2e55c00cc9d17ea270fc0edbd473af7"
+      ]
+    },
+    "routines/tests/test-why-net-amend2.py": {
+      "hook": false,
+      "sha256": [
+        "1365aa8f583b3e6a888c5863a1263dee8522653b856f8f41a0b7cd0ad6ea3826"
+      ]
+    },
+    "routines/tests/test-why-net-elicit.py": {
+      "hook": false,
+      "sha256": [
+        "3ea49c4bcbaefb7409731b7aa59321ca52baa896e177a8c7ba64f09b24f23b34"
+      ]
+    },
+    "routines/tests/test-why-net-floor.py": {
+      "hook": false,
+      "sha256": [
+        "d3a773b3e5618d59482562ab6d10258e53a390a86dd8a4b4936db9dd5bff6345"
+      ]
+    },
+    "routines/tests/test-why-net-followup.py": {
+      "hook": false,
+      "sha256": [
+        "6bdb26749797e26648e5fec644bb08de7fe9dc84d86896f4ee5a639b9f751c97"
+      ]
+    },
+    "routines/tests/test-why-net-g3.py": {
+      "hook": false,
+      "sha256": [
+        "b160f0a1b4b80b045548c968a529ad44ccb5969e6e0dd302b4031e7cc279ef24"
+      ]
+    },
+    "routines/tests/test-why-net-grill-final.py": {
+      "hook": false,
+      "sha256": [
+        "325ecd3838d87412c54c6a8ada0f6d411512729640a4117a56a40d9777a2f562"
+      ]
+    },
+    "routines/tests/test-why-net-grill.py": {
+      "hook": false,
+      "sha256": [
+        "a4d743d91bdc281ec45ba3c168a60274eb8cc3dccb024bb4503ec3a00bbb2ee7"
+      ]
+    },
+    "routines/tests/test-why-net-grill2.py": {
+      "hook": false,
+      "sha256": [
+        "4bd8717a1b10f446bba1edc22f946c547b099a02af10b4fdd1a01a05f2ff18ec"
+      ]
+    },
+    "routines/tests/test-why-net-grill3.py": {
+      "hook": false,
+      "sha256": [
+        "682494ba360ce62610816a9b1eb73d68313189e7539b2bd0489e818f724dfe33"
+      ]
+    },
+    "routines/tests/test-why-net-p3.py": {
+      "hook": false,
+      "sha256": [
+        "040aa5e3d8b8df2d8f5bfa85360c6767aab47e743078f59877e2a6d14936d0c7"
+      ]
+    },
+    "routines/tests/test-why-net-pm-side.py": {
+      "hook": false,
+      "sha256": [
+        "0928d3bdf6a257e7ef3e05b828d4d2dbae54da7fb8c49c4ceafc136bc15e99af"
+      ]
+    },
+    "routines/tests/test-why-net-rest.py": {
+      "hook": false,
+      "sha256": [
+        "b866a34267f2256cc2155a97cb40eb01106dfedacd295ffad8b8277df1e3b5cd"
+      ]
+    },
+    "routines/tests/test-wiring-diff-check.py": {
+      "hook": false,
+      "sha256": [
+        "ff166931d13236962c1e54f4fa7d9776e46c6fad6b34013277caec89921eaa8c"
+      ]
+    }
+  }
+}

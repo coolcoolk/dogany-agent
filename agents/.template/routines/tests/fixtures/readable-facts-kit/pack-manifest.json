@@ -1,0 +1,11 @@
+{
+  "contract_version": 1,
+  "kind": "kit",
+  "id": "factkit",
+  "provides_kit": "factkit",
+  "pack_version": "0.1.0",
+  "requires_framework": ">=2.7.0",
+  "payload_root": "payload",
+  "terms": "none",
+  "terms_reason": "Test fixture for readable fact declarations."
+}

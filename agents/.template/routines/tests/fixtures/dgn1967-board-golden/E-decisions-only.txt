@@ -1,0 +1,26 @@
+decision: publish
+-----
+10/09(금) 00:30
+
+[결정대기]
+fold:: dec-901 배포 순서 결정
+물음: 어느 쪽 먼저?
+권고: 알파 먼저
+선택지:
+1. 알파
+2. 베타
+fold::end
+
+- 아이디 없는 결정
+- dec-902 상세 없는 결정
+
+quote::
+[콘솔액션] 1건
+- act-100 approve dec-901 1d
+quote::end
+
+quote::
+[언파크 후보] (스캔 2026-10-08 23:30)
+- DGN-1 P2 UNPARK gate: ok
+- DGN-2 P3 UNPARK gate: ok
+quote::end

@@ -1,0 +1,65 @@
+{
+ "api": 1,
+ "completed_descs": [
+  "끝난 작업"
+ ],
+ "decisions": null,
+ "live_descs": [
+  "보고서 초안",
+  "모델 없는 조사",
+  "방향 바꾼 작업",
+  "멈춘 작업 (무응답 20분+ -- 사망 추정)",
+  "테스트 실행: 00:26 (4분~)",
+  "릴리스 빌드: 10/08 23:50 (40분~)",
+  "Claude Opus 5.5: 알파 배포 준비: 10/08 22:10 (140분~)",
+  "작업: dsp/beta",
+  "Claude Sonnet 5.5: 죽은 작업 (pid 사망 확인 -- 종결 이벤트 없음)"
+ ],
+ "live_records": [
+  {
+   "desc": "보고서 초안",
+   "model_display": "Claude Opus 5.5",
+   "start_epoch": 1791472680.0
+  },
+  {
+   "desc": "모델 없는 조사",
+   "model_display": "",
+   "start_epoch": 1791472800.0
+  },
+  {
+   "desc": "방향 바꾼 작업",
+   "model_display": "Claude Sonnet 5.5",
+   "start_epoch": 1791473100.0
+  },
+  null,
+  null,
+  null,
+  {
+   "branch": "dsp/alpha",
+   "desc": "Claude Opus 5.5: 알파 배포 준비: 10/08 22:10 (140분~)",
+   "model_display": "Claude Opus 5.5",
+   "start_epoch": null
+  },
+  {
+   "branch": "dsp/beta",
+   "desc": "작업: dsp/beta",
+   "model_display": "",
+   "start_epoch": 1791472800.0
+  },
+  null
+ ],
+ "live_rows": [
+  "Claude Opus 5.5: 보고서 초안: 00:18 (12분~)",
+  "모델 없는 조사: 00:20 (10분~)",
+  "Claude Sonnet 5.5: 방향 바꾼 작업: 00:25 (5분~)",
+  "멈춘 작업 (무응답 20분+ -- 사망 추정)",
+  "테스트 실행: 00:26 (4분~)",
+  "릴리스 빌드: 10/08 23:50 (40분~)",
+  "Claude Opus 5.5: 알파 배포 준비: 10/08 22:10 (140분~)",
+  "작업: dsp/beta: 00:20 (10분~)",
+  "Claude Sonnet 5.5: 죽은 작업 (pid 사망 확인 -- 종결 이벤트 없음)"
+ ],
+ "review_descs": [
+  "dsp/delta 검토 대기 [DGN-9010]"
+ ]
+}

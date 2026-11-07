@@ -1,0 +1,27 @@
+decision: publish
+-----
+10/09(Fri) 00:30
+
+quote::
+[Console actions] 1
+- act-100 approve dec-901 1d
+quote::end
+
+**[Background work]**
+quote::
+알파 배포 준비 10/08 22:10 (140 min~)
+• subagent: Claude Opus 5.5
+quote::end
+quote::
+Task: dsp/beta 00:20 (10 min~)
+• subagent
+quote::end
+quote::
+Claude Sonnet 5.5: 죽은 작업 (pid confirmed dead -- no end event)
+quote::end
+
+quote::
+[Unpark candidates] (scan 2026-10-08 23:30)
+- DGN-1 P2 UNPARK gate: ok
+- DGN-2 P3 UNPARK gate: ok
+quote::end

@@ -1,0 +1,85 @@
+decision: publish
+-----
+10/09(Fri) 00:30
+
+[Pending decisions]
+fold:: dec-901 배포 순서 결정
+Question: 어느 쪽 먼저?
+Recommendation: 알파 먼저
+Options:
+1. 알파
+2. 베타
+fold::end
+
+- 아이디 없는 결정
+- dec-902 상세 없는 결정
+
+quote::
+[Console actions] 1
+- act-100 approve dec-901 1d
+quote::end
+
+**[Background work]**
+quote::
+보고서 초안 00:18 (12 min~)
+• subagent: Claude Opus 5.5
+quote::end
+quote::
+모델 없는 조사 00:20 (10 min~)
+• subagent
+quote::end
+quote::
+방향 바꾼 작업 00:25 (5 min~)
+• subagent: Claude Sonnet 5.5
+quote::end
+quote::
+멈춘 작업 (no response 20 min+ -- presumed dead)
+quote::end
+quote::
+테스트 실행 00:26 (4 min~)
+• script
+quote::end
+quote::
+릴리스 빌드 10/08 23:50 (40 min~)
+• script
+quote::end
+quote::
+알파 배포 준비 10/08 22:10 (140 min~)
+• subagent: Claude Opus 5.5
+quote::end
+quote::
+Task: dsp/beta 00:20 (10 min~)
+• subagent
+quote::end
+quote::
+Claude Sonnet 5.5: 죽은 작업 (pid confirmed dead -- no end event)
+quote::end
+
+quote::
+[진행중 티켓] 9건
+- 보고서 초안
+- 모델 없는 조사
+- 방향 바꾼 작업
+- 멈춘 작업 (no response 20 min+ -- presumed …
+- 테스트 실행: 00:26 (4 min~)
+- 릴리스 빌드: 10/08 23:50 (40 min~)
+- Claude Opus 5.5: 알파 배포 준비: 10/08 22:10 …
+- Task: dsp/beta
+- Claude Sonnet 5.5: 죽은 작업 (pid confirmed…
+quote::end
+
+quote::
+[스탬프] Opus: 00:25 (5 min~)
+quote::end
+
+quote::
+[검토]
+- dsp/delta 검토 대기 [DGN-9010]
+- 완료: 끝난 작업
+quote::end
+
+quote::
+[Unpark candidates] (scan 2026-10-08 23:30)
+- DGN-1 P2 UNPARK gate: ok
+- DGN-2 P3 UNPARK gate: ok
+quote::end

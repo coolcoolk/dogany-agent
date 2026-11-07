@@ -1,0 +1,67 @@
+# Text seat (v2.7 D2) vocabulary, Korean.  Data, not code: the code rule
+# (English/ASCII only) covers routines/lib/text_seat.py, which holds no
+# language words.  Format: NAME<TAB>regex, one top-level alternative per
+# line; lines of one NAME are OR'ed, and the same NAME in en.tsv is OR'ed
+# in too (every language file is always loaded).  \b means an ASCII word
+# edge (Hangul next to an English word still counts as an edge).
+
+# HF27: claim that recorded knowledge is absent / first-person not-knowing
+ABSENCE	(기록|메모|기억|내역|흔적|이력|언급|저장된|남아 ?있는|남긴|적어 ?둔|적힌|알려주신|말씀하신)\s?(?:[은는이가도]|된 ?(?:게|것|건|내용))?\s?(없(?:습니다|어요|네요|는데|고|다|음)|안 남아|찾(?:을 수|지) ?(?:없|못)|확인되지 않|보이지 않|나오지 않|잡히지 않)
+ABSENCE	(제가|저는|저도)\s?(?:그건|그 부분은|아직)?\s?(?:잘\s?)?(모릅니다|모르겠|알지 못|기억하지 못|기억이 안|기억나지 않)
+# HF27: the prompt asks about a past fact, record or thing the user said
+RECALL_Q	기억\s?(?:해|하니|하냐|하지|하세요|하시|나|나니|나냐|나요|돼|되니)
+RECALL_Q	기록(?:했|해\s?(?:놨|뒀|둔)|돼|되어|된|있)|저장(?:했|돼|된)
+RECALL_Q	(?:뭐|언제|얼마|어디|누구|몇)\s?(?:였|이었|더라)|했었|했던|말했던|말한\s?거
+RECALL_Q	알려\s?(?:줬|준|드렸)|저번에|지난번|예전에|전에\s?(?:말|한|했)
+# a sentence that is itself a question (sentence end)
+QUESTION_END	까요|나요|가요|인가|습니까
+# HF30: the reply hands the run to the user
+HANDOVER	실행해\s?(?:주세요|주시|보세요|보시|줘)|입력해\s?(?:주세요|주시|보세요)
+HANDOVER	붙여\s?넣(?:어|으)\s?(?:주세요|주시|보세요)|돌려\s?(?:주세요|주시|보세요)
+HANDOVER	쳐\s?(?:주세요|보세요)|터미널(?:에서|을 열|에)
+# HF30 guard: relay / share copy for someone else
+RELAY	전달|전해|보내\s?(?:주|드)|공유\s?(?:용|할|해|하실|문구|글)|올릴\s?글|에게\s?(?:붙여|보내|전)
+# HF30 guard: the user asked for the command or the how-to
+ASK_FOR_CMD	명령어|커맨드|어떻게\s?(?:실행|치|입력|접속|들어가)|방법|하는\s?법|접속법
+ASK_FOR_CMD	알려\s?(?:줘|주세요|줄래)|직접 (할|해볼|해 ?볼)|제가 (할|칠)
+# HF30 guard: the run happens where the agent cannot act
+ELSEWHERE	사용자\s?전환|다른\s?계정|새\s?계정|(?:리허설|테스트|시험)\s?계정|그\s?계정
+ELSEWHERE	대화형|직접\s?(?:승인|확인|눌러)|승인 화면
+# HF48b guard: a failure report
+FAILURE	실패|오류|에러|안 ?됩니다|막혔|깨졌
+# HF52: own parallel / earlier session spoken of as a third party
+OTHER_SESSION	(그|저|다른|별도|옆|병렬|이전|앞|지난|직전)\s?(세션)(이|가|에서|은|는|쪽(?:에서|이)?|의 ?(?:제가|저|기록|작업))[^.\n]{0,30}(했|하고 있|작업|진행|처리|만들|고쳤|알고|모르|기억|남겼|보냈|돌|말했|답했)
+# HF52 guard: session in its OS / network sense
+OS_SESSION	화면\s?세션|로그인|터미널|브라우저|계정
+# V01: an order word in a label head (time words are not order labels)
+ORDER_LABEL	(?<!처음)(?<!지금)(?<!오늘)(?<!내일)(?<!다음)(?<!나중)(?<!이번)부터|먼저
+# V01 guard: the user is the actor of the question
+USER_ACTOR	실래요|시겠어요|실까요|하실|가실|고르실|드실|원하시|좋으세요|괜찮으세요
+# V01: a question that asks which goes first
+ORDER_Q	어느\s?(?:것|걸|쪽|거)(?:을|를|부터)?\s?(?:먼저|부터)
+ORDER_Q	(?:뭐|무엇|뭘|어떤 ?(?:것|걸|거))\s?(?:부터|를? 먼저)
+ORDER_Q	(?:어떤|무슨) 순서로|순서(?:를|는)?\s?(?:어떻게|정해)
+# V01: a question sentence (sentence end)
+Q_SENT	까요|할지|을지|ㄹ지|주세요|주시면
+# V01 guard: consequential content (irreversible, external, costly)
+CONSEQUENCE	삭제|지우|배포|공개|출시|릴리스|푸시|태그|머지|컷|재시작|중지
+CONSEQUENCE	비용|토큰|요금|결제|구매|돈|전송|발송|보내|메일|되돌릴 수 없
+CONSEQUENCE	승인|권한|비밀번호|계정|초기화
+# V03: an alternate option scheme
+ALT_SCHEME	(?<!\w)[A-E]\s?안(?![가-힣])|(?:옵션|선택지)\s?[A-E](?![A-Za-z])
+# V03: a choice question (sentence end)
+ASK_END	까요
+# V03: a recommendation right before the token
+REC_NEAR	추천(?:은|안은|:)
+# DN04 (DGN-2048): an assertive done claim -- done/완료/다 됐다 and kin.
+# The ending must close the word: "완료했습니다만", "다 됐다고" and
+# "완료되면" are not claims.
+DONE_CLAIM	완료\s?(?:했|됐|되었|하였)(?:습니다|어요|어|다|음|네요)(?![가-힣])
+DONE_CLAIM	완료(?:입니다|예요|이에요|임)(?![가-힣])
+DONE_CLAIM	(?:^|\s)완료\s*[.!~]*$
+DONE_CLAIM	(?:^|\s)다\s?(?:됐|되었|끝났|끝냈|마쳤|만들었)(?:습니다|어요|어|다|음|네요)(?![가-힣])
+DONE_CLAIM	(?:모두|전부)\s?(?:완료|끝났|끝냈|마쳤)(?:습니다|어요|다|네요)?(?![가-힣])
+# DN04: the open-items line the report must open with
+OPEN_ITEMS	아직\s?안\s?되는\s?(?:것|거|부분|점)|남은\s?(?:것|일|항목|작업)
+# DN04: an open-items value that says the list is empty
+OPEN_NONE	^(?:[은는이가도]\s?)?(?:없(?:음|습니다|어요|다|네요)|해당\s?없음)\s*[.!]?$

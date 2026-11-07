@@ -1,0 +1,20 @@
+# runtime-traits.tsv -- DGN-2180: what each dispatch pool IS, as data. lib/runtime_policy.py
+# reads these columns and names no pool or vendor itself; swapping `role` between two
+# accounts mirrors every pick (the policy table test does exactly that).
+#
+# pool          pool id the dispatcher uses (a runtime key)
+# account       the quota account the pool draws on; pacing attaches to the ACCOUNT
+#               (shared by every agent on the host), pools sharing one are one subscription
+# seat          local | api (informational: which seat of the account)
+# role          main = the owner's own chat model (background work spends it only while
+#               under the elapsed-time pace line); background = spend freely
+# reset_style   weekly | frequent | monthly (informational: how often the window refills)
+# window_days   length of the paced window, days
+# credit_funded 1 = paid from a credit pool that is exempt from pacing while credit
+#               remains (API credit pool); the buffer rules for it
+#               (dec-439) live in the dispatcher, unchanged
+# Owner 2026-10-19 (dec-497).
+pool	account	seat	role	reset_style	window_days	credit_funded
+claude-code	acct-a	local	main	weekly	7	0
+claude-api	acct-a	api	main	monthly	30	1
+codex	acct-b	local	background	frequent	7	0
