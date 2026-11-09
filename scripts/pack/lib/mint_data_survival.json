@@ -1,0 +1,35 @@
+{
+  "schema": "mint.data-survival/1",
+  "scope": "Framework lifecycle reference, not an inspection of this instance or a promise of automatic access after reminting.",
+  "agent_instruction": "Use these distinctions when explaining reminting. Do not infer that kit records need migration merely because an instance is replaced. Check the actual storage binding before making an instance-specific claim. This context grants no permission to speak: obey agent_utterance and screen_delivered; do not add a screen or repeat this internal reference to the owner.",
+  "rows": [
+    {
+      "data": "shared_crew_db",
+      "location": "<shared-home>/crews/<kit>/<kit>.db (normally ~/.dogany/crews/<kit>/<kit>.db)",
+      "survival": "survives",
+      "effect": "The shared crew ledger stays outside the retired instance. Removing the instance or its database symlink does not remove the shared records. Reminting into the same crew does not require copying or migrating those records.",
+      "check": "Verify the resolved database path and crew.conf membership. The replacement must join the intended crew and satisfy kit version/schema compatibility. A standalone local database or a different crew is not covered by this claim. The kit owns record content; do not query its tables from the framework."
+    },
+    {
+      "data": "instance_workspace",
+      "location": "<instance-root>",
+      "survival": "not_inherited",
+      "effect": "The old workspace is removed from the active location by retirement/teardown and a fresh mint creates a new workspace. The supported lifecycle archives the old body with a receipt; removal from the active path does not mean every byte is destroyed. Instance-local files are not automatically inherited.",
+      "check": "Check the lifecycle receipt and archive before promising recovery. Preserve needed local data through its owning procedure before replacing the instance; do not treat local files as shared kit records."
+    },
+    {
+      "data": "mailbox",
+      "location": "Separate handoff mailbox, resolved by the lifecycle machinery from the instance identity",
+      "survival": "separate_disposition",
+      "effect": "The mailbox is separate from the shared crew database. Retirement/teardown can archive it separately; pending mail and mailbox identity have their own lifecycle checks. A new instance does not automatically inherit the old mailbox.",
+      "check": "Inspect the mailbox plan and receipt for the chosen operation. Do not promise that mail is retained or transferred based only on crew database survival."
+    },
+    {
+      "data": "memory",
+      "location": "Instance memories/ and memory-engine state; external transcript stores have their own lifecycle",
+      "survival": "separate_disposition",
+      "effect": "Instance-local memories travel with the archived workspace, not with the shared kit ledger. A fresh mint does not automatically inherit them. Transcript archival and restoration are separate from shared record access.",
+      "check": "Check the actual memory storage and lifecycle receipt. Use the memory owner's supported procedure for any continuity work; do not hand-edit memories or claim continuity merely because the kit database survives."
+    }
+  ]
+}

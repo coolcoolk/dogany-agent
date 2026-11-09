@@ -1,0 +1,34 @@
+{
+ "emoji": "🌿",
+ "live": [
+  {
+   "kind": "bg",
+   "slot": "Bash",
+   "command": "make sketches",
+   "text": "주간 회고 그림 시안 3개",
+   "ago_min": 4,
+   "clock": "17:37"
+  }
+ ],
+ "plugin_sections": [
+  {
+   "key": "inprogress",
+   "variants": [
+    [
+     "fold:: [진행중 티켓] 7건 · 🔍1 💤2 ⛔1 🔧3",
+     "🔍 Review검토 · DGN-2096 티켓을 프로덕트별 폴더로 옮기는 설계",
+     "💤 idle · DGN-1835 dispatch 동시 상한이 손으로 정한 계단표 -- 실제 여유 기반으로",
+     "💤 idle · DGN-2116 작업대 진행 표시 (제품 → 레인)",
+     "⛔ 블록됨 · DGN-2103 클라우드 크레딧으로 작업 돌리기 (claude --cloud 결과 받아오기)",
+     "🔧 작업중 · DGN-1961 Claude Opus 5.5: 하루 한 통 회고 자리 (Why 확인·주간·월간 황금나선, 킷 회고가 칸으로 들어옴) · 18:01 (4분~)",
+     "🔧 작업중 · DGN-2093 Claude Opus 5.5: 프레임워크 올리기 전 전체 검사가 아직 이 Mac에서 돎 · 18:01 (4분~)",
+     "🔧 작업중 · DGN-2119 Claude Opus 5.5 (Cloud): 출시 전 킷·팩 버전을 0.1 + dev 꼬리표로 · 17:55 (10분~)",
+     "fold::end"
+    ],
+    [
+     "[진행중 티켓] 7건 · 🔍1 💤2 ⛔1 🔧3"
+    ]
+   ]
+  }
+ ]
+}

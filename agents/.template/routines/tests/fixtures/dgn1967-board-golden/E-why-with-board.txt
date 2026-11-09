@@ -1,0 +1,62 @@
+decision: publish
+-----
+10/09(금) 00:30
+
+[결정대기]
+fold:: dec-901 배포 순서 결정
+물음: 어느 쪽 먼저?
+권고: 알파 먼저
+선택지:
+1. 알파
+2. 베타
+fold::end
+
+- 아이디 없는 결정
+- dec-902 상세 없는 결정
+
+quote::
+[콘솔액션] 1건
+- act-100 approve dec-901 1d
+quote::end
+
+**[백그라운드 작업]**
+quote::
+보고서 초안 00:18 (12분~)
+• 서브에이전트: Claude Opus 5.5
+quote::end
+quote::
+모델 없는 조사 00:20 (10분~)
+• 서브에이전트
+quote::end
+quote::
+방향 바꾼 작업 00:25 (5분~)
+• 서브에이전트: Claude Sonnet 5.5
+quote::end
+quote::
+멈춘 작업 (무응답 20분+ -- 사망 추정)
+quote::end
+quote::
+테스트 실행 00:26 (4분~)
+• 스크립트
+quote::end
+quote::
+릴리스 빌드 10/08 23:50 (40분~)
+• 스크립트
+quote::end
+quote::
+알파 배포 준비 10/08 22:10 (140분~)
+• 서브에이전트: Claude Opus 5.5
+quote::end
+quote::
+작업: dsp/beta 00:20 (10분~)
+• 서브에이전트
+quote::end
+quote::
+Claude Sonnet 5.5: 죽은 작업 (pid 사망 확인 -- 종결 이벤트 없음)
+quote::end
+
+quote::
+[언파크 후보] (스캔 2026-10-08 23:30)
+- DGN-1 P2 UNPARK gate: ok
+- DGN-2 P3 UNPARK gate: ok
+quote::end

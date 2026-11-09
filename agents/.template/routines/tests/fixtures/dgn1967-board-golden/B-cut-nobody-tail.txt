@@ -1,0 +1,80 @@
+10/09(금) 00:30
+
+quote::
+[결정대기]
+- dec-000 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-001 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-002 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-003 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-004 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-005 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-006 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-007 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-008 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-009 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-010 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-011 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-012 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-013 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-014 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-015 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-016 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-017 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-018 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-019 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-020 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-021 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-022 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-023 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+- dec-024 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 결정 
+quote::end
+
+quote::
+[콘솔액션] 5건
+quote::end
+
+**[백그라운드 작업]**
+quote::
+작업 00 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 06 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 07 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+quote::
+작업 08 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+quote::end
+
+fold:: 21건
+작업 09 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+작업 10 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx · 00:10 (20분~)
+작업 11 xxxxxxxxx…
+fold::end
+
+quote::
+[고정]
+- keep 0
+- keep 1
+- keep 2
+quote::end
+
+quote::
+[언파크 후보] (스캔 2026-10-08 23:30)
+quote::end

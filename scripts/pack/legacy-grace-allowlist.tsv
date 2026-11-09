@@ -1,0 +1,12 @@
+# legacy-grace-allowlist.tsv -- packs allowed to ship WITHOUT contract_version (DGN-1498).
+#
+# compat-lint.sh grants legacy-grace (C4/C5/C6 skipped) ONLY to a manifest whose
+# (name, reference_slug) identity is listed here; any other manifest without
+# contract_version is a C1 FAIL. The list exists to preserve the status quo for
+# pre-v2 packs -- it is closed: add a row only for a pack that already shipped
+# before DGN-1498, never for a new pack (a new pack declares contract_version).
+# Merging a branch that brings a pack without contract_version (e.g. packs/dev on
+# dgn-939-inplace-engine) needs an explicit row decision at merge time.
+#
+# Format: name<TAB>reference_slug<TAB>note    ("-" = reference_slug absent)
+legacy-test	reflegacy	compat-lint fixture scripts/tests/fixtures/compat-lint/legacy-pack

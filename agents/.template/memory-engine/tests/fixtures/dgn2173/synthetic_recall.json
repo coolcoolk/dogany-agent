@@ -1,0 +1,55 @@
+{
+  "description": "Entirely invented questions and facts. No transcript or owner-derived content.",
+  "cases": [
+    {
+      "id": "orchid",
+      "prompt": "Tell me the orchid greenhouse plan again.",
+      "fact": "The orchid greenhouse uses amber shade cloth and a copper watering can."
+    },
+    {
+      "id": "observatory",
+      "prompt": "Show the observatory telescope schedule again.",
+      "fact": "The observatory telescope opens for comet sketches at dusk."
+    },
+    {
+      "id": "library",
+      "prompt": "What was the library lantern rule again?",
+      "fact": "The library lantern stays on the north shelf during story hour."
+    },
+    {
+      "id": "robot",
+      "prompt": "Tell me the robot parcel route again.",
+      "fact": "The robot parcel route visits the glass pavilion before the pebble bridge."
+    },
+    {
+      "id": "bakery",
+      "prompt": "Show the bakery cinnamon recipe again.",
+      "fact": "The bakery cinnamon recipe adds pear syrup after the dough rests."
+    },
+    {
+      "id": "museum",
+      "prompt": "What was the museum kite display plan again?",
+      "fact": "The museum kite display uses violet ribbons beside the paper moon."
+    },
+    {
+      "id": "seedling",
+      "prompt": "씨앗창고 계획 다시 알려줘",
+      "fact": "씨앗창고 선반에는 파란 상자와 초록 봉투를 둔다."
+    },
+    {
+      "id": "fountain",
+      "prompt": "분수정원 배치 다시 알려줘",
+      "fact": "분수정원 중앙에는 별 모양 돌과 나무 의자를 둔다."
+    },
+    {
+      "id": "airship",
+      "prompt": "풍선비행선 일정 다시 알려줘",
+      "fact": "풍선비행선은 구름 항구에서 오후에 출발한다."
+    },
+    {
+      "id": "puppet",
+      "prompt": "인형극장 조명 다시 알려줘",
+      "fact": "인형극장 조명은 은빛 달과 노란 별을 비춘다."
+    }
+  ]
+}

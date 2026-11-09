@@ -1,0 +1,18 @@
+# why_annoyance_patterns.tsv -- owner-speech patterns that mean "stop asking"
+# (v2.7 T1 spec 4.4 step 5). Data, not code: matched as an NFC substring of
+# the owner prompt by routines/lib/why_net/ups.py. One pattern per line:
+#   pattern<TAB>scope<TAB>note
+# scope `any` fires on any owner turn; `after-ask` only on a turn that answers
+# a Why ask (grill fix 11: a bare "annoying" / "sorry to bother you" is not
+# about the asking). A hit writes an {"annoy":..} row and halves the inline
+# cap at once.
+그만 물어	any	stop asking
+또 물어	any	asking again
+묻지 마	any	do not ask
+물어보지 마	any	do not ask (long form)
+질문 그만	any	enough questions
+귀찮게 하지 마	any	do not bother me
+그만 좀	after-ask	enough
+귀찮아	after-ask	annoyed
+귀찮다	after-ask	annoyed
+귀찮네	after-ask	annoyed

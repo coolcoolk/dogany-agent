@@ -1,0 +1,3 @@
+{"type": "user", "uuid": "u-0101", "parentUuid": null, "timestamp": "2026-10-08T01:00:00Z", "userType": "external", "message": {"role": "user", "content": "이거 진행해줘"}}
+{"type": "assistant", "uuid": "a-0101", "parentUuid": "u-0101", "timestamp": "2026-10-08T01:00:30Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "진행했어요. 다음 단계는 내일 정리할게요."}]}}
+{"type": "user", "uuid": "u-0102", "parentUuid": "a-0101", "timestamp": "2026-10-08T01:05:00Z", "userType": "external", "message": {"role": "user", "content": "좋아"}}

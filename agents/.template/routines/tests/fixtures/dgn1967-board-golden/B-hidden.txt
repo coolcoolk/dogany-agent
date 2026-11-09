@@ -1,0 +1,44 @@
+10/09(금) 00:30
+
+[결정대기]
+fold:: dec-901 배포 순서 -> https://c.example/decision/dec-901
+물음: 어느 쪽 먼저?
+권고: 알파 먼저
+선택지:
+1. 알파
+2. 베타
+fold::end
+
+- 아이디 없는 결정
+- 옛 형식 문자열 결정
+
+**[백그라운드 작업]**
+quote::
+Claude Opus 5.5: 보고서 초안 · 00:18 (12분~)
+quote::end
+quote::
+모델 없는 조사 · 00:20 (10분~)
+quote::end
+quote::
+멈춘 작업 (무응답 20분+ -- 사망 추정)
+quote::end
+quote::
+테스트 실행 · 00:26 (4분~)
+quote::end
+
+quote::
+[진행중 티켓] 3건
+- T1 하나
+- T2 둘
+- T3 셋
+quote::end
+
+quote::
+[제품]
+- p: v1
+quote::end
+
+quote::
+[메모]
+- 한 줄
+quote::end

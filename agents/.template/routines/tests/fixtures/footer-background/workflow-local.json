@@ -1,0 +1,35 @@
+{
+  "visible": true,
+  "age": 60,
+  "entries": [
+    {
+      "type": "assistant",
+      "timestamp": "2026-09-24T05:00:00Z",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "Workflow",
+            "input": {
+              "description": "Run full tests",
+              "run_in_background": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call-1",
+            "content": "Workflow launched in background. Task ID: workflow-123\nYou will be notified when it completes."
+          }
+        ]
+      }
+    }
+  ]
+}

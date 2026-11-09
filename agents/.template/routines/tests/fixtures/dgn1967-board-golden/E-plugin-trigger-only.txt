@@ -1,0 +1,15 @@
+decision: publish
+-----
+10/09(금) 00:30
+
+quote::
+[진행중 티켓] 0건
+quote::end
+
+quote::
+[스탬프] Opus: 00:25 (5분~)
+quote::end
+
+quote::
+[검토]
+quote::end
