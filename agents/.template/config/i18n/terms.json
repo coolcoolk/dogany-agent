@@ -1,0 +1,132 @@
+{
+  "format": "dogany-term-registry/1",
+  "note": "DGN-1980 framework term registry: i18n keys term.<id> are kind=term (short nouns the user may rename from chat); every other key is kind=sentence and names a term with [[term:<id>]]. A pack tags its own terms in its payload config/i18n/terms.bundle.json (installed as config/packs/<pack-id>.i18n.terms.json). Reader: routines/lib/term_registry.py; chat path: routines/terms.py. The user's choice lives in config/i18n.local/<lang>.json.",
+  "schemas": {
+    "why_owner_card": {
+      "title": "\uc774 \uc77c, \uc774\ub7f0 \uc774\uc720\ub85c \ud558\ub294 \uac8c \ub9de\uc744\uae4c\uc694?",
+      "now": "\uc9c0\uae08",
+      "choice": "{index}\ubc88 \ub9de\uc544\uc694",
+      "other": "\ub2e4\ub978 \uc774\uc720\uc608\uc694",
+      "other_prompt": "\uc5b4\ub5a4 \uc774\uc720\uc778\uc9c0 \ud55c \uc904\ub85c \uc54c\ub824 \uc8fc\uc138\uc694"
+    },
+    "why_intake_v4": {
+      "symptom": "\uc99d\uc0c1",
+      "problem": "\ubb38\uc81c",
+      "why": "\uc774\uc720",
+      "direction": "\ubc29\ud5a5",
+      "targets": "\ub300\uc0c1",
+      "confirmation": "\uc774 \ubb38\uc81c\uc640 \ubc29\ud5a5\uc774 \ub9de\ub098\uc694?",
+      "direction_approval": "\ubc29\ud5a5 \uc2b9\uc778",
+      "go_ahead": "\ubc29\ud5a5 \uc2b9\uc778 (\ubc14\ub85c \uc9c4\ud589)"
+    }
+  },
+  "terms": {
+    "owner": {
+      "where": [
+        "model prose: tone guide of generated briefs (tone_guide)",
+        "model prose: session recap owner label (routines/lib/owner_term.py)"
+      ],
+      "legacy_conf": "DASHBOARD_OWNER_TERM",
+      "synonyms": {
+        "ko": [
+          "사용자",
+          "유저",
+          "주인",
+          "오너",
+          "나를 부르는 말",
+          "호칭"
+        ],
+        "en": [
+          "user",
+          "the user",
+          "owner",
+          "form of address"
+        ]
+      },
+      "examples": {
+        "ko": [
+          "[[term:owner]]의 개인 비서로서 답한다."
+        ],
+        "en": [
+          "Write as [[term:owner]]'s personal assistant."
+        ]
+      }
+    },
+    "subagent": {
+      "where": [
+        "model prose: delegation / background work talk",
+        "status board sibling term (routines/status-footer.py SIBLING_TERM)"
+      ],
+      "legacy_conf": "DASHBOARD_SIBLING_TERM",
+      "synonyms": {
+        "ko": [
+          "서브에이전트",
+          "서브 에이전트",
+          "하위 에이전트",
+          "백그라운드 에이전트",
+          "보조 에이전트"
+        ],
+        "en": [
+          "subagent",
+          "sub-agent",
+          "sibling agent",
+          "background agent",
+          "helper agent"
+        ]
+      },
+      "examples": {
+        "ko": [
+          "[[term:subagent]]에게 맡겨 둘게요.",
+          "[[term:subagent]] 작업이 끝났어요."
+        ],
+        "en": [
+          "I'll hand this to a [[term:subagent]].",
+          "The [[term:subagent]] finished."
+        ]
+      }
+    },
+    "reminder": {
+      "where": [
+        "push: one-shot reminder header (reminder_header, routines/reminder-fire.sh)"
+      ],
+      "synonyms": {
+        "ko": [
+          "리마인더",
+          "리마인드"
+        ],
+        "en": [
+          "reminder"
+        ]
+      },
+      "examples": {}
+    },
+    "workbench": {
+      "where": [
+        "card: pinned status board title (routines/status-footer.py)"
+      ],
+      "legacy_conf": "DASHBOARD_BOARD_TITLE",
+      "synonyms": {
+        "ko": [
+          "작업대",
+          "작업판",
+          "대시보드",
+          "보드"
+        ],
+        "en": [
+          "workbench",
+          "dashboard",
+          "board",
+          "status board"
+        ]
+      },
+      "examples": {
+        "ko": [
+          "[[term:workbench]] (갱신 09:00)"
+        ],
+        "en": [
+          "[[term:workbench]] (updated 09:00)"
+        ]
+      }
+    }
+  }
+}

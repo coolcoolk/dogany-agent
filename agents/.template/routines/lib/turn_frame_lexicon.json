@@ -1,0 +1,44 @@
+{
+  "_comment": "DGN-2028 turn frame lexicon (data, not code). explanation_cues label a recalled line as an uncertain explanation (read time only, never a stored class). causal/negation/hedge/historical/question drive the S4 detect-only check. topics map a causal claim to the evidence that can verify it in the current turn. problem_line_prefixes is empty until owner copy is approved (S3 then records 'no approved prefix' and never fires). frame_classes.problem-report (18:51 addendum) selects the analysis-first opening line; cue_res are boundary-anchored regexes for short cues such as 또.",
+  "slot_token_re": "\\[slot:explanation\\]|\\bslot=explanation\\b",
+  "explanation_cues": {
+    "ko": ["때문", "탓", "원인", "로 인해", "로 인한", "덕분"],
+    "en": ["because", "caused by", "due to", "the cause", "is driven by", "driven by"]
+  },
+  "causal_cues": {
+    "ko": ["때문", "탓", "원인", "로 인해", "로 인한"],
+    "en": ["because", "caused by", "due to", "the cause", "is driven by", "driven by"]
+  },
+  "negation_cues": {
+    "ko": ["아니", "않", "아닌", "없었", "없습"],
+    "en": ["not", "no longer", "never", "isn't", "wasn't", "aren't", "weren't", "doesn't", "don't", "didn't"]
+  },
+  "hedge_cues": {
+    "ko": ["일 수", "인지", "확인 중", "확인해 볼", "확인해보", "확인하겠", "아마", "추정", "가능성", "같아요", "보여요", "모르"],
+    "en": ["may", "might", "could", "possibly", "checking", "likely", "probably", "not sure", "suspect"]
+  },
+  "historical_cues": {
+    "ko": ["지난번", "예전", "당시", "저번", "과거", "지난주", "지난 주", "그때"],
+    "en": ["last time", "previously", "last week", "back then", "used to", "earlier this"]
+  },
+  "topics": {
+    "host_load": {
+      "cues": {
+        "ko": ["부하", "느려", "느린", "버벅", "팬", "메모리", "스왑"],
+        "en": ["load", "cpu", "slow", "memory", "swap", "fan"]
+      },
+      "evidence_commands": ["(^|[;&|\\s])top(\\s|$)", "(^|[;&|\\s])ps(\\s|$)", "\\buptime\\b", "\\bvm_stat\\b", "\\biostat\\b", "\\bpowermetrics\\b", "\\bhtop\\b", "\\bloadcheck\\b", "\\bsysctl\\s+vm\\.", "\\bmachine_signal\\b"],
+      "prompt_measurement": ["%CPU", "load average", "load averages", "Load Avg"]
+    }
+  },
+  "frame_classes": {
+    "problem-report": {
+      "cues": {
+        "ko": ["느려", "느린데", "맨날", "왜 이렇게", "자꾸", "또 안"],
+        "en": ["always", "again", "keeps failing", "still broken"]
+      },
+      "cue_res": ["(^|[\\s,.!?])또($|[\\s,.!?])"]
+    }
+  },
+  "problem_line_prefixes": {}
+}

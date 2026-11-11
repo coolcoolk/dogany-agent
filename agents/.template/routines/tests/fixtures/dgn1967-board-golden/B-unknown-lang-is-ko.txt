@@ -1,0 +1,62 @@
+10/09(금) 00:30
+
+[결정대기]
+fold:: dec-901 배포 순서 -> https://c.example/decision/dec-901
+물음: 어느 쪽 먼저?
+권고: 알파 먼저
+선택지:
+1. 알파
+2. 베타
+fold::end
+
+- 아이디 없는 결정
+- 옛 형식 문자열 결정
+
+quote::
+[콘솔액션] 2건
+- act-1 approve dec-901 1d
+- act-2 hold dec-902 0d
+quote::end
+
+**[백그라운드 작업]**
+quote::
+Claude Opus 5.5: 보고서 초안 · 00:18 (12분~)
+quote::end
+quote::
+모델 없는 조사 · 00:20 (10분~)
+quote::end
+quote::
+멈춘 작업 (무응답 20분+ -- 사망 추정)
+quote::end
+quote::
+테스트 실행 · 00:26 (4분~)
+quote::end
+
+quote::
+[진행중 티켓] 3건
+- T1 하나
+- T2 둘
+- T3 셋
+quote::end
+
+quote::
+[제품]
+- p: v1
+quote::end
+
+quote::
+[메모]
+- 한 줄
+quote::end
+
+quote::
+[언파크 후보] (스캔 2026-10-08 23:30)
+- DGN-1  P2  UNPARK  gate: ok
+- DGN-2 P3 UNPARK gate: ok
+quote::end
+
+quote::
+[최근 완료]
+- DGN-9001 끝난 일 (2026-10-09)
+- DGN-9002 또 끝난 일
+quote::end

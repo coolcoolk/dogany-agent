@@ -1,0 +1,57 @@
+{
+ "source": "DGN-2032 rev2, owner ruling 2026-10-14 14:12. Replies and tool lists are from real turns (a personal agent 2026-10-14 14:07 / 14:09 KST and 2026-10-12 KIPRIS; a dev agent 2026-10-13 / 09-26); blobs are output-gate-stop._tool_blob_lines of those turns.",
+ "incident_1407": {
+  "reply": "사용자, 월 39,874원이 어느 플랜인지는 검색으로 확정하지 못했습니다.\n\n확인한 수단: 약관 전문(246쪽), 웹 검색 2회(KB 상품안내 페이지 포함)를 봤습니다. 이 상품은 고양이의 나이·품종·중성화 여부로 보험료가 정해집니다. 그래서 금액만 보고 플랜을 역산할 수 있는 요율표가 공개돼 있지 않았습니다.\n\n**확인된 구조**\n- 의료비 플랜은 실속형, 기본형Ⅰ, 기본형Ⅱ, 고급형Ⅱ 네 가지입니다.\n- 여기에 보상비율(50~90%)과 자기부담금이 따로 붙고, 이 둘이 보험료를 크게 가릅니다.\n- 약관 예시에는 \"기본형Ⅱ, 보상비율 70%, 자기부담금 3만 원\"이 나옵니다. 이건 계산 예시일 뿐 사용자 플랜이라는 근거는 아닙니다.\n- 가입 후 5년 또는 3년마다 갱신되는 것으로 보입니다.\n\n월 4만 원 안팎이면 중간 이상 플랜일 가능성이 있습니다. 하지만 추정일 뿐이라 단정은 못 합니다.\n\n가장 빠른 확인법은 KB손해보험 앱이나 가입 때 받은 보험증권입니다. 증권에는 플랜명, 보상비율, 자기부담금이 적혀 있습니다. 앱에서 \"보험약관\" 버튼 위쪽의 \"보장내용\" 화면을 캡처해 보내주시면 바로 읽어드리겠습니다. 고객센터 1544-0114로 물어보셔도 됩니다.\n\nSources:\n- [KB 금쪽같은 펫보험(고양이) 상품안내](https://www.kbinsure.co.kr/CG313020001.ec)\n- [KB손해보험, 'KB금쪽같은 펫보험' 출시 - 경향신문](https://www.khan.co.kr/article/202306011103001)\n- [KB손보, 입원·통원 각각 보장 펫보험 출시 - 헤럴드경제](https://www.heraldk.com/article/2026010416584601085)",
+  "blob": "TOOL ToolSearch \nCMD grep -n -e \"39,874\" -e \"39874\" -e \"기본형Ⅱ\" -e \"고급형\" /tmp/pet.txt | head -20\nTOOL WebSearch \nTOOL Read /tmp/pet.txt\nTOOL WebSearch ",
+  "expect": "shallow"
+ },
+ "e2e_b_after_fetch_one_ask": {
+  "reply": "사용자, 월 39,874원이 어느 플랜인지는 검색으로 확정하지 못했습니다.\n\n확인한 수단: 약관 전문(246쪽), 웹 검색 2회(KB 상품안내 페이지 포함)를 봤습니다. 이 상품은 고양이의 나이·품종·중성화 여부로 보험료가 정해집니다. 그래서 금액만 보고 플랜을 역산할 수 있는 요율표가 공개돼 있지 않았습니다.\n\n**확인된 구조**\n- 의료비 플랜은 실속형, 기본형Ⅰ, 기본형Ⅱ, 고급형Ⅱ 네 가지입니다.\n- 여기에 보상비율(50~90%)과 자기부담금이 따로 붙고, 이 둘이 보험료를 크게 가릅니다.\n- 약관 예시에는 \"기본형Ⅱ, 보상비율 70%, 자기부담금 3만 원\"이 나옵니다. 이건 계산 예시일 뿐 사용자 플랜이라는 근거는 아닙니다.\n- 가입 후 5년 또는 3년마다 갱신되는 것으로 보입니다.\n\n월 4만 원 안팎이면 중간 이상 플랜일 가능성이 있습니다. 하지만 추정일 뿐이라 단정은 못 합니다.\n\nKB 상품안내 페이지를 직접 열어 봤지만 월 39,874원에 해당하는 플랜은 못 찾았습니다. 보험료가 고양이 정보를 넣어 계산하는 방식이라 공개 표가 없습니다. 증권의 플랜명 하나만 알려 주세요.\n\nSources:\n- [KB 금쪽같은 펫보험(고양이) 상품안내](https://www.kbinsure.co.kr/CG313020001.ec)\n- [KB손해보험, 'KB금쪽같은 펫보험' 출시 - 경향신문](https://www.khan.co.kr/article/202306011103001)\n- [KB손보, 입원·통원 각각 보장 펫보험 출시 - 헤럴드경제](https://www.heraldk.com/article/2026010416584601085)",
+  "blob": "TOOL WebFetch https://www.kbinsure.co.kr/CG313020001.ec\nTOOL ToolSearch \nCMD grep -n -e \"39,874\" -e \"39874\" -e \"기본형Ⅱ\" -e \"고급형\" /tmp/pet.txt | head -20\nTOOL WebSearch \nTOOL Read /tmp/pet.txt\nTOOL WebSearch ",
+  "expect": "tried"
+ },
+ "real_1409_after_fetch": {
+  "reply": "사용자, 플랜은 아직 못 찾았습니다.\n\n확인한 수단은 세 가지입니다.\n- KB 상품 안내 페이지: 내용이 깨져 있고 플랜별 보험료 표가 없었습니다. 보험료는 고양이 정보를 입력해 계산하는 방식입니다. [상품안내](https://www.kbinsure.co.kr/CG313020001.ec)\n- 웹 검색 3회: 월 39,874원에 해당하는 플랜은 나오지 않았습니다.\n- 사용자 메일함에서 KB 발신 메일을 찾았지만 없었습니다. 증권이 다른 메일로 갔거나 앱으로만 왔을 수 있습니다. 한글 검색어는 검색 도구가 처리하지 못해서 영문 도메인으로만 찾았습니다.\n\n사용자 폰에서 가입하신 화면만 남았습니다. 아래 둘 중 편하신 걸 하나만 보내주세요.\n- KB손해보험 앱에서 해당 보험의 \"보장내용\" 화면 캡처 (플랜명과 자기부담금이 나옵니다)\n- 가입 때 보셨던 웹페이지 링크나 가입 완료 화면 캡처\n\n받으면 바로 플랜과 보상비율을 읽어서 정리하겠습니다.",
+  "blob": "TOOL WebFetch https://www.kbinsure.co.kr/CG313020001.ec\nTOOL WebSearch \nTOOL Skill \nCMD cd /srv/agent && for q in \"KB손해보험\" \"펫보험\" \"금쪽같은\"; do echo \"== $q\"; .claude/skills/ag-mail-check/mail.sh search \"$q\" 10; done 2>&1 | head -50\nCMD for q in \"kbinsure\" \"direct.kbinsure\"; do echo \"== $q\"; .claude/skills/ag-mail-check/mail.sh search \"$q\" 10 2>&1 | tail -12; done",
+  "expect": null
+ },
+ "kipris_unopened": {
+  "reply": "**2. 상표는 제 쪽에서 확인을 못 했습니다**\n- 특허청 상표 검색(KIPRIS)은 제 도구로 열리지 않았고, 일반 웹 검색에서도 한국의 \"모하\"·\"MOHA\" 상표는 나오지 않았습니다.\n- 검색에 안 나왔다고 없다는 뜻은 아닙니다. 아래 순서로 사용자이 직접 한 번 보셔야 정확합니다.\n  - kipris.or.kr에서 \"모하\", \"MOHA\", \"모하 MOHA\"를 각각 검색합니다.\n  - 상품류는 42류(소프트웨어 개발·IT 서비스), 35류(사업·광고), 9류(소프트웨어)를 봅니다.\n  - 출원·등록된 건이 있으면 지정상품에 IT 서비스가 들어 있는지 봅니다.\n- IT 서비스 개발과 SI를 하실 거면 42류가 핵심이고, 서비스를 앱이나 제품으로 내놓으면 9류가 더 붙습니다.\n\n- KIPRIS 결과 화면을 캡처해서 보내 주시면 겹치는 상표가 있는지 같이 봐 드리겠습니다.\n\nSources:\n- [GoDaddy moha.co 판매 페이지](https://forsale.godaddy.com/forsale/moha.co)\n- [특허청 KIPRIS](https://www.kipris.or.kr)",
+  "blob": "TOOL ToolSearch \nCMD whois moha.co 2>&1 | head -40; echo ---; dig +short moha.co A NS 2>&1 | head\nCMD whois -h whois.registry.co moha.co 2>&1 | head -30; echo ---; dig +short moha.co A; dig +short moha.co MX\nTOOL WebSearch \nTOOL WebFetch https://moha.co\nTOOL WebFetch https://forsale.godaddy.com/forsale/moha.co",
+  "expect": "unopened"
+ },
+ "kipris_browsed": {
+  "reply": "**2. 상표는 제 쪽에서 확인을 못 했습니다**\n- 특허청 상표 검색(KIPRIS)은 제 도구로 열리지 않았고, 일반 웹 검색에서도 한국의 \"모하\"·\"MOHA\" 상표는 나오지 않았습니다.\n- 검색에 안 나왔다고 없다는 뜻은 아닙니다. 아래 순서로 사용자이 직접 한 번 보셔야 정확합니다.\n  - kipris.or.kr에서 \"모하\", \"MOHA\", \"모하 MOHA\"를 각각 검색합니다.\n  - 상품류는 42류(소프트웨어 개발·IT 서비스), 35류(사업·광고), 9류(소프트웨어)를 봅니다.\n  - 출원·등록된 건이 있으면 지정상품에 IT 서비스가 들어 있는지 봅니다.\n- IT 서비스 개발과 SI를 하실 거면 42류가 핵심이고, 서비스를 앱이나 제품으로 내놓으면 9류가 더 붙습니다.\n\n- KIPRIS 결과 화면을 캡처해서 보내 주시면 겹치는 상표가 있는지 같이 봐 드리겠습니다.\n\nSources:\n- [GoDaddy moha.co 판매 페이지](https://forsale.godaddy.com/forsale/moha.co)\n- [특허청 KIPRIS](https://www.kipris.or.kr)",
+  "blob": "TOOL ToolSearch \nCMD whois moha.co 2>&1 | head -40; echo ---; dig +short moha.co A NS 2>&1 | head\nCMD whois -h whois.registry.co moha.co 2>&1 | head -30; echo ---; dig +short moha.co A; dig +short moha.co MX\nTOOL WebSearch \nTOOL WebFetch https://moha.co\nTOOL WebFetch https://forsale.godaddy.com/forsale/moha.co\nCMD cd /tmp && agent-browser open \"https://www.kipris.or.kr/khome/main.do\" 2>&1 | tail -5",
+  "expect": "tried"
+ },
+ "dev_codex_shallow": {
+  "reply": "제가 쓰려던 건 `codex cloud exec`라는 명령어 방식입니다. 찾아본 공개 안내서(2026년 기준)에도 이 방식이 지금 쓰는 방법으로 나와 있습니다. 다만 아직 '실험 기능' 딱지가 붙어 있고, 사용자 환경의 ID 형식(ccarenv_…)은 어떤 안내서에도 나오지 않습니다. 사용자 말씀대로, 웹에서 새로 만든 환경이 이 명령어가 쓰는 예전 방식과 따로 노는 것일 수 있습니다 [추정].\n\n새 방식으로 작업을 시작하는 길이 따로 있다면 아마 둘 중 하나입니다.\n\n1. **GitHub에서 @codex 부르기:** 비공개 저장소의 이슈나 PR에 \"@codex\"를 달아 작업을 시키면, 결과가 PR로 돌아오는 방식입니다. 이 방식이면 제가 GitHub 명령어로 이슈를 만들어 자동으로 보낼 수 있습니다.\n2. **Codex 앱 서버 방식:** 이 Mac에 Codex 앱 서버를 띄워 원격으로 보내는 방식입니다. Mac에 상주 프로그램이 하나 늘어납니다.\n\n웹 Codex 화면에서 작업을 시작하는 버튼이나 연동 메뉴에 GitHub나 Slack이 보이시면 1번이 맞습니다. 화면에 보이는 걸 알려 주시면 그 방식으로 dispatcher를 고치겠습니다.\n\n[[OPTIONS]]\n1. GitHub @codex 방식\n2. 앱 서버 방식\n3. 화면 사진 보내기\n\nSources:\n- [Codex Cloud Setup: Environments and the codex cloud CLI](https://www.gptmap.org/en/posts/codex-cloud-setup)\n- [Codex Cloud Environments: Setup Scripts, Container Caching, Secrets](https://codex.danielvaughan.com/2026/05/31/codex-cloud-environments-setup-scripts-caching-secrets-codex-universal/)\n- [Codex Cloud Task Application: From Slack Dispatch to Reviewed Diff Merge](https://codex.danielvaughan.com/2026/04/08/codex-cloud-task-application/)\n- [How to use Codex Cloud - Flavio Copes](https://flaviocopes.com/codex-cloud/)",
+  "blob": "CMD codex --help 2>&1 | sed -n '1,40p'; codex exec --help 2>&1 | grep -iE \"cloud|remote|env\" | head -8\nCMD timeout 30 codex features list 2>&1 | grep -iE \"cloud|remote|env\" | head -10; codex exec --help 2>&1 | grep -iE \"^\\s+--[a-z-]+\" | head -40 | tr -s ' ' | cut -c1-80\nTOOL ToolSearch \nTOOL WebSearch ",
+  "expect": "shallow"
+ },
+ "dev_credit_tried": {
+  "reply": "맞습니다, 둘은 다른 것 같습니다. 그런데 클라우드 세션 공식 문서를 끝까지 읽어 봤는데, 따로 쓰는 \"클라우드 세션 크레딧\"은 나오지 않습니다. 문서에 있는 내용은 이렇습니다.\n\n- 클라우드 세션은 사용자 계정의 다른 Claude·Claude Code 사용과 같은 사용 한도를 나눠 씁니다.\n- 클라우드 가상 머신 자체에는 따로 요금이 붙지 않습니다.\n\n그래서 방금 시험은 문서대로라면 사용자 요금제 한도에서 쓰였고, 받으신 크레딧은 줄지 않은 게 맞습니다.\n\n받으신 크레딧은 문서에 아직 없는 신규 프로모션이거나, 특정 곳에서 시작한 세션에만 적용되는 것일 수 있습니다. 예를 들면 claude.ai/code 웹이나 앱, 데스크톱 앱에서 여는 세션입니다. 제가 이 대화에서 띄운 건 터미널 쪽에서 만든 클라우드 세션이라 대상이 아닐 가능성이 있습니다. 다만 이건 문서로 확인한 게 아니라 추정입니다.\n\n크레딧이 보이는 화면(안내 메일이나 설정 화면)을 캡처해서 보내 주시면, 어떤 조건으로 쓰이는지 정확히 확인해서 그 조건에 맞는 방식으로 서브에이전트들을 보내겠습니다.\n\n출처:\n- [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web)\n- [Manage usage credits for paid Claude plans](https://support.claude.com/en/articles/12429409-manage-usage-credits-for-paid-claude-plans)",
+  "blob": "TOOL WebSearch \nTOOL ToolSearch \nTOOL WebFetch https://code.claude.com/docs/en/claude-code-on-the-web",
+  "expect": "tried"
+ },
+ "multi_after_fetch": {
+  "reply": "사용자, 월 39,874원이 어느 플랜인지는 검색으로 확정하지 못했습니다.\n\n확인한 수단: 약관 전문(246쪽), 웹 검색 2회(KB 상품안내 페이지 포함)를 봤습니다. 이 상품은 고양이의 나이·품종·중성화 여부로 보험료가 정해집니다. 그래서 금액만 보고 플랜을 역산할 수 있는 요율표가 공개돼 있지 않았습니다.\n\n**확인된 구조**\n- 의료비 플랜은 실속형, 기본형Ⅰ, 기본형Ⅱ, 고급형Ⅱ 네 가지입니다.\n- 여기에 보상비율(50~90%)과 자기부담금이 따로 붙고, 이 둘이 보험료를 크게 가릅니다.\n- 약관 예시에는 \"기본형Ⅱ, 보상비율 70%, 자기부담금 3만 원\"이 나옵니다. 이건 계산 예시일 뿐 사용자 플랜이라는 근거는 아닙니다.\n- 가입 후 5년 또는 3년마다 갱신되는 것으로 보입니다.\n\n월 4만 원 안팎이면 중간 이상 플랜일 가능성이 있습니다. 하지만 추정일 뿐이라 단정은 못 합니다.\n\n가장 빠른 확인법은 KB손해보험 앱이나 가입 때 받은 보험증권입니다. 증권에는 플랜명, 보상비율, 자기부담금이 적혀 있습니다. 앱에서 \"보험약관\" 버튼 위쪽의 \"보장내용\" 화면을 캡처해 보내주시면 바로 읽어드리겠습니다. 고객센터 1544-0114로 물어보셔도 됩니다.\n\nSources:\n- [KB 금쪽같은 펫보험(고양이) 상품안내](https://www.kbinsure.co.kr/CG313020001.ec)\n- [KB손해보험, 'KB금쪽같은 펫보험' 출시 - 경향신문](https://www.khan.co.kr/article/202306011103001)\n- [KB손보, 입원·통원 각각 보장 펫보험 출시 - 헤럴드경제](https://www.heraldk.com/article/2026010416584601085)",
+  "blob": "TOOL WebFetch https://www.kbinsure.co.kr/CG313020001.ec\nTOOL ToolSearch \nCMD grep -n -e \"39,874\" -e \"39874\" -e \"기본형Ⅱ\" -e \"고급형\" /tmp/pet.txt | head -20\nTOOL WebSearch \nTOOL Read /tmp/pet.txt\nTOOL WebSearch ",
+  "expect": "multi"
+ },
+ "private_after_tries": {
+  "reply": "KB 상품안내 페이지와 가입 페이지를 열어 봤지만 플랜명은 로그인해야 보입니다. 앱의 보장내용 화면 캡처 하나만 보내 주세요.",
+  "blob": "TOOL WebSearch \nTOOL WebFetch https://www.kbinsure.co.kr/CG313020001.ec\nCMD agent-browser open \"https://direct.kbinsure.co.kr/\"",
+  "expect": "tried"
+ },
+ "no_ask": [
+  "사용자 말씀은 \"앱에서 캡처해 보내주시면 됩니다\"였습니다.",
+  "> 앱에서 \"보장내용\" 화면을 캡처해 보내주시면 바로 읽어드리겠습니다.",
+  "```text\n고객센터 1544-0114로 물어보셔도 됩니다.\n```",
+  "`고객센터 1544-0114로 물어보셔도 됩니다`",
+  "KB 상품안내 페이지를 열어 확인했습니다. 플랜은 기본형Ⅱ입니다.",
+  "[[OPTIONS: 앱 화면 캡처해 보내주시면 됩니다 | 완료]]"
+ ],
+ "means_classes": "TOOL WebSearch \nTOOL mcp__exa__web_search \nTOOL WebFetch https://a.example.com/x\nTOOL mcp__cua-driver__browser_navigate https://b.co.kr\nCMD agent-browser open \"https://c.or.kr\"\nCMD curl -s https://d.io/api\nCMD grep -n x /tmp/a.txt\nTOOL ToolSearch \nTOOL Read /tmp/a.txt"
+}

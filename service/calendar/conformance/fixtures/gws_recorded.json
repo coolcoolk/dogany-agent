@@ -1,0 +1,1836 @@
+{
+ "discovery": {
+  "calendar_v3.json": {
+   "rootUrl": "https://www.googleapis.com/",
+   "servicePath": "calendar/v3/"
+  },
+  "tasks_v1.json": {
+   "rootUrl": "https://tasks.googleapis.com/",
+   "servicePath": ""
+  }
+ },
+ "gws_version": "gws 0.13.2\nThis is not an officially supported Google product.",
+ "records": [
+  {
+   "id": "cal.calendars.get",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "description": "[dogany:m] -- x",
+     "etag": "\"e1\"",
+     "id": "c0ffee@group.calendar.google.com",
+     "kind": "calendar#calendar",
+     "summary": "Dogany",
+     "timeZone": "Asia/Seoul"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"description\": \"[dogany:m] -- x\",\n  \"etag\": \"\\\"e1\\\"\",\n  \"id\": \"c0ffee@group.calendar.google.com\",\n  \"kind\": \"calendar#calendar\",\n  \"summary\": \"Dogany\",\n  \"timeZone\": \"Asia/Seoul\"\n}\n"
+  },
+  {
+   "id": "cal.calendars.insert",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "description": "[dogany:m] -- x",
+     "etag": "\"e1\"",
+     "id": "c0ffee@group.calendar.google.com",
+     "kind": "calendar#calendar",
+     "summary": "Dogany",
+     "timeZone": "Asia/Seoul"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "description": "[dogany:m] -- x",
+      "summary": "Dogany",
+      "timeZone": "Asia/Seoul"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "POST",
+     "path": "/calendar/v3/calendars",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"description\": \"[dogany:m] -- x\",\n  \"etag\": \"\\\"e1\\\"\",\n  \"id\": \"c0ffee@group.calendar.google.com\",\n  \"kind\": \"calendar#calendar\",\n  \"summary\": \"Dogany\",\n  \"timeZone\": \"Asia/Seoul\"\n}\n"
+  },
+  {
+   "id": "cal.calendars.patch",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "description": "[dogany:m] -- x",
+     "etag": "\"e1\"",
+     "id": "c0ffee@group.calendar.google.com",
+     "kind": "calendar#calendar",
+     "summary": "Dogany",
+     "timeZone": "Asia/Seoul"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "description": "mine\n[dogany:m] -- x"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PATCH",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"description\": \"[dogany:m] -- x\",\n  \"etag\": \"\\\"e1\\\"\",\n  \"id\": \"c0ffee@group.calendar.google.com\",\n  \"kind\": \"calendar#calendar\",\n  \"summary\": \"Dogany\",\n  \"timeZone\": \"Asia/Seoul\"\n}\n"
+  },
+  {
+   "id": "cal.calendars.delete",
+   "kind": "delete",
+   "kit": {
+    "returns": true
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": ""
+  },
+  {
+   "id": "cal.calendarList.list",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "description": "[dogany:m] -- x",
+       "etag": "\"e1\"",
+       "id": "c0ffee@group.calendar.google.com",
+       "kind": "calendar#calendar",
+       "summary": "Dogany",
+       "timeZone": "Asia/Seoul"
+      }
+     ],
+     "kind": "calendar#calendarList"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/users/me/calendarList",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"description\": \"[dogany:m] -- x\",\n      \"etag\": \"\\\"e1\\\"\",\n      \"id\": \"c0ffee@group.calendar.google.com\",\n      \"kind\": \"calendar#calendar\",\n      \"summary\": \"Dogany\",\n      \"timeZone\": \"Asia/Seoul\"\n    }\n  ],\n  \"kind\": \"calendar#calendarList\"\n}\n"
+  },
+  {
+   "id": "cal.events.get",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "colorId": "5",
+     "end": {
+      "dateTime": "2026-10-08T13:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "etag": "\"3456789012345678\"",
+     "extendedProperties": {
+      "private": {
+       "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+       "version": "3"
+      }
+     },
+     "htmlLink": "https://www.google.com/calendar/event?eid=x",
+     "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "kind": "calendar#event",
+     "start": {
+      "dateTime": "2026-10-08T12:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "status": "confirmed",
+     "summary": "Lunch"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"colorId\": \"5\",\n  \"end\": {\n    \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"etag\": \"\\\"3456789012345678\\\"\",\n  \"extendedProperties\": {\n    \"private\": {\n      \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n      \"version\": \"3\"\n    }\n  },\n  \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n  \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n  \"kind\": \"calendar#event\",\n  \"start\": {\n    \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"status\": \"confirmed\",\n  \"summary\": \"Lunch\"\n}\n"
+  },
+  {
+   "id": "cal.events.insert",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "colorId": "5",
+     "end": {
+      "dateTime": "2026-10-08T13:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "etag": "\"3456789012345678\"",
+     "extendedProperties": {
+      "private": {
+       "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+       "version": "3"
+      }
+     },
+     "htmlLink": "https://www.google.com/calendar/event?eid=x",
+     "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "kind": "calendar#event",
+     "start": {
+      "dateTime": "2026-10-08T12:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "status": "confirmed",
+     "summary": "Lunch"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "colorId": "5",
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+        "version": "3"
+       }
+      },
+      "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "status": "confirmed",
+      "summary": "Lunch"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "POST",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"colorId\": \"5\",\n  \"end\": {\n    \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"etag\": \"\\\"3456789012345678\\\"\",\n  \"extendedProperties\": {\n    \"private\": {\n      \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n      \"version\": \"3\"\n    }\n  },\n  \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n  \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n  \"kind\": \"calendar#event\",\n  \"start\": {\n    \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"status\": \"confirmed\",\n  \"summary\": \"Lunch\"\n}\n"
+  },
+  {
+   "id": "cal.events.update",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "colorId": "5",
+     "end": {
+      "dateTime": "2026-10-08T13:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "etag": "\"3456789012345678\"",
+     "extendedProperties": {
+      "private": {
+       "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+       "version": "3"
+      }
+     },
+     "htmlLink": "https://www.google.com/calendar/event?eid=x",
+     "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "kind": "calendar#event",
+     "start": {
+      "dateTime": "2026-10-08T12:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "status": "cancelled",
+     "summary": "Lunch"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "colorId": "5",
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+        "version": "3"
+       }
+      },
+      "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "status": "cancelled",
+      "summary": "Lunch"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PUT",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"colorId\": \"5\",\n  \"end\": {\n    \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"etag\": \"\\\"3456789012345678\\\"\",\n  \"extendedProperties\": {\n    \"private\": {\n      \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n      \"version\": \"3\"\n    }\n  },\n  \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n  \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n  \"kind\": \"calendar#event\",\n  \"start\": {\n    \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"status\": \"cancelled\",\n  \"summary\": \"Lunch\"\n}\n"
+  },
+  {
+   "id": "cal.events.patch",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "colorId": "5",
+     "end": {
+      "dateTime": "2026-10-08T13:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "etag": "\"3456789012345678\"",
+     "extendedProperties": {
+      "private": {
+       "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+       "version": "3"
+      }
+     },
+     "htmlLink": "https://www.google.com/calendar/event?eid=x",
+     "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "kind": "calendar#event",
+     "start": {
+      "dateTime": "2026-10-08T12:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "status": "confirmed",
+     "summary": "Lunch"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+        "version": "0"
+       }
+      }
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PATCH",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"colorId\": \"5\",\n  \"end\": {\n    \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"etag\": \"\\\"3456789012345678\\\"\",\n  \"extendedProperties\": {\n    \"private\": {\n      \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n      \"version\": \"3\"\n    }\n  },\n  \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n  \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n  \"kind\": \"calendar#event\",\n  \"start\": {\n    \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"status\": \"confirmed\",\n  \"summary\": \"Lunch\"\n}\n"
+  },
+  {
+   "id": "cal.events.list.full",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "colorId": "5",
+       "end": {
+        "dateTime": "2026-10-08T13:00:00+09:00",
+        "timeZone": "Asia/Seoul"
+       },
+       "etag": "\"3456789012345678\"",
+       "extendedProperties": {
+        "private": {
+         "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+         "version": "3"
+        }
+       },
+       "htmlLink": "https://www.google.com/calendar/event?eid=x",
+       "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+       "kind": "calendar#event",
+       "start": {
+        "dateTime": "2026-10-08T12:00:00+09:00",
+        "timeZone": "Asia/Seoul"
+       },
+       "status": "confirmed",
+       "summary": "Lunch"
+      }
+     ],
+     "kind": "calendar#events",
+     "nextSyncToken": "CPDAlvWDx70CEPDAlvWDx70CGAU="
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "maxResults",
+       "250"
+      ],
+      [
+       "showDeleted",
+       "true"
+      ],
+      [
+       "singleEvents",
+       "true"
+      ]
+     ]
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"colorId\": \"5\",\n      \"end\": {\n        \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n        \"timeZone\": \"Asia/Seoul\"\n      },\n      \"etag\": \"\\\"3456789012345678\\\"\",\n      \"extendedProperties\": {\n        \"private\": {\n          \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n          \"version\": \"3\"\n        }\n      },\n      \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n      \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n      \"kind\": \"calendar#event\",\n      \"start\": {\n        \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n        \"timeZone\": \"Asia/Seoul\"\n      },\n      \"status\": \"confirmed\",\n      \"summary\": \"Lunch\"\n    }\n  ],\n  \"kind\": \"calendar#events\",\n  \"nextSyncToken\": \"CPDAlvWDx70CEPDAlvWDx70CGAU=\"\n}\n"
+  },
+  {
+   "id": "cal.events.list.sync",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [],
+     "kind": "calendar#events",
+     "nextPageToken": "EjgKMDAwMDAwMDAwMDAwMDAwMA=="
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "maxResults",
+       "250"
+      ],
+      [
+       "syncToken",
+       "CPDAlvWDx70CEPDAlvWDx70CGAU="
+      ],
+      [
+       "singleEvents",
+       "true"
+      ],
+      [
+       "pageToken",
+       "EjgKMDAwMDAwMDAwMDAwMDAwMA=="
+      ]
+     ]
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [],\n  \"kind\": \"calendar#events\",\n  \"nextPageToken\": \"EjgKMDAwMDAwMDAwMDAwMDAwMA==\"\n}\n"
+  },
+  {
+   "id": "cal.events.list.reconcile",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "colorId": "5",
+       "end": {
+        "dateTime": "2026-10-08T13:00:00+09:00",
+        "timeZone": "Asia/Seoul"
+       },
+       "etag": "\"3456789012345678\"",
+       "extendedProperties": {
+        "private": {
+         "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+         "version": "3"
+        }
+       },
+       "htmlLink": "https://www.google.com/calendar/event?eid=x",
+       "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+       "kind": "calendar#event",
+       "start": {
+        "dateTime": "2026-10-08T12:00:00+09:00",
+        "timeZone": "Asia/Seoul"
+       },
+       "status": "confirmed",
+       "summary": "Lunch"
+      }
+     ],
+     "kind": "calendar#events"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "singleEvents",
+       "true"
+      ],
+      [
+       "maxResults",
+       "250"
+      ],
+      [
+       "pageToken",
+       "EjgKMDAwMDAwMDAwMDAwMDAwMA=="
+      ],
+      [
+       "showDeleted",
+       "true"
+      ]
+     ]
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"colorId\": \"5\",\n      \"end\": {\n        \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n        \"timeZone\": \"Asia/Seoul\"\n      },\n      \"etag\": \"\\\"3456789012345678\\\"\",\n      \"extendedProperties\": {\n        \"private\": {\n          \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n          \"version\": \"3\"\n        }\n      },\n      \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n      \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n      \"kind\": \"calendar#event\",\n      \"start\": {\n        \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n        \"timeZone\": \"Asia/Seoul\"\n      },\n      \"status\": \"confirmed\",\n      \"summary\": \"Lunch\"\n    }\n  ],\n  \"kind\": \"calendar#events\"\n}\n"
+  },
+  {
+   "id": "tasks.tasklists.get",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "etag": "\"t1\"",
+     "id": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "kind": "tasks#taskList",
+     "title": "Dogany",
+     "updated": "2026-10-01T00:00:00.000Z"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/tasks/v1/users/@me/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"etag\": \"\\\"t1\\\"\",\n  \"id\": \"MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow\",\n  \"kind\": \"tasks#taskList\",\n  \"title\": \"Dogany\",\n  \"updated\": \"2026-10-01T00:00:00.000Z\"\n}\n"
+  },
+  {
+   "id": "tasks.tasklists.list",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "etag": "\"t1\"",
+       "id": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+       "kind": "tasks#taskList",
+       "title": "Dogany",
+       "updated": "2026-10-01T00:00:00.000Z"
+      }
+     ],
+     "kind": "tasks#taskLists"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/tasks/v1/users/@me/lists",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"etag\": \"\\\"t1\\\"\",\n      \"id\": \"MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow\",\n      \"kind\": \"tasks#taskList\",\n      \"title\": \"Dogany\",\n      \"updated\": \"2026-10-01T00:00:00.000Z\"\n    }\n  ],\n  \"kind\": \"tasks#taskLists\"\n}\n"
+  },
+  {
+   "id": "tasks.tasklists.insert",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "etag": "\"t1\"",
+     "id": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "kind": "tasks#taskList",
+     "title": "Dogany",
+     "updated": "2026-10-01T00:00:00.000Z"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "title": "Dogany"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "POST",
+     "path": "/tasks/v1/users/@me/lists",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"etag\": \"\\\"t1\\\"\",\n  \"id\": \"MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow\",\n  \"kind\": \"tasks#taskList\",\n  \"title\": \"Dogany\",\n  \"updated\": \"2026-10-01T00:00:00.000Z\"\n}\n"
+  },
+  {
+   "id": "tasks.tasklists.update",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "etag": "\"t1\"",
+     "id": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "kind": "tasks#taskList",
+     "title": "Dogany",
+     "updated": "2026-10-01T00:00:00.000Z"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "id": "MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+      "title": "Dogany checklist"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PUT",
+     "path": "/tasks/v1/users/@me/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"etag\": \"\\\"t1\\\"\",\n  \"id\": \"MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow\",\n  \"kind\": \"tasks#taskList\",\n  \"title\": \"Dogany\",\n  \"updated\": \"2026-10-01T00:00:00.000Z\"\n}\n"
+  },
+  {
+   "id": "tasks.tasklists.delete",
+   "kind": "delete",
+   "kit": {
+    "returns": true
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/users/@me/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": ""
+  },
+  {
+   "id": "tasks.tasks.get",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "due": "2026-10-08T00:00:00.000Z",
+     "etag": "\"LTE2MjQ0NTY3OA\"",
+     "id": "dGFza18xMjM0NTY3ODkw",
+     "kind": "tasks#task",
+     "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+     "status": "needsAction",
+     "title": "Buy milk"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"due\": \"2026-10-08T00:00:00.000Z\",\n  \"etag\": \"\\\"LTE2MjQ0NTY3OA\\\"\",\n  \"id\": \"dGFza18xMjM0NTY3ODkw\",\n  \"kind\": \"tasks#task\",\n  \"notes\": \"[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]\",\n  \"status\": \"needsAction\",\n  \"title\": \"Buy milk\"\n}\n"
+  },
+  {
+   "id": "tasks.tasks.insert",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "due": "2026-10-08T00:00:00.000Z",
+     "etag": "\"LTE2MjQ0NTY3OA\"",
+     "id": "dGFza18xMjM0NTY3ODkw",
+     "kind": "tasks#task",
+     "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+     "status": "needsAction",
+     "title": "Buy milk"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "due": "2026-10-08T00:00:00.000Z",
+      "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+      "status": "needsAction",
+      "title": "Buy milk"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "POST",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"due\": \"2026-10-08T00:00:00.000Z\",\n  \"etag\": \"\\\"LTE2MjQ0NTY3OA\\\"\",\n  \"id\": \"dGFza18xMjM0NTY3ODkw\",\n  \"kind\": \"tasks#task\",\n  \"notes\": \"[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]\",\n  \"status\": \"needsAction\",\n  \"title\": \"Buy milk\"\n}\n"
+  },
+  {
+   "id": "tasks.tasks.update",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "due": "2026-10-08T00:00:00.000Z",
+     "etag": "\"LTE2MjQ0NTY3OA\"",
+     "id": "dGFza18xMjM0NTY3ODkw",
+     "kind": "tasks#task",
+     "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+     "status": "needsAction",
+     "title": "Buy milk"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "due": "2026-10-08T00:00:00.000Z",
+      "id": "dGFza18xMjM0NTY3ODkw",
+      "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+      "status": "needsAction",
+      "title": "Buy milk"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PUT",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"due\": \"2026-10-08T00:00:00.000Z\",\n  \"etag\": \"\\\"LTE2MjQ0NTY3OA\\\"\",\n  \"id\": \"dGFza18xMjM0NTY3ODkw\",\n  \"kind\": \"tasks#task\",\n  \"notes\": \"[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]\",\n  \"status\": \"needsAction\",\n  \"title\": \"Buy milk\"\n}\n"
+  },
+  {
+   "id": "tasks.tasks.delete",
+   "kind": "delete",
+   "kit": {
+    "returns": true
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": ""
+  },
+  {
+   "id": "tasks.tasks.list.sentinel",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "due": "2026-10-08T00:00:00.000Z",
+       "etag": "\"LTE2MjQ0NTY3OA\"",
+       "id": "dGFza18xMjM0NTY3ODkw",
+       "kind": "tasks#task",
+       "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+       "status": "needsAction",
+       "title": "Buy milk"
+      }
+     ],
+     "kind": "tasks#tasks"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks",
+     "query": [
+      [
+       "showDeleted",
+       "false"
+      ],
+      [
+       "showHidden",
+       "true"
+      ],
+      [
+       "pageToken",
+       "EjgKMDAwMDAwMDAwMDAwMDAwMA=="
+      ],
+      [
+       "maxResults",
+       "100"
+      ],
+      [
+       "showCompleted",
+       "true"
+      ]
+     ]
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"due\": \"2026-10-08T00:00:00.000Z\",\n      \"etag\": \"\\\"LTE2MjQ0NTY3OA\\\"\",\n      \"id\": \"dGFza18xMjM0NTY3ODkw\",\n      \"kind\": \"tasks#task\",\n      \"notes\": \"[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]\",\n      \"status\": \"needsAction\",\n      \"title\": \"Buy milk\"\n    }\n  ],\n  \"kind\": \"tasks#tasks\"\n}\n"
+  },
+  {
+   "id": "tasks.tasks.list.pull",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "items": [
+      {
+       "due": "2026-10-08T00:00:00.000Z",
+       "etag": "\"LTE2MjQ0NTY3OA\"",
+       "id": "dGFza18xMjM0NTY3ODkw",
+       "kind": "tasks#task",
+       "notes": "[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]",
+       "status": "needsAction",
+       "title": "Buy milk"
+      }
+     ],
+     "kind": "tasks#tasks",
+     "nextPageToken": "EjgKMDAwMDAwMDAwMDAwMDAwMA=="
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks",
+     "query": [
+      [
+       "showHidden",
+       "true"
+      ],
+      [
+       "updatedMin",
+       "2026-10-01T00:00:00.000Z"
+      ],
+      [
+       "maxResults",
+       "100"
+      ],
+      [
+       "showDeleted",
+       "true"
+      ],
+      [
+       "showCompleted",
+       "true"
+      ]
+     ]
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"items\": [\n    {\n      \"due\": \"2026-10-08T00:00:00.000Z\",\n      \"etag\": \"\\\"LTE2MjQ0NTY3OA\\\"\",\n      \"id\": \"dGFza18xMjM0NTY3ODkw\",\n      \"kind\": \"tasks#task\",\n      \"notes\": \"[ulid:01HX7K2M9Q4R8S5T6V7W8Y9Z0B]\",\n      \"status\": \"needsAction\",\n      \"title\": \"Buy milk\"\n    }\n  ],\n  \"kind\": \"tasks#tasks\",\n  \"nextPageToken\": \"EjgKMDAwMDAwMDAwMDAwMDAwMA==\"\n}\n"
+  },
+  {
+   "id": "enc.path.symbols",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "colorId": "5",
+     "end": {
+      "dateTime": "2026-10-08T13:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "etag": "\"3456789012345678\"",
+     "extendedProperties": {
+      "private": {
+       "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+       "version": "3"
+      }
+     },
+     "htmlLink": "https://www.google.com/calendar/event?eid=x",
+     "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "kind": "calendar#event",
+     "start": {
+      "dateTime": "2026-10-08T12:00:00+09:00",
+      "timeZone": "Asia/Seoul"
+     },
+     "status": "confirmed",
+     "summary": "Lunch"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/a%2Eb%2Dc%5Fd%7Ee%2Ff%2Bg%20h%40x/events/x%25y%3Az",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"colorId\": \"5\",\n  \"end\": {\n    \"dateTime\": \"2026-10-08T13:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"etag\": \"\\\"3456789012345678\\\"\",\n  \"extendedProperties\": {\n    \"private\": {\n      \"ulid\": \"01HX7K2M9Q4R8S5T6V7W8Y9Z0A\",\n      \"version\": \"3\"\n    }\n  },\n  \"htmlLink\": \"https://www.google.com/calendar/event?eid=x\",\n  \"id\": \"dgn01hx7k2m9q4r8s5t6v7w8y9z0a\",\n  \"kind\": \"calendar#event\",\n  \"start\": {\n    \"dateTime\": \"2026-10-08T12:00:00+09:00\",\n    \"timeZone\": \"Asia/Seoul\"\n  },\n  \"status\": \"confirmed\",\n  \"summary\": \"Lunch\"\n}\n"
+  },
+  {
+   "id": "enc.path.unicode",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "description": "[dogany:m] -- x",
+     "etag": "\"e1\"",
+     "id": "c0ffee@group.calendar.google.com",
+     "kind": "calendar#calendar",
+     "summary": "Dogany",
+     "timeZone": "Asia/Seoul"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/ko%C3%A9%EA%B0%80%40group%2Ecalendar%2Egoogle%2Ecom",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"description\": \"[dogany:m] -- x\",\n  \"etag\": \"\\\"e1\\\"\",\n  \"id\": \"c0ffee@group.calendar.google.com\",\n  \"kind\": \"calendar#calendar\",\n  \"summary\": \"Dogany\",\n  \"timeZone\": \"Asia/Seoul\"\n}\n"
+  },
+  {
+   "id": "err.events.get.410.deleted",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 410,
+     "message": "API error 410 deleted: Resource has been deleted",
+     "reason": "deleted"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 410,\n    \"message\": \"Resource has been deleted\",\n    \"reason\": \"deleted\"\n  }\n}\n"
+  },
+  {
+   "id": "err.calendars.delete.410.deleted",
+   "kind": "delete",
+   "kit": {
+    "raises": {
+     "http_code": 410,
+     "message": "API error 410: Resource has been deleted",
+     "reason": "deleted"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 410,\n    \"message\": \"Resource has been deleted\",\n    \"reason\": \"deleted\"\n  }\n}\n"
+  },
+  {
+   "id": "err.tasks.delete.410.deleted",
+   "kind": "delete",
+   "kit": {
+    "raises": {
+     "http_code": 410,
+     "message": "API error 410: Resource has been deleted",
+     "reason": "deleted"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 410,\n    \"message\": \"Resource has been deleted\",\n    \"reason\": \"deleted\"\n  }\n}\n"
+  },
+  {
+   "id": "err.tasks.delete.404",
+   "kind": "delete",
+   "kit": {
+    "raises": {
+     "http_code": 404,
+     "message": "API error 404: Requested entity was not found.",
+     "reason": "notFound"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"Requested entity was not found.\",\n    \"reason\": \"notFound\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.list.410.fullSync",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 410,
+     "message": "API error 410 fullSyncRequired: Sync token is no longer valid, a full sync is required.",
+     "reason": "fullSyncRequired"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "singleEvents",
+       "true"
+      ],
+      [
+       "syncToken",
+       "CPDAlvWDx70CEPDAlvWDx70CGAU="
+      ],
+      [
+       "maxResults",
+       "250"
+      ]
+     ]
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 410,\n    \"message\": \"Sync token is no longer valid, a full sync is required.\",\n    \"reason\": \"fullSyncRequired\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.list.400.invalid",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 invalid: Invalid sync token value.",
+     "reason": "invalid"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "syncToken",
+       "CPDAlvWDx70CEPDAlvWDx70CGAU="
+      ],
+      [
+       "maxResults",
+       "250"
+      ],
+      [
+       "singleEvents",
+       "true"
+      ]
+     ]
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid sync token value.\",\n    \"reason\": \"invalid\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.list.400.badRequest",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 badRequest: Bad Request",
+     "reason": "badRequest"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": [
+      [
+       "singleEvents",
+       "true"
+      ],
+      [
+       "maxResults",
+       "250"
+      ],
+      [
+       "syncToken",
+       "CPDAlvWDx70CEPDAlvWDx70CGAU="
+      ]
+     ]
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Bad Request\",\n    \"reason\": \"badRequest\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.403.rateLimit",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 403,
+     "message": "API error 403 rateLimitExceeded: Rate Limit Exceeded",
+     "reason": "rateLimitExceeded"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Rate Limit Exceeded\",\n    \"reason\": \"rateLimitExceeded\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.403.forbidden",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 403,
+     "message": "API error 403 forbidden: Forbidden",
+     "reason": "forbidden"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Forbidden\",\n    \"reason\": \"forbidden\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.403.insufficient",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 403,
+     "message": "API error 403 insufficientPermissions: Request had insufficient authentication scopes.",
+     "reason": "insufficientPermissions"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 403,\n    \"message\": \"Request had insufficient authentication scopes.\",\n    \"reason\": \"insufficientPermissions\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.429",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 429,
+     "message": "API error 429 rateLimitExceeded: Rate Limit Exceeded",
+     "reason": "rateLimitExceeded"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Rate Limit Exceeded\",\n    \"reason\": \"rateLimitExceeded\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.404",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 404,
+     "message": "API error 404 notFound: Not Found",
+     "reason": "notFound"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 404,\n    \"message\": \"Not Found\",\n    \"reason\": \"notFound\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.insert.409",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 409,
+     "message": "API error 409 duplicate: The requested identifier already exists.",
+     "reason": "duplicate"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "colorId": "5",
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+        "version": "3"
+       }
+      },
+      "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "status": "confirmed",
+      "summary": "Lunch"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "POST",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 409,\n    \"message\": \"The requested identifier already exists.\",\n    \"reason\": \"duplicate\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.update.412",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 412,
+     "message": "API error 412 conditionNotMet: Precondition Failed",
+     "reason": "conditionNotMet"
+    }
+   },
+   "requests": [
+    {
+     "body": {
+      "colorId": "5",
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX7K2M9Q4R8S5T6V7W8Y9Z0A",
+        "version": "3"
+       }
+      },
+      "id": "dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00",
+       "timeZone": "Asia/Seoul"
+      },
+      "status": "confirmed",
+      "summary": "Lunch"
+     },
+     "content_type": "application/json",
+     "if_match": null,
+     "method": "PUT",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 412,\n    \"message\": \"Precondition Failed\",\n    \"reason\": \"conditionNotMet\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.401",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 401,
+     "message": "API error 401 authError: Invalid Credentials",
+     "reason": "authError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 401,\n    \"message\": \"Invalid Credentials\",\n    \"reason\": \"authError\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.500",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 500,
+     "message": "API error 500 backendError: Backend Error",
+     "reason": "backendError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 500,\n    \"message\": \"Backend Error\",\n    \"reason\": \"backendError\"\n  }\n}\n"
+  },
+  {
+   "id": "err.events.get.503",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 503,
+     "message": "API error 503 backendError: Backend Error",
+     "reason": "backendError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"Backend Error\",\n    \"reason\": \"backendError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.no_errors_array",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 unknown: Invalid argument",
+     "reason": "unknown"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid argument\",\n    \"reason\": \"unknown\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.empty_errors_array",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 unknown: Invalid argument",
+     "reason": "unknown"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Invalid argument\",\n    \"reason\": \"unknown\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.errors_no_reason",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 unknown: m",
+     "reason": "unknown"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"m\",\n    \"reason\": \"unknown\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.code_mismatch",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 r1: m",
+     "reason": "r1"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"m\",\n    \"reason\": \"r1\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.non_json_502",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 502,
+     "message": "API error 502 httpError: <html><body>502 Bad Gateway</body></html>",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 502,\n    \"message\": \"<html><body>502 Bad Gateway</body></html>\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.error_string",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 unknown: Unknown error",
+     "reason": "unknown"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Unknown error\",\n    \"reason\": \"unknown\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.empty_body_500",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 500,
+     "message": "API error 500 httpError: ",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 500,\n    \"message\": \"\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.delete.non_json_500",
+   "kind": "delete",
+   "kit": {
+    "raises": {
+     "http_code": 500,
+     "message": "API error 500: oops",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 500,\n    \"message\": \"oops\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.delete.200_json",
+   "kind": "delete",
+   "kit": {
+    "returns": true
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "DELETE",
+     "path": "/tasks/v1/lists/MTIzNDU2Nzg5MDEyMzQ1Njc4OTA6MDow/tasks/dGFza18xMjM0NTY3ODkw",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{}\n"
+  },
+  {
+   "id": "edge.ok_empty_body",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 0,
+     "message": "gws no output: \nArgs: ()",
+     "reason": ""
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": ""
+  },
+  {
+   "id": "edge.ok_200_error_key",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 7,
+     "message": "API error 7 x: m",
+     "reason": "x"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"error\": {\n    \"code\": 7,\n    \"message\": \"m\",\n    \"reason\": \"x\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.error_no_code",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 409,
+     "message": "API error 409 conflict: m",
+     "reason": "conflict"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 409,\n    \"message\": \"m\",\n    \"reason\": \"conflict\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.error_code_string",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 409,
+     "message": "API error 409 conflict: m",
+     "reason": "conflict"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 409,\n    \"message\": \"m\",\n    \"reason\": \"conflict\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.error_no_message",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 400,
+     "message": "API error 400 invalid: Unknown error",
+     "reason": "invalid"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"Unknown error\",\n    \"reason\": \"invalid\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.json_no_error_key_500",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 500,
+     "message": "API error 500 httpError: {\"oops\": 1}",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 500,\n    \"message\": \"{\\\"oops\\\": 1}\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.json_list_500",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 500,
+     "message": "API error 500 httpError: [1, 2]",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 500,\n    \"message\": \"[1, 2]\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.non_json_long_503",
+   "kind": "call",
+   "kit": {
+    "raises": {
+     "http_code": 503,
+     "message": "API error 503 httpError: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "reason": "httpError"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 1,
+   "stdout": "{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n    \"reason\": \"httpError\"\n  }\n}\n"
+  },
+  {
+   "id": "edge.ok_non_json",
+   "kind": "call",
+   "kit": {
+    "returns": {
+     "bytes": 5,
+     "mimeType": "text/plain",
+     "saved_file": "download.txt",
+     "status": "success"
+    }
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "{\n  \"bytes\": 5,\n  \"mimeType\": \"text/plain\",\n  \"saved_file\": \"download.txt\",\n  \"status\": \"success\"\n}\n"
+  },
+  {
+   "id": "edge.ok_json_list",
+   "kind": "call",
+   "kit": {
+    "returns": [
+     1,
+     2
+    ]
+   },
+   "requests": [
+    {
+     "body": null,
+     "content_type": null,
+     "if_match": null,
+     "method": "GET",
+     "path": "/calendar/v3/calendars/c0ffee%40group%2Ecalendar%2Egoogle%2Ecom/events/dgn01hx7k2m9q4r8s5t6v7w8y9z0a",
+     "query": []
+    }
+   ],
+   "returncode": 0,
+   "stdout": "[\n  1,\n  2\n]\n"
+  }
+ ]
+}

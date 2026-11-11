@@ -1,0 +1,35 @@
+{
+  "visible": true,
+  "age": 60,
+  "entries": [
+    {
+      "type": "assistant",
+      "timestamp": "2026-09-24T05:00:00Z",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "call-1",
+            "name": "Monitor",
+            "input": {
+              "description": "Run full tests",
+              "run_in_background": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "call-1",
+            "content": "Monitor started (task bg-job_1, timeout 60000ms). You will be notified on each event."
+          }
+        ]
+      }
+    }
+  ]
+}

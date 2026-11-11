@@ -1,0 +1,35 @@
+# Text seat (v2.7 D2) vocabulary, English.  Format: see ko.tsv.
+# Not measured on a corpus yet (no English turns): a non-ko instance runs
+# every row detect-only (spec section 1.3).
+
+ABSENCE	\bno (record|note|mention|memory|trace|history) of\b
+ABSENCE	\b(is|was|are|were)n'?t (recorded|noted|saved|mentioned)\b
+ABSENCE	\bnot (recorded|on record|in (my|the) (notes|memory|records))\b
+ABSENCE	\bi (don'?t|do not) (know|have (any )?(record|note|information))\b
+ABSENCE	\bi (can'?t|cannot|couldn'?t) (find|recall|remember)\b
+ABSENCE	\bi have no (record|note|information|memory)\b
+RECALL_Q	\bremember\b|\brecall\b|\bwhat was\b|\bwhen did\b
+RECALL_Q	\bdid i (?:tell|say|mention)\b|\blast time\b|\bdo you have\b
+HANDOVER	\b(run|paste|type|execute|enter)\b[^.\n]{0,40}\b(this|these|the following|command|in (your|a) terminal)\b
+HANDOVER	\bin your terminal\b|\bopen (a )?terminal\b
+RELAY	\brelay\b|\bforward\b|\bpass (this|it) to\b|\bsend (this|it) to\b|\bto share\b|\bshare (this|it)\b
+ASK_FOR_CMD	\bcommands?\b|\bhow (do|can|would) i\b|\bhow to\b
+ELSEWHERE	\banother (user )?account\b|\bnew (user )?account\b|\bswitch user\b|\binteractive\b|\btrust prompt\b
+FAILURE	\berror|\bfail|\bbroken\b|\bcrash
+OTHER_SESSION	\b(that|the other|another|a separate|the previous|an earlier|the earlier|my other|my earlier|my previous|my last) (session|instance of me|chat)\b[^.\n]{0,30}\b(did|is doing|was|made|wrote|knows|said|handled|ran|has|had|fixed|found|started|finished|already)\b
+OS_SESSION	\bGUI\b|\btmux\b|\bssh\b|\bscreen\b|\bbrowser\b|\blog-?in\b|\bterminal\b|\baccount\b
+ORDER_LABEL	\bfirst\b
+USER_ACTOR	\bwould you like\b|\bdo you want\b|\byou prefer\b
+ORDER_Q	\bwhich (one |task |item )?first\b|\bwhat order\b|\bin which order\b
+CONSEQUENCE	\b(releases?|released|deploy(s|ed|ing|ment)?|publish(es|ed|ing)?|push(es|ed|ing)?|tags?|tagged|merges?|merged|merging|restart(s|ed|ing)?)\b
+CONSEQUENCE	\b(send(s|ing)?|sent|e-?mails?|irreversible|approv(e|es|ed|al)|permissions?|passwords?|accounts?)\b
+CONSEQUENCE	\b(costs?|budgets?|tokens?|delet(e|es|ed|ing)|remov(e|es|ed|ing)|drop(s|ped|ping)?|reset(s|ting)?)\b
+ALT_SCHEME	\boption\s?[A-E]\b
+REC_NEAR	\brecommend(ation)?:?|\brec:
+# DN04 (DGN-2048): an assertive done claim
+DONE_CLAIM	\b(?:all|now|it's|is|are|everything's|everything is)\s+done\b|\bdone\s*[.!]*$
+DONE_CLAIM	\b(?:is|are|it's)\s+(?:now\s+)?(?:complete|completed|finished)\b
+# DN04: the open-items line
+OPEN_ITEMS	\bopen items\b|\bnot working yet\b|\bstill (?:broken|missing|not working)\b
+# DN04: an empty open-items value
+OPEN_NONE	^(?:none|nothing|n/a|-)[.!]?$

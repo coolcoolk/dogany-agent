@@ -1,0 +1,148 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/bash-safety-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill|Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/token-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill|Workflow|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/usage-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/in-session-dispatch-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/write-paths-gate.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/tmp-artifact-gate.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/card-followup.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/skill-feedback-gate.py --record"
+          }
+        ]
+      },
+      {
+        "matcher": "TaskStop",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/subagent-stop-record.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/fable-death-catch.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/session-recap.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/onboarding-check.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/version-check.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/onboarding-gate-stop.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/why-net.py ups"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/onboarding-gate-stop.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/owner-ask-stop.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __PROJECT_ROOT__/routines/status-footer.py"
+          }
+        ]
+      }
+    ]
+  }
+}

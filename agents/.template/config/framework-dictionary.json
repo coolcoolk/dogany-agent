@@ -1,0 +1,30 @@
+{
+  "framework": {
+    "why": {
+      "ko": "Why: 믿음과 목적",
+      "en": "Why: belief and purpose"
+    },
+    "how": {
+      "ko": "How: 방법",
+      "en": "How: the way"
+    },
+    "what": {
+      "ko": "What: 결과물",
+      "en": "What: the result"
+    },
+    "problem": {
+      "ko": "문제: As-is와 To-be 사이의 간극",
+      "en": "Problem: the gap between as-is and to-be"
+    },
+    "user": {
+      "ko": "유저: 에이전트가 섬기는 사람 (헌법의 주체)",
+      "en": "User: the person the agent serves (the constitution subject)"
+    }
+  },
+  "devkit": {
+    "product_user": {
+      "ko": "프로덕트 유저: 유저의 프로덕트가 섬기는 사람들",
+      "en": "Product user: the people the user's product serves"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- v2.7 AC5: daily owner re-correction counter, hybrid mode (dec-291:
+         strong word cues decide, uncertain turns go to Sonnet one at a time,
+         capped per run). Appends one count row per completed local day to
+         .telegram_bot/state/recorrection-hybrid-ledger.tsv (counts and cue
+         names only). Missed nights are filled by the next run, so the slot
+         only has to fall after local midnight. Listed in plists.defer: it is
+         loaded explicitly per instance, never by the default install scan. -->
+    <key>Label</key>
+    <string>com.telegram-skill-bot.__AGENT_NAME__.recorrection-count</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__PROJECT_ROOT__/routines/cron-guard.sh</string>
+        <string>--label</string>
+        <string>com.telegram-skill-bot.__AGENT_NAME__.recorrection-count</string>
+        <string>--friendly-name</string>
+        <string>recorrection-count</string>
+        <string>--log</string>
+        <string>__PROJECT_ROOT__/.telegram_bot/logs/recorrection-count.stdout.log</string>
+        <string>--</string>
+        <string>/usr/bin/python3</string>
+        <string>__PROJECT_ROOT__/routines/recorrection-count.py</string>
+        <string>--root</string>
+        <string>__PROJECT_ROOT__</string>
+        <string>--mode</string>
+        <string>hybrid</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>41</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:__HOME__/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>DOGANY_KIT_DB_FREE</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/recorrection-count.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_ROOT__/.telegram_bot/logs/recorrection-count.stderr.log</string>
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_ROOT__</string>
+</dict>
+</plist>

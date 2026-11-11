@@ -1,0 +1,15 @@
+# index-sources.default -- framework default sources for the shared index
+# resolver (scripts/index/index.py; DGN-1883/DGN-1893 design v2 sec 2.1).
+# Precedence: env DOGANY_INDEX_<TYPE>_URL / _REF > ~/.dogany/index-sources.conf
+# > this file. Only URLs from THIS file are held to allow.url.prefix; env and
+# machine-conf URLs are the machine owner's own (exempt, url_origin=override).
+catalog.url=https://github.com/coolcoolk/dogany-catalog.git
+catalog.ref.dev=dev
+catalog.ref.stable=stable
+catalog.ttl=1800
+knowledge.url=https://github.com/coolcoolk/dogany-knowledge.git
+knowledge.ref.dev=main
+knowledge.ref.stable=main
+knowledge.ttl=1800
+allow.url.prefix=https://github.com/coolcoolk/
+backoff=300

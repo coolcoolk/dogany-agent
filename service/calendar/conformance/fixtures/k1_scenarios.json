@@ -1,0 +1,2011 @@
+{
+ "_doc": "DGN-1854 W5 K1 conformance scenarios (fake Google). Runner: conformance/k1.py. Each scenario names the kit call sites it exercises.",
+ "scenarios": [
+  {
+   "id": "provision",
+   "site": "adapter.py:1873-1986,2095-2185",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendarList",
+      "list"
+     ],
+     "expect": {
+      "count": {
+       "items": 0
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "has": {
+       "description": "[dogany:m] -- x",
+       "summary": "Dogany"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "patch"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "description": "mine\n[dogany:m] -- x"
+     },
+     "expect": {
+      "has": {
+       "description": "mine\n[dogany:m] -- x"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendarList",
+      "list"
+     ],
+     "expect": {
+      "count": {
+       "items": 1
+      },
+      "has": {
+       "items.0.id": "${cal}"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "list"
+     ],
+     "expect": {
+      "count": {
+       "items": 0
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "insert"
+     ],
+     "body": {
+      "title": "Dogany"
+     },
+     "save": {
+      "tl": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "get"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "expect": {
+      "has": {
+       "title": "Dogany"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "update"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "body": {
+      "id": "${tl}",
+      "title": "Dogany checklist"
+     },
+     "expect": {
+      "has": {
+       "title": "Dogany checklist",
+       "id": "${tl}"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "list"
+     ],
+     "expect": {
+      "count": {
+       "items": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "push_m10_regenerate",
+   "site": "adapter.py:2403-2425",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnaaa1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "expect": {
+      "has": {
+       "id": "dgnaaa1",
+       "status": "confirmed"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnaaa1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "expect": {
+      "raises": {
+       "http_code": 409,
+       "reason": "duplicate"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "update"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnaaa1"
+     },
+     "body": {
+      "id": "dgnaaa1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      },
+      "status": "confirmed"
+     },
+     "expect": {
+      "has": {
+       "status": "confirmed"
+      }
+     }
+    },
+    {
+     "op": "fake",
+     "do": "purge",
+     "cal": "${cal}",
+     "id": "dgnaaa1"
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnaaa1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "expect": {
+      "raises": {
+       "http_code": 409,
+       "reason": "duplicate"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "update"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnaaa1"
+     },
+     "body": {
+      "id": "dgnaaa1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      },
+      "status": "confirmed"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnaaa1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnaaa2",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "expect": {
+      "has": {
+       "id": "dgnaaa2"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "ifmatch_412_lane",
+   "site": "adapter.py:2378-2402; http_direct.py:_call",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnbbb1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "save": {
+      "etag1": "etag"
+     }
+    },
+    {
+     "op": "fake",
+     "do": "owner_edit",
+     "cal": "${cal}",
+     "id": "dgnbbb1",
+     "fields": {
+      "summary": "Owner lunch"
+     }
+    },
+    {
+     "op": "http",
+     "method": "PUT",
+     "url": "https://www.googleapis.com/calendar/v3/calendars/${cal}/events/dgnbbb1",
+     "body": {
+      "id": "dgnbbb1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "etag": "${etag1}",
+     "expect": {
+      "returns": [
+       412,
+       null
+      ]
+     }
+    },
+    {
+     "op": "http",
+     "method": "GET",
+     "url": "https://www.googleapis.com/calendar/v3/calendars/${cal}/events/dgnbbb1",
+     "expect": {
+      "has": {
+       "0": 200,
+       "1.summary": "Owner lunch"
+      }
+     },
+     "save": {
+      "etag2": "1.etag"
+     }
+    },
+    {
+     "op": "http",
+     "method": "PUT",
+     "url": "https://www.googleapis.com/calendar/v3/calendars/${cal}/events/dgnbbb1",
+     "body": {
+      "id": "dgnbbb1",
+      "summary": "Merged lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     },
+     "etag": "${etag2}",
+     "expect": {
+      "has": {
+       "0": 200,
+       "1.summary": "Merged lunch"
+      }
+     }
+    },
+    {
+     "op": "http",
+     "method": "GET",
+     "url": "https://www.googleapis.com/calendar/v3/calendars/${cal}/events/nope",
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "pull_sync_feed",
+   "site": "adapter.py:3270-3315; reconcile.py:98-108",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnccc1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnccc2",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnccc3",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "showDeleted": true,
+      "singleEvents": true,
+      "maxResults": 2
+     },
+     "expect": {
+      "count": {
+       "items": 2
+      }
+     },
+     "save": {
+      "page": "nextPageToken"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "showDeleted": true,
+      "singleEvents": true,
+      "maxResults": 2,
+      "pageToken": "${page}"
+     },
+     "expect": {
+      "count": {
+       "items": 1
+      }
+     },
+     "save": {
+      "sync": "nextSyncToken"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "update"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnccc2"
+     },
+     "body": {
+      "id": "dgnccc2",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      },
+      "status": "cancelled"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "syncToken": "${sync}",
+      "singleEvents": true,
+      "maxResults": 250
+     },
+     "expect": {
+      "count": {
+       "items": 1
+      },
+      "has": {
+       "items.0.id": "dgnccc2",
+       "items.0.status": "cancelled"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "syncToken": "bogus",
+      "singleEvents": true,
+      "maxResults": 250
+     },
+     "expect": {
+      "raises": {
+       "http_code": 400,
+       "reason": "invalid"
+      }
+     }
+    },
+    {
+     "op": "fake",
+     "do": "expire_sync"
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "syncToken": "${sync}",
+      "singleEvents": true,
+      "maxResults": 250
+     },
+     "expect": {
+      "raises": {
+       "http_code": 410,
+       "reason": "fullSyncRequired"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "maxResults": 250,
+      "singleEvents": true,
+      "showDeleted": true
+     },
+     "expect": {
+      "count": {
+       "items": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "tasks_cycle",
+   "site": "adapter.py:2440-2535,3600-3620",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "insert"
+     ],
+     "body": {
+      "title": "Dogany"
+     },
+     "save": {
+      "tl": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "insert"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "body": {
+      "title": "Buy milk",
+      "notes": "[ulid:01HXA]",
+      "status": "needsAction"
+     },
+     "save": {
+      "tk": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "insert"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "body": {
+      "title": "Two",
+      "notes": "[ulid:01HXB]",
+      "status": "needsAction"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "insert"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "body": {
+      "title": "Three",
+      "notes": "[ulid:01HXC]",
+      "status": "completed"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "get"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "task": "${tk}"
+     },
+     "expect": {
+      "has": {
+       "title": "Buy milk"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "update"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "task": "${tk}"
+     },
+     "body": {
+      "id": "${tk}",
+      "title": "Buy oat milk",
+      "notes": "[ulid:01HXA]",
+      "status": "needsAction"
+     },
+     "expect": {
+      "has": {
+       "title": "Buy oat milk"
+      }
+     },
+     "save": {
+      "wm": "updated"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "list"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "showHidden": true,
+      "showCompleted": true,
+      "showDeleted": false,
+      "maxResults": 2
+     },
+     "expect": {
+      "count": {
+       "items": 2
+      }
+     },
+     "save": {
+      "page": "nextPageToken"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "list"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "showHidden": true,
+      "showCompleted": true,
+      "showDeleted": false,
+      "maxResults": 2,
+      "pageToken": "${page}"
+     },
+     "expect": {
+      "count": {
+       "items": 1
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "list"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "showHidden": true,
+      "showCompleted": true,
+      "showDeleted": true,
+      "maxResults": 100,
+      "updatedMin": "${wm}"
+     },
+     "expect": {
+      "count": {
+       "items": 1
+      },
+      "has": {
+       "items.0.id": "${tk}"
+      }
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "tasks",
+      "tasks",
+      "delete"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "task": "${tk}"
+     },
+     "expect": {
+      "returns": true
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "tasks",
+      "tasks",
+      "delete"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "task": "${tk}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "list"
+     ],
+     "params": {
+      "tasklist": "${tl}",
+      "showHidden": true,
+      "showCompleted": true,
+      "showDeleted": true,
+      "maxResults": 100,
+      "updatedMin": "${wm}"
+     },
+     "expect": {
+      "has": {
+       "items.0.deleted": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "cancel_on_surface",
+   "site": "adapter.py:2555-2570,2744-2752",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgnddd1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnddd1"
+     },
+     "expect": {
+      "has": {
+       "status": "confirmed"
+      }
+     },
+     "save": {
+      "cur": "status"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "update"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnddd1"
+     },
+     "body": {
+      "id": "dgnddd1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      },
+      "status": "cancelled"
+     },
+     "expect": {
+      "has": {
+       "status": "cancelled"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgnddd1"
+     },
+     "expect": {
+      "has": {
+       "status": "cancelled"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "maxResults": 250,
+      "singleEvents": true,
+      "showDeleted": false
+     },
+     "expect": {
+      "count": {
+       "items": 0
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "adopt_patch_merge",
+   "site": "adapter.py:3236; kind_repair.py:76; annex A-R4",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "foreign1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "other": "keep"
+       }
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "patch"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "foreign1"
+     },
+     "body": {
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HXZ",
+        "version": "0"
+       }
+      }
+     },
+     "expect": {
+      "has": {
+       "extendedProperties.private.other": "keep",
+       "extendedProperties.private.ulid": "01HXZ",
+       "extendedProperties.private.version": "0",
+       "summary": "Lunch"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "teardown",
+   "site": "adapter.py:4265-4285",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "insert"
+     ],
+     "body": {
+      "title": "Dogany"
+     },
+     "save": {
+      "tl": "id"
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "calendar",
+      "calendars",
+      "delete"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "returns": true
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "calendar",
+      "calendars",
+      "delete"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "tasks",
+      "tasklists",
+      "delete"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "expect": {
+      "returns": true
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "get"
+     ],
+     "params": {
+      "tasklist": "${tl}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 404,
+       "reason": "notFound"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "transient_and_pause",
+   "site": "adapter.py:243,3790; spec 6, 6.2",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "body": {
+      "id": "dgneee1",
+      "summary": "Lunch",
+      "start": {
+       "dateTime": "2026-10-08T12:00:00+09:00"
+      },
+      "end": {
+       "dateTime": "2026-10-08T13:00:00+09:00"
+      },
+      "extendedProperties": {
+       "private": {
+        "ulid": "01HX",
+        "version": "1"
+       }
+      }
+     }
+    },
+    {
+     "op": "fake",
+     "do": "inject",
+     "method": "GET",
+     "verb": "/events/",
+     "status": 403,
+     "reason": "rateLimitExceeded"
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 403,
+       "reason": "rateLimitExceeded",
+       "paused": false
+      }
+     }
+    },
+    {
+     "op": "fake",
+     "do": "inject",
+     "method": "GET",
+     "verb": "/events/",
+     "status": 403,
+     "reason": "forbidden"
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 403,
+       "reason": "forbidden"
+      }
+     }
+    },
+    {
+     "op": "fake",
+     "do": "inject",
+     "method": "GET",
+     "verb": "/events/",
+     "status": 503,
+     "reason": "backendError"
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 503,
+       "reason": "backendError"
+      }
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "has": {
+       "id": "dgneee1"
+      }
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": null
+     }
+    },
+    {
+     "op": "fake",
+     "do": "auth",
+     "status": {
+      "connected": true,
+      "sub": "1234567890",
+      "granted": [
+       "calendar",
+       "tasks"
+      ],
+      "paused": "token_revoked"
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": "token_revoked"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "token_revoked",
+       "paused": true
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "fake",
+     "do": "auth",
+     "status": {
+      "connected": true,
+      "sub": "1234567890",
+      "granted": [
+       "calendar",
+       "tasks"
+      ],
+      "paused": "cap_suspected"
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": null
+     }
+    },
+    {
+     "op": "fake",
+     "do": "auth",
+     "status": {
+      "connected": true,
+      "sub": "1234567890",
+      "granted": [
+       "calendar"
+      ],
+      "paused": null
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": null
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasklists",
+      "list"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "needs_consent",
+       "paused": true
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "fake",
+     "do": "auth",
+     "status": {
+      "connected": false,
+      "paused": null
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": "needs_consent"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "dgneee1"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "needs_consent",
+       "paused": true
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "fake",
+     "do": "auth",
+     "status": {
+      "connected": true,
+      "sub": "999",
+      "granted": [
+       "calendar",
+       "tasks"
+      ],
+      "paused": null
+     }
+    },
+    {
+     "op": "health",
+     "expect": {
+      "value": "account_mismatch"
+     }
+    }
+   ]
+  },
+  {
+   "id": "closed_verb_table",
+   "site": "spec D10+ unsupported_verb",
+   "steps": [
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "insert"
+     ],
+     "body": {
+      "summary": "Dogany",
+      "description": "[dogany:m] -- x",
+      "timeZone": "Asia/Seoul"
+     },
+     "save": {
+      "cal": "id"
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "delete"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "x"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "calendar",
+      "events",
+      "delete"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "x"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "move"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "x"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "gmail",
+      "users",
+      "messages"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "calendars",
+      "delete"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "delete",
+     "args": [
+      "calendar",
+      "calendars",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "tasks",
+      "tasks",
+      "list"
+     ],
+     "params": {
+      "tasklist": "x",
+      "q": "y"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "insert"
+     ],
+     "params": {
+      "calendarId": "${cal}"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "eventId": "x"
+     },
+     "body": {
+      "id": "x"
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "list"
+     ],
+     "params": {
+      "calendarId": "${cal}",
+      "maxResults": [
+       1
+      ]
+     },
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get",
+      "--params",
+      "{not json"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get",
+      "--params",
+      "[1]"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "call",
+     "args": [
+      "calendar",
+      "events",
+      "get",
+      "--format",
+      "table"
+     ],
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "http",
+     "method": "DELETE",
+     "url": "https://www.googleapis.com/calendar/v3/calendars/${cal}/events/x",
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "http",
+     "method": "GET",
+     "url": "https://evil.example/calendar/v3/",
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    },
+    {
+     "op": "http",
+     "method": "GET",
+     "url": "https://tasks.googleapis.com/tasks/v1/users/@me/lists",
+     "expect": {
+      "raises": {
+       "http_code": 0,
+       "reason": "unsupported_verb",
+       "paused": false
+      },
+      "sent": 0
+     }
+    }
+   ]
+  }
+ ]
+}
